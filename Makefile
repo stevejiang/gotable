@@ -32,6 +32,7 @@ rocksdb-clean:
 	-rm -rf $(ROCKSDB)
 
 rocksdb-lib:
+	./init_deps.sh -dl
 	if [ ! -f "$(ROCKSDB)/librocksdb.a" ]; then \
 		rm -rf $(ROCKSDB); \
 		tar zxvf $(ROCKSDB).tar.gz -C $(DEPS_DIR); \
