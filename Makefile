@@ -26,10 +26,10 @@ get: rocksdb-lib
 
 clean: rocksdb-clean
 	go clean -i ./...
-	-rm build_config.mk
 
 rocksdb-clean:
-	rm -rf $(ROCKSDB)
+	-rm build_config.mk
+	-rm -rf $(ROCKSDB)
 
 rocksdb-lib:
 	if [ ! -f "$(ROCKSDB)/librocksdb.a" ]; then \
