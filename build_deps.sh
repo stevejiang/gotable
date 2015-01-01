@@ -1,6 +1,7 @@
 #!/bin/sh
 
 DEPS_DIR=/tmp/gotable-deps
+#DEPS_DIR=$HOME/workspace/gotable-deps
 DEPS_ULR=https://github.com/stevejiang/gotable-deps/raw/master
 
 ROCKSDB_VER=rocksdb-3.8

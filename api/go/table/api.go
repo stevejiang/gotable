@@ -68,6 +68,7 @@ func (c *Client) Close() error {
 	}
 	c.closing = true
 	c.mtx.Unlock()
+	close(c.sending)
 	return nil
 }
 
@@ -212,8 +213,10 @@ func (c *Client) recv() {
 		}
 		c.mtx.Unlock()
 
-		call.Pkg = pkg
-		call.done()
+		if call != nil {
+			call.Pkg = pkg
+			call.done()
+		}
 	}
 
 	// Terminate pending calls.
@@ -252,8 +255,7 @@ func (c *Client) send() {
 				delete(c.pending, call.seq)
 				c.mtx.Unlock()
 
-				call.Error = err
-				call.done()
+				c.errCall(call, err)
 			}
 		}
 	}

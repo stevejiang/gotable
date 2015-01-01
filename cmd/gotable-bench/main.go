@@ -13,7 +13,7 @@ import (
 
 var (
 	host        = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
-	cliNum      = flag.Int("c", 10, "Number of parallel connections")
+	cliNum      = flag.Int("c", 50, "Number of parallel connections")
 	reqNum      = flag.Int("n", 100000, "Total number of requests")
 	dataSize    = flag.Int("d", 4, "Data size of SET/GET value in bytes")
 	testCase    = flag.String("t", "set,get", "Run the comma separated list of tests")
@@ -105,7 +105,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 					if v%10000 == 0 && v > 0 {
 						elapsed := time.Since(start)
 						speed := float64(v+1) * 1e9 / float64(elapsed)
-						fmt.Printf("%-12s : %11.3f op/s\r", name, speed)
+						fmt.Printf("%-8s : %9.1f op/s\r", name, speed)
 					}
 				}
 			}
@@ -116,7 +116,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 
 	elapsed := time.Since(start)
 	speed := float64(*reqNum) * 1e9 / float64(elapsed)
-	fmt.Printf("%-12s : %11.3f op/s\n", name, speed)
+	fmt.Printf("%-8s : %9.1f op/s\n", name, speed)
 
 	if recordHist {
 		var hist = hists[0]
