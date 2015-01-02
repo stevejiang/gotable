@@ -11,9 +11,7 @@ if [ ! -d "$DEPS_DIR" ]; then
 fi
 
 if [ "$1" = "-dl" ]; then
-	if [ ! -f "$DEPS_DIR/$ROCKSDB_VER.tar.gz" ]; then
-		wget --no-check-certificate $DEPS_ULR/$ROCKSDB_VER.tar.gz -O $DEPS_DIR/$ROCKSDB_VER.tar.gz
-	fi
+	wget --no-check-certificate $DEPS_ULR/$ROCKSDB_VER.tar.gz -O $DEPS_DIR/$ROCKSDB_VER.tar.gz
 else	
 	OUTPUT=$1
 	if [ "$OUTPUT" != "" ]; then

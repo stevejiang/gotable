@@ -32,10 +32,9 @@ rocksdb-clean:
 	rm -rf $(ROCKSDB)
 
 rocksdb-lib:
-	# download gotable-deps
-	./build_deps.sh -dl
 	if [ ! -f "$(ROCKSDB)/librocksdb.a" ]; then \
 		rm -rf $(ROCKSDB); \
+		./build_deps.sh -dl; \
 		tar zxf $(ROCKSDB).tar.gz -C $(DEPS_DIR); \
 		make -C $(ROCKSDB) static_lib; \
 	fi
