@@ -17,6 +17,7 @@ var (
 )
 
 type Client struct {
+	p       *Pool
 	c       net.Conn
 	r       *bufio.Reader
 	headBuf []byte
@@ -52,6 +53,16 @@ func NewClient(conn net.Conn) *Client {
 	return c
 }
 
+func newPoolClient(network, address string, pool *Pool) *Client {
+	c, err := Dial(network, address)
+	if err != nil {
+		return nil
+	}
+
+	c.p = pool
+	return c
+}
+
 func Dial(network, address string) (*Client, error) {
 	conn, err := net.Dial(network, address)
 	if err != nil {
@@ -61,6 +72,14 @@ func Dial(network, address string) (*Client, error) {
 }
 
 func (c *Client) Close() error {
+	if c.p == nil {
+		return c.doClose()
+	} else {
+		return c.p.put(c)
+	}
+}
+
+func (c *Client) doClose() error {
 	c.mtx.Lock()
 	if c.closing {
 		c.mtx.Unlock()
@@ -68,8 +87,16 @@ func (c *Client) Close() error {
 	}
 	c.closing = true
 	c.mtx.Unlock()
+
 	close(c.sending)
-	return nil
+	var err = c.c.Close()
+
+	var p = c.p
+	if p != nil {
+		p.remove(c)
+	}
+
+	return err
 }
 
 func (c *Client) Get(rowKey, colKey []byte) ([]byte, error) {
@@ -234,6 +261,8 @@ func (c *Client) recv() {
 		call.done()
 	}
 	c.mtx.Unlock()
+
+	c.doClose()
 }
 
 func (c *Client) send() {
@@ -247,15 +276,11 @@ func (c *Client) send() {
 
 			if err == nil {
 				_, err = c.c.Write(call.Pkg)
-			}
-
-			if err != nil {
-				c.mtx.Lock()
-				c.shutdown = true
-				delete(c.pending, call.seq)
-				c.mtx.Unlock()
-
-				c.errCall(call, err)
+				if err != nil {
+					c.mtx.Lock()
+					c.shutdown = true
+					c.mtx.Unlock()
+				}
 			}
 		}
 	}

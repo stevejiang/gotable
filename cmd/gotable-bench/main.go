@@ -13,12 +13,13 @@ import (
 
 var (
 	host        = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
-	cliNum      = flag.Int("c", 50, "Number of parallel connections")
+	cliNum      = flag.Int("c", 50, "Number of parallel clients")
 	reqNum      = flag.Int("n", 100000, "Total number of requests")
 	dataSize    = flag.Int("d", 4, "Data size of SET/GET value in bytes")
 	testCase    = flag.String("t", "set,get", "Run the comma separated list of tests")
 	histogram   = flag.Int("histogram", 0, "Print histogram of operation timings")
 	verbose     = flag.Int("v", 0, "Verbose mode, if enabled it will slow down the test")
+	poolNum     = flag.Int("pool", 5, "Max number of pool connections")
 	maxProcs    = flag.Int("cpu", runtime.NumCPU(), "Go Max Procs")
 	profileport = flag.String("profileport", "", "Profile port, such as 8080")
 )
@@ -37,7 +38,7 @@ func main() {
 		case "get":
 			benchGet()
 		case "set":
-			benchPut()
+			benchSet()
 		default:
 			fmt.Printf("Unknown test case: %s\n", t)
 		}
@@ -58,17 +59,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 		close(numChan)
 	}()
 
-	var connNum = 5
-	var clis = make([]*table.Client, connNum)
-	for i := 0; i < connNum; i++ {
-		client, err := table.Dial("tcp", *host)
-		if err != nil {
-			fmt.Println("dial failed: ", err)
-			return
-		}
-
-		clis[i] = client
-	}
+	var cliPool = table.NewPool([]table.Addr{{1, "tcp", *host}}, *poolNum)
 
 	var recordHist = (*histogram != 0)
 	var hists = make([]Histogram, *cliNum)
@@ -78,7 +69,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 		go func(id int) {
 			defer g.Done()
 
-			client := clis[id%connNum]
+			client, _ := cliPool.Get(1)
 
 			var hist = &hists[id]
 			hist.Clear()
@@ -88,6 +79,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 				select {
 				case v, ok := <-numChan:
 					if !ok {
+						client.Close()
 						return
 					}
 
@@ -127,7 +119,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 	}
 }
 
-func benchPut() {
+func benchSet() {
 	var value = make([]byte, *dataSize)
 	for i := 0; i < *dataSize; i++ {
 		value[i] = 'x'
@@ -140,7 +132,7 @@ func benchPut() {
 		var colKey = key[len(key)-3:]
 		copy(value, key)
 
-		put(c, rowKey, colKey, value)
+		set(c, rowKey, colKey, value)
 
 		for i := 0; i < len(key) && i < len(value); i++ {
 			value[i] = 'x'
@@ -163,7 +155,7 @@ func benchGet() {
 	benchmark("GET", op)
 }
 
-func put(c *table.Client, rowKey, colKey, value []byte) {
+func set(c *table.Client, rowKey, colKey, value []byte) {
 	err := c.Set(rowKey, colKey, value)
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
