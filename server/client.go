@@ -5,6 +5,7 @@ import (
 	"github.com/stevejiang/gotable/proto"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 )
 
@@ -37,12 +38,15 @@ type Client struct {
 	cliType  int
 	c        net.Conn
 	r        *bufio.Reader
-	w        *bufio.Writer
 	respChan chan *response
-	ms       *master
 
-	//atomic
+	// atomic
 	closed uint32
+
+	// protects following
+	mtx      sync.Mutex
+	ms       *master
+	shutdown bool
 }
 
 func NewClient(conn net.Conn) *Client {
@@ -50,7 +54,6 @@ func NewClient(conn net.Conn) *Client {
 	cli.cliType = ClientTypeNormal
 	cli.c = conn
 	cli.r = bufio.NewReader(conn)
-	cli.w = bufio.NewWriter(conn)
 	cli.respChan = make(chan *response, 64)
 	return cli
 }
@@ -66,11 +69,19 @@ func (cli *Client) Close() {
 	if !cli.IsClosed() {
 		atomic.AddUint32(&cli.closed, 1)
 
+		cli.mtx.Lock()
+		if !cli.shutdown {
+			cli.shutdown = true
+			cli.mtx.Unlock()
+		} else {
+			cli.mtx.Unlock()
+			return
+		}
+
 		cli.c.Close()
 
-		var ms = cli.ms
-		if ms != nil {
-			ms.Close()
+		if cli.ms != nil {
+			cli.ms.Close()
 			cli.ms = nil
 		}
 
@@ -84,6 +95,8 @@ func (cli *Client) IsClosed() bool {
 }
 
 func (cli *Client) SetMaster(ms *master) {
+	cli.mtx.Lock()
+	defer cli.mtx.Unlock()
 	cli.ms = ms
 }
 
@@ -120,6 +133,7 @@ func (cli *Client) GoReadRequest(ch *RequestChan) {
 }
 
 func (cli *Client) GoSendResponse() {
+	var err error
 	for {
 		select {
 		case resp, ok := <-cli.respChan:
@@ -128,12 +142,11 @@ func (cli *Client) GoSendResponse() {
 				return
 			}
 
-			if !cli.IsClosed() {
-				_, err := cli.w.Write(resp.pkg)
+			if err == nil && !cli.IsClosed() {
+				_, err = cli.c.Write(resp.pkg)
 				if err != nil {
-					continue
+					cli.Close()
 				}
-				cli.w.Flush()
 			}
 		}
 	}

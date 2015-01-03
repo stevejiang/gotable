@@ -134,6 +134,9 @@ func (p *Pool) Get(tag uint8) (*Client, error) {
 	if reqTag == 0 {
 		// try other tags
 		for _, t := range p.pas {
+			if t == nil {
+				continue
+			}
 			if t.tag > 0 && t.tag != tag {
 				c, err = p.Get(t.tag)
 				if err == nil {
@@ -156,6 +159,9 @@ func (p *Pool) Close() {
 	}
 
 	for _, a := range p.pas {
+		if a == nil {
+			continue
+		}
 		for _, c := range a.cs {
 			if c != nil {
 				c.doClose()
@@ -174,6 +180,9 @@ func (p *Pool) remove(cli *Client) {
 	}
 
 	for _, a := range p.pas {
+		if a == nil {
+			continue
+		}
 		for i, c := range a.cs {
 			if c == cli {
 				copy(a.cs[i:], a.cs[i+1:])
@@ -198,6 +207,9 @@ func (p *Pool) goPingDeamon() {
 	for !p.closed {
 		time.Sleep(time.Second)
 		for _, a := range p.pas {
+			if a == nil {
+				continue
+			}
 			for i := 0; i < len(a.as); i++ {
 				p.mtx.Lock()
 				if a.status[i] != statusOk {

@@ -13,7 +13,7 @@ export CGO_CFLAGS=$(OPT) -I$(ROCKSDB)/include
 export CGO_LDFLAGS=-L$(ROCKSDB) -lrocksdb -lsnappy -lz
 
 GO_FLAGS  = -v -x --ldflags '-extldflags "-static-libstdc++"'
-#GO_FLAGS = -v -x --ldflags '-extldflags "-static-libstdc++ -static-libgcc "'
+#GO_FLAGS = -v -x --ldflags '-extldflags "-static-libstdc++ -static-libgcc"'
 #GO_FLAGS = -v -x --ldflags '-extldflags "-static"'
 
 all: build rocksdb-clean
