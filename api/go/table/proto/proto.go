@@ -7,19 +7,13 @@ import (
 )
 
 var (
-	ErrPkgLen    = errors.New("invalid pkg length")
-	ErrPkgStx    = errors.New("invalid stx")
-	ErrHeadBuf   = errors.New("invalid head buffer size")
-	ErrRowKeyLen = errors.New("invalid row key length")
-	ErrColKeyLen = errors.New("invalid col key length")
-	ErrArrayLen  = errors.New("array or slice length is too large")
-)
-
-const (
-	EcodeOk            = 0 // Success
-	EcodeNotExist      = 1 // Key not exist
-	EcodeReadDbFailed  = 11
-	EcodeWriteDbFailed = 12
+	ErrPkgLen     = errors.New("invalid pkg length")
+	ErrHeadBuf    = errors.New("invalid head buffer size")
+	ErrRowKeyLen  = errors.New("invalid row key length")
+	ErrColKeyLen  = errors.New("invalid col key length")
+	ErrValueLen   = errors.New("invalid value length")
+	ErrKvArrayLen = errors.New("invalid key/value array length")
+	ErrArrayLen   = errors.New("array or slice length out of range")
 )
 
 const (
@@ -27,10 +21,14 @@ const (
 	CmdPing = 0x10
 	CmdGet  = 0x11
 	CmdMGet = 0x12
+	CmdScan = 0x13
+	CmdDump = 0x14
 
 	// Front Write
-	CmdPut  = 0x60
-	CmdMPut = 0x61
+	CmdSet  = 0x60
+	CmdMSet = 0x61
+	CmdDel  = 0x62
+	CmdMDel = 0x63
 
 	// Inner Write
 	CmdSync = 0xB0
@@ -39,15 +37,13 @@ const (
 	CmdMaster = 0xE0
 )
 
-// cStx+cCmd+cDbId+ddwSeq+dwPkgLen+sBody
+// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 const (
-	stx          = 0xFF
-	HeadSize     = 15
-	MaxPkgLen    = 1024 * 1024
-	MaxRowKeyLen = 255
-	MaxColKeyLen = 65535
-	MaxUint8     = 255
-	MaxUint16    = 65535
+	HeadSize    = 14
+	MaxPkgLen   = 1024 * 1024
+	MaxValueLen = 512 * 1024
+	MaxUint8    = 255
+	MaxUint16   = 65535
 )
 
 type PkgEncoding interface {
@@ -59,7 +55,6 @@ type PkgEncoding interface {
 }
 
 type PkgHead struct {
-	stx    uint8
 	Cmd    uint8
 	DbId   uint8
 	Seq    uint64 //normal: request seq; replication: master binlog seq
@@ -71,16 +66,11 @@ func (head *PkgHead) DecodeHead(pkg []byte) error {
 		return ErrPkgLen
 	}
 
-	if pkg[0] != stx {
-		return ErrPkgStx
-	}
-
-	// cStx+cCmd+cDbId+ddwSeq+dwPkgLen+sBody
-	head.stx = pkg[0]
-	head.Cmd = pkg[1]
-	head.DbId = pkg[2]
-	head.Seq = binary.BigEndian.Uint64(pkg[3:])
-	head.PkgLen = binary.BigEndian.Uint32(pkg[11:])
+	// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
+	head.Cmd = pkg[0]
+	head.DbId = pkg[1]
+	head.Seq = binary.BigEndian.Uint64(pkg[2:])
+	head.PkgLen = binary.BigEndian.Uint32(pkg[10:])
 
 	return nil
 }
@@ -90,12 +80,11 @@ func (head *PkgHead) EncodeHead(pkg []byte) error {
 		return ErrPkgLen
 	}
 
-	// cStx+cCmd+cDbId+ddwSeq+dwPkgLen+sBody
-	pkg[0] = stx
-	pkg[1] = head.Cmd
-	pkg[2] = head.DbId
-	binary.BigEndian.PutUint64(pkg[3:], head.Seq)
-	binary.BigEndian.PutUint32(pkg[11:], head.PkgLen)
+	// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
+	pkg[0] = head.Cmd
+	pkg[1] = head.DbId
+	binary.BigEndian.PutUint64(pkg[2:], head.Seq)
+	binary.BigEndian.PutUint32(pkg[10:], head.PkgLen)
 
 	return nil
 }
@@ -105,7 +94,7 @@ func OverwriteSeq(pkg []byte, seq uint64) error {
 		return ErrPkgLen
 	}
 
-	binary.BigEndian.PutUint64(pkg[3:], seq)
+	binary.BigEndian.PutUint64(pkg[2:], seq)
 	return nil
 }
 

@@ -125,7 +125,7 @@ func benchmark(name string, op func(v int, client *client)) {
 					if v%10000 == 0 && v > 0 {
 						elapsed := time.Since(start)
 						speed := float64(v+1) * 1e9 / float64(elapsed)
-						fmt.Printf("%-8s : %9.1f op/s\r", name, speed)
+						fmt.Printf("%-8s : %9.1f op/s    \r", name, speed)
 					}
 				}
 			}

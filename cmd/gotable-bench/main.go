@@ -15,8 +15,9 @@ var (
 	host        = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
 	cliNum      = flag.Int("c", 50, "Number of parallel clients")
 	reqNum      = flag.Int("n", 100000, "Total number of requests")
-	dataSize    = flag.Int("d", 4, "Data size of SET/GET value in bytes")
-	testCase    = flag.String("t", "set,get", "Run the comma separated list of tests")
+	dataSize    = flag.Int("d", 8, "Data size of SET/GET value in bytes")
+	testCase    = flag.String("t", "set,get", "Comma separated list of tests: set,get,scan,scan200")
+	scanNum     = flag.Int("range", 100, "Scan range number")
 	histogram   = flag.Int("histogram", 0, "Print histogram of operation timings")
 	verbose     = flag.Int("v", 0, "Verbose mode, if enabled it will slow down the test")
 	poolNum     = flag.Int("pool", 5, "Max number of pool connections")
@@ -39,13 +40,19 @@ func main() {
 			benchGet()
 		case "set":
 			benchSet()
+		case "zget":
+			benchZget()
+		case "zset":
+			benchZset()
+		case "scan":
+			benchScan()
 		default:
 			fmt.Printf("Unknown test case: %s\n", t)
 		}
 	}
 }
 
-func benchmark(name string, op func(v int, client *table.Client)) {
+func benchmark(name string, op func(v int, client *table.Client, keyBuf, value []byte)) {
 	var g sync.WaitGroup
 	g.Add(*cliNum)
 
@@ -71,8 +78,15 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 
 			client, _ := cliPool.Get(1)
 
-			var hist = &hists[id]
+			hist := &hists[id]
 			hist.Clear()
+
+			// don't share across goroutines
+			var keyBuf = make([]byte, 0, 64)
+			var value = make([]byte, *dataSize)
+			for i := 0; i < *dataSize; i++ {
+				value[i] = 'x'
+			}
 
 			var opStart time.Time
 			for {
@@ -87,7 +101,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 						opStart = time.Now()
 					}
 
-					op(v, client)
+					op(v, client, keyBuf, value)
 
 					if recordHist {
 						d := time.Since(opStart)
@@ -97,7 +111,7 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 					if v%10000 == 0 && v > 0 {
 						elapsed := time.Since(start)
 						speed := float64(v+1) * 1e9 / float64(elapsed)
-						fmt.Printf("%-8s : %9.1f op/s\r", name, speed)
+						fmt.Printf("%-8s : %9.1f op/s    \r", name, speed)
 					}
 				}
 			}
@@ -120,19 +134,13 @@ func benchmark(name string, op func(v int, client *table.Client)) {
 }
 
 func benchSet() {
-	var value = make([]byte, *dataSize)
-	for i := 0; i < *dataSize; i++ {
-		value[i] = 'x'
-	}
-
-	var keyBuf = make([]byte, 0, 64)
-	var op = func(v int, c *table.Client) {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
 		copy(value, key)
 
-		set(c, rowKey, colKey, value)
+		set(c, false, rowKey, colKey, value, int64(-v))
 
 		for i := 0; i < len(key) && i < len(value); i++ {
 			value[i] = 'x'
@@ -142,21 +150,62 @@ func benchSet() {
 	benchmark("SET", op)
 }
 
+func benchZset() {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+		var colKey = key[len(key)-3:]
+		copy(value, key)
+
+		set(c, true, rowKey, colKey, value, int64(-v))
+
+		for i := 0; i < len(key) && i < len(value); i++ {
+			value[i] = 'x'
+		}
+	}
+
+	benchmark("ZSET", op)
+}
+
 func benchGet() {
-	var keyBuf = make([]byte, 0, 64)
-	var op = func(v int, c *table.Client) {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
 
-		get(c, rowKey, colKey)
+		get(c, false, rowKey, colKey)
 	}
 
 	benchmark("GET", op)
 }
 
-func set(c *table.Client, rowKey, colKey, value []byte) {
-	err := c.Set(rowKey, colKey, value)
+func benchZget() {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+		var colKey = key[len(key)-3:]
+
+		get(c, true, rowKey, colKey)
+	}
+
+	benchmark("ZGET", op)
+}
+
+func benchScan() {
+	var colKey = []byte("")
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+		//var colKey = key[len(key)-3:]
+
+		scan(c, rowKey, colKey, *scanNum)
+	}
+
+	benchmark(fmt.Sprintf("SCAN %d", *scanNum), op)
+}
+
+func set(c *table.Client, zop bool, rowKey, colKey, value []byte, score int64) {
+	_, err := c.Set(zop, &table.OneArgs{0, rowKey, colKey, value, score, 0})
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
 		return
@@ -167,15 +216,38 @@ func set(c *table.Client, rowKey, colKey, value []byte) {
 	}
 }
 
-func get(c *table.Client, rowKey, colKey []byte) {
-	value, err := c.Get(rowKey, colKey)
-	if err != nil && err != table.ErrNotExist {
+func get(c *table.Client, zop bool, rowKey, colKey []byte) {
+	r, err := c.Get(zop, &table.OneArgs{0, rowKey, colKey, nil, 0, 0})
+	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
 		return
 	}
 
 	if *verbose != 0 {
-		fmt.Printf("rowKey: %2s, colKey: %s, value: %s\n",
-			string(rowKey), string(colKey), string(value))
+		fmt.Printf("rowKey: %2s, colKey: %s, value: %s, score:%d\n",
+			string(rowKey), string(colKey), string(r.Value), r.Score)
+	}
+}
+
+func scan(c *table.Client, rowKey, colKey []byte, num int) {
+	var sa table.ScanArgs
+	sa.Num = uint16(num)
+	sa.Direction = 0
+	sa.TableId = 0
+	sa.RowKey = []byte(rowKey)
+	sa.ColKey = []byte(colKey)
+
+	r, err := c.Scan(false, &sa)
+	if err != nil {
+		fmt.Printf("Get failed: %s\n", err)
+		return
+	}
+
+	if *verbose != 0 {
+		for i := 0; i < len(r.Reply); i++ {
+			var one = &r.Reply[i]
+			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
+				one.RowKey, one.ColKey, one.Score, one.Value)
+		}
 	}
 }

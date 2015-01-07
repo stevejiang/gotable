@@ -1,31 +1,26 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"github.com/stevejiang/gotable/proto"
-	"net"
+	"github.com/stevejiang/gotable/api/go/table"
 	"strconv"
 )
 
 type client struct {
-	c       net.Conn
-	r       *bufio.Reader
-	w       *bufio.Writer
-	headBuf []byte
-	head    proto.PkgHead
-	dbId    uint8
+	c    *table.Client
+	dbId uint8
 }
 
 func newClient() *client {
-	link, err := net.Dial("tcp", *host)
+	var c = new(client)
+	var err error
+	c.c, err = table.Dial("tcp", *host)
 	if err != nil {
 		fmt.Println("dial failed: ", err)
 		return nil
 	}
 
-	return &client{link, bufio.NewReader(link), bufio.NewWriter(link),
-		make([]byte, proto.HeadSize), proto.PkgHead{}, 0}
+	return c
 }
 
 func (c *client) do(cmd string, args []string) {
@@ -69,41 +64,55 @@ func (c *client) get(args []string) error {
 		return err
 	}
 
-	var req proto.PkgCmdGetReq
-	req.Cmd = proto.CmdGet
-	req.DbId = c.dbId
-	req.TableId = tableId
-	req.RowKey = []byte(rowKey)
-	req.ColKey = []byte(colKey)
-
-	var pkg []byte
-	_, err = req.Encode(&pkg)
+	r, err := c.c.Get(false, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0})
 	if err != nil {
 		return err
 	}
 
-	_, err = c.w.Write(pkg)
-	if err != nil {
-		fmt.Printf("Write failed: %s\n", err)
-		return err
-	}
-	c.w.Flush()
-
-	pkg, err = proto.ReadPkg(c.r, c.headBuf, &c.head, nil)
-	if err != nil {
-		return err
-	}
-
-	var resp proto.PkgCmdGetResp
-	resp.Decode(pkg)
-
-	switch resp.ErrCode {
-	case proto.EcodeOk:
-		fmt.Printf("%q\n", resp.Value)
-	case proto.EcodeNotExist:
+	switch r.ErrCode {
+	case table.EcodeOk:
+		fmt.Printf("%q\n", r.Value)
+	case table.EcodeNotExist:
 		fmt.Println("(nil)")
 	default:
-		return fmt.Errorf("GET failed with error code %d", resp.ErrCode)
+		fmt.Printf("<Unknown error code %d>\n", r.ErrCode)
+	}
+
+	return nil
+}
+
+func (c *client) zget(args []string) error {
+	//zget <tableId> <rowKey> <colKey>
+	if len(args) != 3 {
+		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+	}
+
+	tableId, err := getTableId(args[0])
+	if err != nil {
+		return err
+	}
+
+	rowKey, err := extractKey(args[1])
+	if err != nil {
+		return err
+	}
+	colKey, err := extractKey(args[2])
+	if err != nil {
+		return err
+	}
+
+	r, err := c.c.Get(true, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0})
+	if err != nil {
+		return err
+	}
+
+	switch r.ErrCode {
+	case table.EcodeOk:
+		fmt.Printf("%d\t%q\n", r.Score, r.Value)
+	case table.EcodeNotExist:
+		fmt.Println("(nil)")
+	default:
+		fmt.Printf("<Unknown error code %d>\n", r.ErrCode)
 	}
 
 	return nil
@@ -133,40 +142,168 @@ func (c *client) set(args []string) error {
 		return err
 	}
 
-	var req proto.PkgCmdPutReq
-	req.Cmd = proto.CmdPut
-	req.DbId = c.dbId
-	req.TableId = tableId
-	req.RowKey = []byte(rowKey)
-	req.ColKey = []byte(colKey)
-	req.Value = []byte(value)
-
-	var pkg []byte
-	_, err = req.Encode(&pkg)
+	r, err := c.c.Set(false, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey),
+		[]byte(value), 0, 0})
 	if err != nil {
 		return err
 	}
 
-	_, err = c.w.Write(pkg)
+	switch r.ErrCode {
+	case table.EcodeCasNotMatch:
+		fmt.Printf("CAS not match, the new cas is %d\n", r.Cas)
+	default:
+		fmt.Println("OK")
+	}
+
+	return nil
+}
+
+func (c *client) zset(args []string) error {
+	//zset <tableId> <rowKey> <colKey> <value> <score>
+	if len(args) != 5 {
+		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+	}
+
+	tableId, err := getTableId(args[0])
 	if err != nil {
-		fmt.Printf("Write failed: %s\n", err)
 		return err
 	}
-	c.w.Flush()
 
-	pkg, err = proto.ReadPkg(c.r, c.headBuf, &c.head, nil)
+	rowKey, err := extractKey(args[1])
+	if err != nil {
+		return err
+	}
+	colKey, err := extractKey(args[2])
+	if err != nil {
+		return err
+	}
+	value, err := extractKey(args[3])
+	if err != nil {
+		return err
+	}
+	score, err := strconv.ParseInt(args[4], 10, 64)
 	if err != nil {
 		return err
 	}
 
-	var resp proto.PkgCmdPutResp
-	resp.Decode(pkg)
-
-	if resp.ErrCode != proto.EcodeOk {
-		return fmt.Errorf("GET failed with error code %d", resp.ErrCode)
+	r, err := c.c.Set(true, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey),
+		[]byte(value), score, 0})
+	if err != nil {
+		return err
 	}
 
-	fmt.Println("OK")
+	switch r.ErrCode {
+	case table.EcodeCasNotMatch:
+		fmt.Printf("CAS not match, the new cas is %d\n", r.Cas)
+	default:
+		fmt.Println("OK")
+	}
+
+	return nil
+}
+
+func (c *client) scan(args []string) error {
+	//scan <tableId> <rowKey> <colKey> <num>
+	if len(args) != 4 {
+		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+	}
+
+	tableId, err := getTableId(args[0])
+	if err != nil {
+		return err
+	}
+
+	rowKey, err := extractKey(args[1])
+	if err != nil {
+		return err
+	}
+	colKey, err := extractKey(args[2])
+	if err != nil {
+		return err
+	}
+
+	num, err := strconv.ParseInt(args[3], 10, 16)
+	if err != nil {
+		return err
+	}
+
+	var sa table.ScanArgs
+	sa.Num = uint16(num)
+	sa.Direction = 0
+	sa.TableId = tableId
+	sa.RowKey = []byte(rowKey)
+	sa.ColKey = []byte(colKey)
+
+	r, err := c.c.Scan(false, &sa)
+	if err != nil {
+		return err
+	}
+
+	if len(r.Reply) == 0 {
+		fmt.Println("no record!")
+	} else {
+		for i := 0; i < len(r.Reply); i++ {
+			var one = &r.Reply[i]
+			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
+				one.RowKey, one.ColKey, one.Score, one.Value)
+		}
+	}
+
+	return nil
+}
+
+func (c *client) zscan(args []string) error {
+	//zscan <tableId> <rowKey> <score> <colKey> <num>
+	if len(args) != 5 {
+		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+	}
+
+	tableId, err := getTableId(args[0])
+	if err != nil {
+		return err
+	}
+
+	rowKey, err := extractKey(args[1])
+	if err != nil {
+		return err
+	}
+
+	score, err := strconv.ParseInt(args[2], 10, 64)
+	if err != nil {
+		return err
+	}
+	colKey, err := extractKey(args[3])
+	if err != nil {
+		return err
+	}
+
+	num, err := strconv.ParseInt(args[4], 10, 16)
+	if err != nil {
+		return err
+	}
+
+	var sa table.ScanArgs
+	sa.Num = uint16(num)
+	sa.Direction = 0
+	sa.TableId = tableId
+	sa.RowKey = []byte(rowKey)
+	sa.ColKey = []byte(colKey)
+	sa.Score = score
+
+	r, err := c.c.Scan(true, &sa)
+	if err != nil {
+		return err
+	}
+
+	if len(r.Reply) == 0 {
+		fmt.Println("no record!")
+	} else {
+		for i := 0; i < len(r.Reply); i++ {
+			var one = &r.Reply[i]
+			fmt.Printf("%02d) [%q\t%d\t%q]\t[%q]\n", i,
+				one.RowKey, one.Score, one.ColKey, one.Value)
+		}
+	}
 
 	return nil
 }

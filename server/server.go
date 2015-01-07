@@ -2,8 +2,9 @@ package server
 
 import (
 	"fmt"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/binlog"
-	"github.com/stevejiang/gotable/proto"
+	"github.com/stevejiang/gotable/ctrl"
 	"github.com/stevejiang/gotable/store"
 	"log"
 	"net"
@@ -13,7 +14,7 @@ import (
 )
 
 type Server struct {
-	db      *store.TableDB
+	tbl     *store.Table
 	reqChan *RequestChan
 	bin     *binlog.BinLog
 	rwMtx   sync.RWMutex
@@ -27,132 +28,93 @@ func NewServer(dbname string) *Server {
 
 	srv := new(Server)
 
-	srv.db = store.NewTableDB()
-	err := srv.db.Open(rocksdbDir, true)
-	if err != nil {
-		log.Println("Open failed: ", err)
+	srv.tbl = store.NewTable(&srv.rwMtx, rocksdbDir)
+	if srv.tbl == nil {
 		return nil
 	}
 
 	srv.reqChan = new(RequestChan)
-	srv.reqChan.ReadReqChan = make(chan *request, 10000)
-	srv.reqChan.WriteReqChan = make(chan *request, 10000)
+	srv.reqChan.ReadReqChan = make(chan *Request, 10000)
+	srv.reqChan.WriteReqChan = make(chan *Request, 10000)
 
 	srv.bin = binlog.NewBinLog(binlogDir)
 
 	return srv
 }
 
-func (srv *Server) addResp(write bool, req *request, resp *response) {
-	switch req.cli.cliType {
+func (srv *Server) addResp(write bool, req *Request, resp *Response) {
+	switch req.Cli.cliType {
 	case ClientTypeNormal:
-		req.cli.AddResp(resp)
+		req.Cli.AddResp(resp)
 		if write {
-			srv.bin.AddRequest(&binlog.Request{0, 0, req.pkg})
+			srv.bin.AddRequest(&binlog.Request{0, 0, req.Pkg})
 		}
 	case ClientTypeSlaver:
 		if write {
 			var masterId uint16 = 1
-			srv.bin.AddRequest(&binlog.Request{masterId, req.seq, req.pkg})
+			srv.bin.AddRequest(&binlog.Request{masterId, req.Seq, req.Pkg})
 		}
 	}
 }
 
-func (srv *Server) ping(req *request) {
-	var resp = new(response)
-	resp.cmd = req.cmd
-	resp.seq = req.seq
-	resp.pkg = req.pkg
+func (srv *Server) ping(req *Request) {
+	var resp = new(Response)
+	resp.Cmd = req.Cmd
+	resp.Seq = req.Seq
+	resp.Pkg = req.Pkg
 
 	srv.addResp(false, req, resp)
 }
 
-func (srv *Server) get(req *request) {
-	var err error
-	var in proto.PkgCmdGetReq
-	in.Decode(req.pkg)
+func (srv *Server) get(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Get(&req.PkgArgs)
 
-	var out proto.PkgCmdGetResp
-	out.Value, err = srv.db.Get(in.DbId, store.TableKey{in.TableId, in.RowKey,
-		store.ColSpaceDefault, in.ColKey})
-	if err != nil {
-		out.ErrCode = proto.EcodeReadDbFailed
-		log.Printf("Read DB failed: %s\n", err)
-	}
-
-	if out.Value == nil {
-		out.ErrCode = proto.EcodeNotExist
-	}
-
-	out.PkgHead = in.PkgHead
-	out.DbId = in.DbId
-	out.TableId = in.TableId
-	out.RowKey = in.RowKey
-	out.ColKey = in.ColKey
-
-	var resp = new(response)
-	resp.cmd = req.cmd
-	resp.seq = req.seq
-	out.Encode(&resp.pkg)
-
-	srv.addResp(false, req, resp)
+	srv.addResp(true, req, &resp)
 }
 
-func (srv *Server) put(req *request) {
-	var in proto.PkgCmdPutReq
-	in.Decode(req.pkg)
+func (srv *Server) put(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Set(&req.PkgArgs)
 
-	srv.rwMtx.RLock()
-	var err = srv.db.Put(in.DbId, store.TableKey{in.TableId, in.RowKey,
-		store.ColSpaceDefault, in.ColKey}, in.Value)
-	srv.rwMtx.RUnlock()
-
-	var out proto.PkgCmdPutResp
-	if err != nil {
-		out.ErrCode = proto.EcodeWriteDbFailed
-		log.Printf("Write DB failed: %s\n", err)
-	}
-
-	out.PkgHead = in.PkgHead
-	out.DbId = in.DbId
-	out.TableId = in.TableId
-	out.RowKey = in.RowKey
-	out.ColKey = in.ColKey
-
-	var resp = new(response)
-	resp.cmd = req.cmd
-	resp.seq = req.seq
-	out.Encode(&resp.pkg)
-
-	srv.addResp(true, req, resp)
+	srv.addResp(true, req, &resp)
 }
 
-func (srv *Server) newMaster(req *request) {
-	var in proto.PkgCmdMasterReq
-	in.Decode(req.pkg)
+func (srv *Server) scan(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Scan(&req.PkgArgs)
 
-	req.cli.cliType = ClientTypeMaster
+	srv.addResp(true, req, &resp)
+}
+
+func (srv *Server) newMaster(req *Request) {
+	var in ctrl.PkgCmdMasterReq
+	in.Decode(req.Pkg)
+
+	req.Cli.cliType = ClientTypeMaster
 	var startLogSeq = in.LastSeq
 
 	log.Printf("receive a slave connection from %s, startLogSeq=%d\n",
-		req.cli.c.RemoteAddr(), startLogSeq)
+		req.Cli.c.RemoteAddr(), startLogSeq)
 
 	srv.rwMtx.Lock()
-	var ms = newMaster(req.cli, srv.bin, startLogSeq)
+	var ms = newMaster(req.Cli, srv.bin, startLogSeq)
 	srv.rwMtx.Unlock()
 
 	srv.bin.RegisterMonitor(ms)
-	go ms.goAsync(srv.db, &srv.rwMtx)
+	go ms.goAsync(srv.tbl, &srv.rwMtx)
 }
 
-func (srv *Server) doProcess(req *request) {
-	switch req.cmd {
+func (srv *Server) doProcess(req *Request) {
+	switch req.Cmd {
 	case proto.CmdPing:
 		srv.ping(req)
 	case proto.CmdGet:
 		srv.get(req)
-	case proto.CmdPut:
+	case proto.CmdSet:
 		srv.put(req)
+	case proto.CmdScan:
+		srv.scan(req)
 	case proto.CmdMaster:
 		srv.newMaster(req)
 	}
@@ -162,7 +124,7 @@ func (srv *Server) processRead() {
 	for {
 		select {
 		case req := <-srv.reqChan.ReadReqChan:
-			if !req.cli.IsClosed() {
+			if !req.Cli.IsClosed() {
 				srv.doProcess(req)
 			}
 		}
@@ -173,7 +135,7 @@ func (srv *Server) processWrite() {
 	for {
 		select {
 		case req := <-srv.reqChan.WriteReqChan:
-			if !req.cli.IsClosed() {
+			if !req.Cli.IsClosed() {
 				srv.doProcess(req)
 			}
 		}

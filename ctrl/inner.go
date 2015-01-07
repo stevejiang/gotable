@@ -1,26 +1,13 @@
-package proto
+package ctrl
 
 import (
 	"encoding/binary"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 )
-
-// PKG = HEAD+cDbId+cTableId+cColType+cRowKeyLen+sRowKey+wColKeyLen+sColKey+dwValueLen+sValue
-// Inner request: ErrCode = cColType
-type PkgCmdSyncReq struct {
-	PkgKeyValue
-}
-
-func (p *PkgCmdSyncReq) ColSpace() uint8 {
-	return p.ErrCode
-}
-
-func (p *PkgCmdSyncReq) SetColSpace(val uint8) {
-	p.ErrCode = val
-}
 
 // PKG = HEAD+cAddrLen+sSlaveAddr+ddwLastSeq+wUnitNum+awUnitId[wUnitNum]
 type PkgCmdMasterReq struct {
-	PkgHead
+	proto.PkgHead
 	SlaveAddr []byte
 	LastSeq   uint64
 	UnitIDs   []uint16
@@ -28,23 +15,23 @@ type PkgCmdMasterReq struct {
 
 // PKG = HEAD+cErrCode+wMsgLen+sErrMsg
 type PkgCmdMasterResp struct {
-	PkgHead
+	proto.PkgHead
 	ErrCode uint8
 	ErrMsg  []byte
 }
 
 func (p *PkgCmdMasterReq) Length() int {
 	// PKG = HEAD+cAddrLen+sSlaveAddr+ddwLastSeq+wUnitNum+awUnitId[wUnitNum]
-	return HeadSize + 1 + len(p.SlaveAddr) + 10 + 2*len(p.UnitIDs)
+	return proto.HeadSize + 1 + len(p.SlaveAddr) + 10 + 2*len(p.UnitIDs)
 }
 
 func (p *PkgCmdMasterReq) Encode(ppkg *[]byte) (n int, err error) {
-	if len(p.SlaveAddr) > MaxUint8 {
-		return 0, ErrArrayLen
+	if len(p.SlaveAddr) > proto.MaxUint8 {
+		return 0, proto.ErrArrayLen
 	}
 
-	if len(p.UnitIDs) > MaxUint16 {
-		return 0, ErrArrayLen
+	if len(p.UnitIDs) > proto.MaxUint16 {
+		return 0, proto.ErrArrayLen
 	}
 
 	// PKG = HEAD+cAddrLen+sSlaveAddr+ddwLastSeq+wUnitNum+awUnitId[wUnitNum]
@@ -63,7 +50,7 @@ func (p *PkgCmdMasterReq) Encode(ppkg *[]byte) (n int, err error) {
 		return 0, err
 	}
 
-	n = HeadSize
+	n = proto.HeadSize
 	pkg[n] = uint8(len(p.SlaveAddr))
 	n += 1
 	copy(pkg[n:], p.SlaveAddr)
@@ -90,15 +77,18 @@ func (p *PkgCmdMasterReq) Decode(pkg []byte) (n int, err error) {
 
 	var pkgLen = len(pkg)
 	if p.PkgLen > uint32(pkgLen) {
-		return 0, ErrPkgLen
+		return 0, proto.ErrPkgLen
 	}
 
 	// PKG = HEAD+cAddrLen+sSlaveAddr+ddwLastSeq+wUnitNum+awUnitId[wUnitNum]
-	n = HeadSize
+	n = proto.HeadSize
+	if n+1 > pkgLen {
+		return n, proto.ErrPkgLen
+	}
 	var addrLen = int(pkg[n])
 	n += 1
-	if n+addrLen > pkgLen {
-		return n, ErrPkgLen
+	if n+addrLen+10 > pkgLen {
+		return n, proto.ErrPkgLen
 	}
 	p.SlaveAddr = pkg[n : n+addrLen]
 	n += addrLen
@@ -109,7 +99,7 @@ func (p *PkgCmdMasterReq) Decode(pkg []byte) (n int, err error) {
 	var unitNum = int(binary.BigEndian.Uint16(pkg[n:]))
 	n += 2
 	if n+unitNum*2 > pkgLen {
-		return n, ErrPkgLen
+		return n, proto.ErrPkgLen
 	}
 	for i := 0; i < unitNum; i++ {
 		p.UnitIDs = append(p.UnitIDs, binary.BigEndian.Uint16(pkg[n:]))
@@ -121,12 +111,12 @@ func (p *PkgCmdMasterReq) Decode(pkg []byte) (n int, err error) {
 
 func (p *PkgCmdMasterResp) Length() int {
 	// PKG = HEAD+cErrCode+wMsgLen+sErrMsg
-	return HeadSize + 3 + len(p.ErrMsg)
+	return proto.HeadSize + 3 + len(p.ErrMsg)
 }
 
 func (p *PkgCmdMasterResp) Encode(ppkg *[]byte) (n int, err error) {
-	if len(p.ErrMsg) > MaxUint16 {
-		return 0, ErrArrayLen
+	if len(p.ErrMsg) > proto.MaxUint16 {
+		return 0, proto.ErrArrayLen
 	}
 
 	// PKG = HEAD+cErrCode+wMsgLen+sErrMsg
@@ -145,7 +135,7 @@ func (p *PkgCmdMasterResp) Encode(ppkg *[]byte) (n int, err error) {
 		return 0, err
 	}
 
-	n = HeadSize
+	n = proto.HeadSize
 	pkg[n] = p.ErrCode
 	n += 1
 
@@ -165,17 +155,20 @@ func (p *PkgCmdMasterResp) Decode(pkg []byte) (n int, err error) {
 
 	var pkgLen = len(pkg)
 	if p.PkgLen > uint32(pkgLen) {
-		return 0, ErrPkgLen
+		return 0, proto.ErrPkgLen
 	}
 
 	// PKG = HEAD+cErrCode+wMsgLen+sErrMsg
-	n = HeadSize
+	n = proto.HeadSize
+	if n+2 > pkgLen {
+		return n, proto.ErrPkgLen
+	}
 	p.ErrCode = pkg[n]
 	n += 1
 	var msgLen = int(pkg[n])
 	n += 1
 	if n+msgLen > pkgLen {
-		return n, ErrPkgLen
+		return n, proto.ErrPkgLen
 	}
 	p.ErrMsg = pkg[n : n+msgLen]
 	n += msgLen

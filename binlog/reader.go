@@ -2,7 +2,7 @@ package binlog
 
 import (
 	"bufio"
-	"github.com/stevejiang/gotable/proto"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 	"log"
 	"os"
 )

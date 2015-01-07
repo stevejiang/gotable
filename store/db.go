@@ -1,5 +1,6 @@
 package store
 
+// #cgo LDFLAGS: -lrocksdb -lsnappy -lz
 // #include <rocksdb/c.h>
 // #include <malloc.h>
 // #include <string.h>
@@ -8,12 +9,8 @@ import "C"
 import (
 	"encoding/binary"
 	"fmt"
-	"hash/crc32"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 	"unsafe"
-)
-
-const (
-	TotalUnitNum = 4096
 )
 
 const (
@@ -29,12 +26,8 @@ type TableKey struct {
 	ColKey   []byte
 }
 
-func GetUnitId(rowKey []byte) uint16 {
-	return uint16(crc32.ChecksumIEEE(rowKey) % TotalUnitNum)
-}
-
 func GetRawKey(dbId uint8, key TableKey) []byte {
-	var unitId = GetUnitId(key.RowKey)
+	var unitId = proto.GetUnitId(dbId, key.TableId, key.RowKey)
 
 	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colType+sColKey
 	var rawLen = 6 + len(key.RowKey) + len(key.ColKey)
@@ -69,8 +62,14 @@ type TableDB struct {
 	wOpt *C.rocksdb_writeoptions_t
 }
 
-type TableIterator struct {
+type Iterator struct {
 	iter *C.rocksdb_iterator_t
+}
+
+type SnapReadOptions struct {
+	rOpt *C.rocksdb_readoptions_t
+	snap *C.rocksdb_snapshot_t
+	db   *C.rocksdb_t
 }
 
 func NewTableDB() *TableDB {
@@ -145,13 +144,18 @@ func (db *TableDB) Put(dbId uint8, key TableKey, value []byte) error {
 	return nil
 }
 
-func (db *TableDB) Get(dbId uint8, key TableKey) ([]byte, error) {
+func (db *TableDB) Get(opt *SnapReadOptions, dbId uint8, key TableKey) ([]byte, error) {
 	var rawKey = GetRawKey(dbId, key)
 	var ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
 
+	var rOpt = db.rOpt
+	if opt != nil && opt.rOpt != nil {
+		rOpt = opt.rOpt
+	}
+
 	var errStr *C.char
 	var vallen C.size_t
-	var cv = C.rocksdb_get(db.db, db.rOpt, ck, C.size_t(len(rawKey)), &vallen, &errStr)
+	var cv = C.rocksdb_get(db.db, rOpt, ck, C.size_t(len(rawKey)), &vallen, &errStr)
 
 	var err error
 	if errStr != nil {
@@ -165,6 +169,22 @@ func (db *TableDB) Get(dbId uint8, key TableKey) ([]byte, error) {
 	}
 
 	return nil, err
+}
+
+func (db *TableDB) Del(dbId uint8, key TableKey) error {
+	var rawKey = GetRawKey(dbId, key)
+	var ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
+
+	var errStr *C.char
+	C.rocksdb_delete(db.db, db.wOpt, ck, C.size_t(len(rawKey)), &errStr)
+
+	var err error
+	if errStr != nil {
+		defer C.free(unsafe.Pointer(errStr))
+		err = fmt.Errorf(C.GoString(errStr))
+	}
+
+	return err
 }
 
 func (db *TableDB) Mput(dbId uint8, keys []TableKey, values [][]byte) error {
@@ -203,8 +223,32 @@ func (db *TableDB) Mput(dbId uint8, keys []TableKey, values [][]byte) error {
 	return nil
 }
 
-func (db *TableDB) NewIterator(fillCache bool) *TableIterator {
-	var iter = new(TableIterator)
+func (db *TableDB) NewSnapReadOptions() *SnapReadOptions {
+	var opt = new(SnapReadOptions)
+	opt.rOpt = C.rocksdb_readoptions_create()
+	opt.snap = C.rocksdb_create_snapshot(db.db)
+	C.rocksdb_readoptions_set_snapshot(opt.rOpt, opt.snap)
+	opt.db = db.db
+	return opt
+}
+
+// Release snapshot
+func (opt *SnapReadOptions) Release() {
+	if opt.rOpt != nil {
+		C.rocksdb_readoptions_destroy(opt.rOpt)
+		opt.rOpt = nil
+	}
+
+	if opt.snap != nil {
+		C.rocksdb_release_snapshot(opt.db, opt.snap)
+		opt.snap = nil
+	}
+
+	opt.db = nil
+}
+
+func (db *TableDB) NewIterator(fillCache bool) *Iterator {
+	var iter = new(Iterator)
 	var scanOpt = C.rocksdb_readoptions_create()
 	defer C.rocksdb_readoptions_destroy(scanOpt)
 
@@ -214,22 +258,22 @@ func (db *TableDB) NewIterator(fillCache bool) *TableIterator {
 	return iter
 }
 
-func (iter *TableIterator) Close() {
+func (iter *Iterator) Close() {
 	if iter.iter != nil {
 		C.rocksdb_iter_destroy(iter.iter)
 		iter.iter = nil
 	}
 }
 
-func (iter *TableIterator) SeekToFirst() {
+func (iter *Iterator) SeekToFirst() {
 	C.rocksdb_iter_seek_to_first(iter.iter)
 }
 
-func (iter *TableIterator) SeekToLast() {
+func (iter *Iterator) SeekToLast() {
 	C.rocksdb_iter_seek_to_last(iter.iter)
 }
 
-func (iter *TableIterator) Seek(key []byte) {
+func (iter *Iterator) Seek(key []byte) {
 	var ck *C.char
 	if len(key) > 0 {
 		ck = (*C.char)(unsafe.Pointer(&key[0]))
@@ -237,26 +281,26 @@ func (iter *TableIterator) Seek(key []byte) {
 	C.rocksdb_iter_seek(iter.iter, ck, C.size_t(len(key)))
 }
 
-func (iter *TableIterator) Next() {
+func (iter *Iterator) Next() {
 	C.rocksdb_iter_next(iter.iter)
 }
 
-func (iter *TableIterator) Prev() {
+func (iter *Iterator) Prev() {
 	C.rocksdb_iter_prev(iter.iter)
 }
 
-func (iter *TableIterator) Valid() bool {
+func (iter *Iterator) Valid() bool {
 	return C.rocksdb_iter_valid(iter.iter) != 0
 }
 
-func (iter *TableIterator) Key() (unitId uint16, dbId uint8, key TableKey) {
+func (iter *Iterator) Key() (unitId uint16, dbId uint8, key TableKey) {
 	var keyLen C.size_t
 	var ck = C.rocksdb_iter_key(iter.iter, &keyLen)
 	var rawKey = C.GoBytes(unsafe.Pointer(ck), C.int(keyLen))
 	return ParseRawKey(rawKey)
 }
 
-func (iter *TableIterator) Value() []byte {
+func (iter *Iterator) Value() []byte {
 	var valueLen C.size_t
 	var value = C.rocksdb_iter_value(iter.iter, &valueLen)
 	return C.GoBytes(unsafe.Pointer(value), C.int(valueLen))

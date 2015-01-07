@@ -60,6 +60,14 @@ func main() {
 			checkError(cli.get(fields[1:]))
 		case "set":
 			checkError(cli.set(fields[1:]))
+		case "zget":
+			checkError(cli.zget(fields[1:]))
+		case "zset":
+			checkError(cli.zset(fields[1:]))
+		case "scan":
+			checkError(cli.scan(fields[1:]))
+		case "zscan":
+			checkError(cli.zscan(fields[1:]))
 		case "use":
 			checkError(cli.use(fields[1:]))
 
@@ -94,6 +102,12 @@ func writeHelp() {
 	fmt.Println("                       set key/value for table in selected database")
 	fmt.Println("get <tableId> <rowKey> <colKey>")
 	fmt.Println("                       get key/value for table in selected database")
+	fmt.Println("zset <tableId> <rowKey> <colKey> <value> <score>")
+	fmt.Println("                       zset key/value for table in selected database")
+	fmt.Println("zget <tableId> <rowKey> <colKey>")
+	fmt.Println("                       zget key/value for table in selected database")
+	fmt.Println("scan <tableId> <rowKey> <colKey> <num>")
+	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> <num>")
 	fmt.Println("clear                  clear the screen")
 	fmt.Println("quit                   exit")
 	fmt.Println("")

@@ -3,7 +3,7 @@ package table
 import (
 	"bufio"
 	"errors"
-	"github.com/stevejiang/gotable/proto"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 	"io"
 	"log"
 	"net"
@@ -12,17 +12,28 @@ import (
 )
 
 var (
-	ErrNotExist = errors.New("key is not found")
-	ErrShutdown = errors.New("connection is shut down")
+	ErrShutdown   = errors.New("connection is shut down")
+	ErrUnknownCmd = errors.New("unknown cmd")
+)
+
+const (
+	// <10: normal cases
+	EcodeOk          = 0 // Success
+	EcodeNotExist    = 1 // Key not exist, normal case
+	EcodeCasNotMatch = 2 // Cas not match, normal case
+
+	EcodeTempReadFail  = 11 // Temporary fail, retry may fix this
+	EcodeTempWriteFail = 12 // Temporary fail, retry may fix this
+
+	EcodeDecodeFailed = 21 // Decode request PKG failed
+	EcodeReadFailed   = 22
+	EcodeWriteFailed  = 23
 )
 
 type Client struct {
 	p       *Pool
 	c       net.Conn
 	r       *bufio.Reader
-	headBuf []byte
-	head    proto.PkgHead
-
 	sending chan *Call
 
 	mtx      sync.Mutex // protects following
@@ -33,17 +44,18 @@ type Client struct {
 }
 
 type Call struct {
-	Pkg   []byte
 	Error error
-	seq   uint64
 	Done  chan *Call
+
+	pkg []byte
+	seq uint64
+	cmd uint8
 }
 
 func NewClient(conn net.Conn) *Client {
 	var c = new(Client)
 	c.c = conn
 	c.r = bufio.NewReader(conn)
-	c.headBuf = make([]byte, proto.HeadSize)
 	c.sending = make(chan *Call, 128)
 	c.pending = make(map[uint64]*Call)
 
@@ -99,71 +111,96 @@ func (c *Client) doClose() error {
 	return err
 }
 
-func (c *Client) Get(rowKey, colKey []byte) ([]byte, error) {
-	call := c.GoGet(rowKey, colKey)
+func (c *Client) Get(score bool, args *OneArgs) (*OneReply, error) {
+	call := c.GoGet(score, args)
 	if call.Error != nil {
 		return nil, call.Error
 	}
 
-	return c.GetCall(<-call.Done)
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
 }
 
-func (c *Client) Set(rowKey, colKey, value []byte) error {
-	call := c.GoSet(rowKey, colKey, value)
+func (c *Client) Set(score bool, args *OneArgs) (*OneReply, error) {
+	call := c.GoSet(score, args)
 	if call.Error != nil {
-		return call.Error
+		return nil, call.Error
 	}
 
-	return c.SetCall(<-call.Done)
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
 }
 
-func (c *Client) Del(rowKey, colKey []byte) error {
-	return nil
+func (c *Client) Del(score bool, args *OneArgs) (*OneReply, error) {
+	call := c.GoDel(score, args)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
 }
 
-func (c *Client) newCall() *Call {
-	var call = new(Call)
-	call.Done = make(chan *Call, 1)
+func (c *Client) Mget(score bool, args *MultiArgs) (*MultiReply, error) {
+	call := c.GoMget(score, args)
+	if call.Error != nil {
+		return nil, call.Error
+	}
 
-	c.mtx.Lock()
-	if c.shutdown || c.closing {
-		c.mtx.Unlock()
-		c.errCall(call, ErrShutdown)
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func (c *Client) Scan(score bool, args *ScanArgs) (*ScanReply, error) {
+	call := c.GoScan(score, args)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*ScanReply), nil
+}
+
+func (c *Client) GoGet(score bool, args *OneArgs) *Call {
+	call := c.newCall(proto.CmdGet)
+	if call.Error != nil {
 		return call
 	}
-	c.seq += 1
-	call.seq = c.seq
-	c.pending[call.seq] = call
-	c.mtx.Unlock()
 
-	return call
-}
-
-func (c *Client) errCall(call *Call, err error) {
-	call.Error = err
-
-	if call.seq > 0 {
-		c.mtx.Lock()
-		delete(c.pending, call.seq)
-		c.mtx.Unlock()
+	var p proto.PkgOneOp
+	p.Seq = call.seq
+	p.Cmd = call.cmd
+	p.TableId = args.TableId
+	p.RowKey = args.RowKey
+	p.ColKey = args.ColKey
+	if args.Cas != 0 {
+		p.Cas = args.Cas
+		p.CtrlFlag |= proto.CtrlCas
 	}
 
-	call.done()
-}
-
-func (c *Client) GoGet(rowKey, colKey []byte) *Call {
-	call := c.newCall()
-	if call.Error != nil {
-		return call
+	// ZGet
+	if score {
+		p.ColSpace = proto.ColSpaceScore1
+		p.CtrlFlag |= proto.CtrlColSpace
 	}
 
-	var req proto.PkgCmdGetReq
-	req.Seq = call.seq
-	req.Cmd = proto.CmdGet
-	req.RowKey = rowKey
-	req.ColKey = colKey
-
-	_, err := req.Encode(&call.Pkg)
+	var err error
+	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
 		c.errCall(call, err)
 		return call
@@ -175,32 +212,39 @@ func (c *Client) GoGet(rowKey, colKey []byte) *Call {
 	return call
 }
 
-func (c *Client) GetCall(call *Call) ([]byte, error) {
-	var resp proto.PkgCmdGetResp
-	resp.Decode(call.Pkg)
-
-	if resp.ErrCode != proto.EcodeOk {
-		call.Error = newErrorCode(resp.ErrCode)
-		return nil, call.Error
-	}
-
-	return resp.Value, nil
-}
-
-func (c *Client) GoSet(rowKey, colKey, value []byte) *Call {
-	call := c.newCall()
+func (c *Client) GoSet(score bool, args *OneArgs) *Call {
+	call := c.newCall(proto.CmdSet)
 	if call.Error != nil {
 		return call
 	}
 
-	var req proto.PkgCmdPutReq
-	req.Seq = call.seq
-	req.Cmd = proto.CmdPut
-	req.RowKey = rowKey
-	req.ColKey = colKey
-	req.Value = value
+	var p proto.PkgOneOp
+	p.Seq = call.seq
+	p.Cmd = call.cmd
+	p.TableId = args.TableId
+	p.RowKey = args.RowKey
+	p.ColKey = args.ColKey
+	if args.Value != nil {
+		p.Value = args.Value
+		p.CtrlFlag |= proto.CtrlValue
+	}
+	if args.Score != 0 {
+		p.Score = args.Score
+		p.CtrlFlag |= proto.CtrlScore
+	}
+	if args.Cas != 0 {
+		p.Cas = args.Cas
+		p.CtrlFlag |= proto.CtrlCas
+	}
 
-	_, err := req.Encode(&call.Pkg)
+	// ZSet
+	if score {
+		p.ColSpace = proto.ColSpaceScore1
+		p.CtrlFlag |= proto.CtrlColSpace
+	}
+
+	var err error
+	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
 		c.errCall(call, err)
 		return call
@@ -211,22 +255,187 @@ func (c *Client) GoSet(rowKey, colKey, value []byte) *Call {
 	return call
 }
 
-func (c *Client) SetCall(call *Call) error {
-	var resp proto.PkgCmdPutResp
-	resp.Decode(call.Pkg)
-
-	if resp.ErrCode != proto.EcodeOk {
-		return newErrorCode(resp.ErrCode)
+func (c *Client) GoDel(score bool, args *OneArgs) *Call {
+	call := c.newCall(proto.CmdDel)
+	if call.Error != nil {
+		return call
 	}
 
-	return nil
+	var p proto.PkgOneOp
+	p.Seq = call.seq
+	p.Cmd = call.cmd
+	p.TableId = args.TableId
+	p.RowKey = args.RowKey
+	p.ColKey = args.ColKey
+
+	// ZDel
+	if score {
+		p.ColSpace = proto.ColSpaceScore1
+		p.CtrlFlag |= proto.CtrlColSpace
+	}
+
+	var err error
+	call.pkg, _, err = p.Encode(nil)
+	if err != nil {
+		c.errCall(call, err)
+		return call
+	}
+
+	c.sending <- call
+
+	return call
+}
+
+func (c *Client) GoMget(score bool, args *MultiArgs) *Call {
+	call := c.newCall(proto.CmdMGet)
+	if call.Error != nil {
+		return call
+	}
+
+	var p proto.PkgMultiOp
+	p.Seq = call.seq
+	p.Cmd = call.cmd
+
+	for i := 0; i < len(args.Args); i++ {
+		p.Kvs[i].TableId = args.Args[i].TableId
+		p.Kvs[i].RowKey = args.Args[i].RowKey
+		p.Kvs[i].ColKey = args.Args[i].ColKey
+		if args.Args[i].Cas != 0 {
+			p.Kvs[i].Cas = args.Args[i].Cas
+			p.Kvs[i].CtrlFlag |= proto.CtrlCas
+		}
+
+		// ZMGet
+		if score {
+			p.Kvs[i].ColSpace = proto.ColSpaceScore1
+			p.Kvs[i].CtrlFlag |= proto.CtrlColSpace
+		}
+	}
+
+	var err error
+	call.pkg, _, err = p.Encode(nil)
+	if err != nil {
+		c.errCall(call, err)
+		return call
+	}
+
+	c.sending <- call
+
+	return call
+}
+
+func (c *Client) GoScan(zop bool, args *ScanArgs) *Call {
+	call := c.newCall(proto.CmdScan)
+	if call.Error != nil {
+		return call
+	}
+
+	var p proto.PkgScanReq
+	p.Seq = call.seq
+	p.Cmd = call.cmd
+	p.Num = args.Num
+	p.Direction = args.Direction
+	p.TableId = args.TableId
+	p.RowKey = args.RowKey
+	p.ColKey = args.ColKey
+
+	// ZScan
+	if zop {
+		if args.Score > 0 {
+			p.Score = args.Score
+			p.CtrlFlag |= proto.CtrlScore
+		}
+		p.ColSpace = proto.ColSpaceScore1
+		p.CtrlFlag |= proto.CtrlColSpace
+	}
+
+	var err error
+	call.pkg, _, err = p.Encode(nil)
+	if err != nil {
+		c.errCall(call, err)
+		return call
+	}
+
+	c.sending <- call
+
+	return call
+}
+
+func (c *Client) ParseReply(call *Call) (interface{}, error) {
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	switch call.cmd {
+	case proto.CmdDel:
+		fallthrough
+	case proto.CmdSet:
+		fallthrough
+	case proto.CmdGet:
+		var p proto.PkgOneOp
+		_, err := p.Decode(call.pkg)
+		if err != nil {
+			call.Error = err
+			return nil, call.Error
+		}
+
+		if !isNormalErrorCode(p.ErrCode) {
+			call.Error = newErrorCode(p.ErrCode)
+			return nil, call.Error
+		}
+
+		return &OneReply{p.ErrCode, &p.KeyValue}, nil
+
+	case proto.CmdMDel:
+		fallthrough
+	case proto.CmdMSet:
+		fallthrough
+	case proto.CmdMGet:
+		var p proto.PkgMultiOp
+		_, err := p.Decode(call.pkg)
+		if err != nil {
+			call.Error = err
+			return nil, call.Error
+		}
+
+		var r MultiReply
+		r.Reply = make([]OneReply, len(p.Kvs))
+		for i := 0; i < len(p.Kvs); i++ {
+			r.Reply[i].ErrCode = p.Kvs[i].ErrCode
+			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
+		}
+		return &r, nil
+
+	case proto.CmdScan:
+		var p proto.PkgScanResp
+		_, err := p.Decode(call.pkg)
+		if err != nil {
+			call.Error = err
+			return nil, call.Error
+		}
+
+		var r ScanReply
+		r.Direction = p.Direction
+		r.End = p.End
+		r.Reply = make([]OneReply, len(p.Kvs))
+		for i := 0; i < len(p.Kvs); i++ {
+			r.Reply[i].ErrCode = p.Kvs[i].ErrCode
+			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
+		}
+		return &r, nil
+	}
+
+	return nil, ErrUnknownCmd
 }
 
 func (c *Client) recv() {
+	var headBuf = make([]byte, proto.HeadSize)
+	var head proto.PkgHead
+
 	var pkg []byte
 	var err error
 	for err == nil {
-		pkg, err = proto.ReadPkg(c.r, c.headBuf, &c.head, nil)
+		pkg, err = proto.ReadPkg(c.r, headBuf, &head, nil)
 		if err != nil {
 			break
 		}
@@ -235,13 +444,13 @@ func (c *Client) recv() {
 		var ok bool
 
 		c.mtx.Lock()
-		if call, ok = c.pending[c.head.Seq]; ok {
-			delete(c.pending, c.head.Seq)
+		if call, ok = c.pending[head.Seq]; ok {
+			delete(c.pending, head.Seq)
 		}
 		c.mtx.Unlock()
 
 		if call != nil {
-			call.Pkg = pkg
+			call.pkg = pkg
 			call.done()
 		}
 	}
@@ -275,7 +484,7 @@ func (c *Client) send() {
 			}
 
 			if err == nil {
-				_, err = c.c.Write(call.Pkg)
+				_, err = c.c.Write(call.pkg)
 				if err != nil {
 					c.mtx.Lock()
 					c.shutdown = true
@@ -297,9 +506,41 @@ func (call *Call) done() {
 	}
 }
 
-func newErrorCode(code uint8) error {
-	if code == proto.EcodeNotExist {
-		return ErrNotExist
+func (c *Client) newCall(cmd uint8) *Call {
+	var call = new(Call)
+	call.cmd = cmd
+	call.Done = make(chan *Call, 1)
+
+	c.mtx.Lock()
+	if c.shutdown || c.closing {
+		c.mtx.Unlock()
+		c.errCall(call, ErrShutdown)
+		return call
 	}
+	c.seq += 1
+	call.seq = c.seq
+	c.pending[call.seq] = call
+	c.mtx.Unlock()
+
+	return call
+}
+
+func (c *Client) errCall(call *Call, err error) {
+	call.Error = err
+
+	if call.seq > 0 {
+		c.mtx.Lock()
+		delete(c.pending, call.seq)
+		c.mtx.Unlock()
+	}
+
+	call.done()
+}
+
+func isNormalErrorCode(code uint8) bool {
+	return code < 10
+}
+
+func newErrorCode(code uint8) error {
 	return errors.New("error code " + strconv.Itoa(int(code)))
 }

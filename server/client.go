@@ -2,7 +2,8 @@ package server
 
 import (
 	"bufio"
-	"github.com/stevejiang/gotable/proto"
+	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/store"
 	"log"
 	"net"
 	"sync"
@@ -15,30 +16,24 @@ const (
 	ClientTypeSlaver
 )
 
-type request struct {
-	cli *Client
-	cmd uint8
-	seq uint64
-	pkg []byte
+type Request struct {
+	Cli *Client
+	store.PkgArgs
 }
 
-type response struct {
-	cmd uint8
-	seq uint64
-	pkg []byte
-}
+type Response store.PkgArgs
 
 type RequestChan struct {
-	ReadReqChan  chan *request
-	WriteReqChan chan *request
-	SyncReqChan  chan *request
+	ReadReqChan  chan *Request
+	WriteReqChan chan *Request
+	SyncReqChan  chan *Request
 }
 
 type Client struct {
 	cliType  int
 	c        net.Conn
 	r        *bufio.Reader
-	respChan chan *response
+	respChan chan *Response
 
 	// atomic
 	closed uint32
@@ -54,11 +49,11 @@ func NewClient(conn net.Conn) *Client {
 	cli.cliType = ClientTypeNormal
 	cli.c = conn
 	cli.r = bufio.NewReader(conn)
-	cli.respChan = make(chan *response, 64)
+	cli.respChan = make(chan *Response, 64)
 	return cli
 }
 
-func (cli *Client) AddResp(resp *response) {
+func (cli *Client) AddResp(resp *Response) {
 	if !cli.IsClosed() {
 		defer recover()
 		cli.respChan <- resp
@@ -111,18 +106,20 @@ func (cli *Client) GoReadRequest(ch *RequestChan) {
 			return
 		}
 
-		var req = request{cli, head.Cmd, head.Seq, pkg}
+		var req = Request{cli, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
 
 		switch head.Cmd {
 		case proto.CmdMaster:
 			fallthrough
 		case proto.CmdPing:
 			fallthrough
+		case proto.CmdScan:
+			fallthrough
 		case proto.CmdGet:
 			ch.ReadReqChan <- &req
 		case proto.CmdSync:
 			fallthrough
-		case proto.CmdPut:
+		case proto.CmdSet:
 			ch.WriteReqChan <- &req
 		default:
 			cli.Close()
@@ -143,7 +140,7 @@ func (cli *Client) GoSendResponse() {
 			}
 
 			if err == nil && !cli.IsClosed() {
-				_, err = cli.c.Write(resp.pkg)
+				_, err = cli.c.Write(resp.Pkg)
 				if err != nil {
 					cli.Close()
 				}

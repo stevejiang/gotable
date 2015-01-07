@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"github.com/stevejiang/gotable/proto"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/util"
 	"io"
 	"log"
