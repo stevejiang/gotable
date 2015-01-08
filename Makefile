@@ -28,7 +28,7 @@ clean: rocksdb-clean
 
 rocksdb-clean:
 	rm build_config.mk
-	#rm -rf $(ROCKSDB)
+	rm -rf $(ROCKSDB)
 
 rocksdb-lib:
 	if [ ! -f "$(ROCKSDB)/librocksdb.a" ]; then \
