@@ -26,35 +26,6 @@ type TableKey struct {
 	ColKey   []byte
 }
 
-func GetRawKey(dbId uint8, key TableKey) []byte {
-	var unitId = proto.GetUnitId(dbId, key.TableId, key.RowKey)
-
-	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colType+sColKey
-	var rawLen = 6 + len(key.RowKey) + len(key.ColKey)
-	var rawKey = make([]byte, rawLen, rawLen)
-	binary.BigEndian.PutUint16(rawKey, unitId)
-	rawKey[2] = dbId
-	rawKey[3] = key.TableId
-	rawKey[4] = uint8(len(key.RowKey))
-	copy(rawKey[5:], key.RowKey)
-	rawKey[5+len(key.RowKey)] = key.ColSpace
-	copy(rawKey[(6+len(key.RowKey)):], key.ColKey)
-
-	return rawKey
-}
-
-func ParseRawKey(rawKey []byte) (unitId uint16, dbId uint8, key TableKey) {
-	unitId = binary.BigEndian.Uint16(rawKey)
-	dbId = rawKey[2]
-	key.TableId = rawKey[3]
-	var keyLen = rawKey[4]
-	var colTypePos = 5 + int(keyLen)
-	key.RowKey = rawKey[5:colTypePos]
-	key.ColSpace = rawKey[colTypePos]
-	key.ColKey = rawKey[(colTypePos + 1):]
-	return
-}
-
 type TableDB struct {
 	db   *C.rocksdb_t
 	opt  *C.rocksdb_options_t
@@ -312,4 +283,33 @@ func boolToUchar(b bool) C.uchar {
 	} else {
 		return 0
 	}
+}
+
+func GetRawKey(dbId uint8, key TableKey) []byte {
+	var unitId = proto.GetUnitId(dbId, key.TableId, key.RowKey)
+
+	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colType+sColKey
+	var rawLen = 6 + len(key.RowKey) + len(key.ColKey)
+	var rawKey = make([]byte, rawLen, rawLen)
+	binary.BigEndian.PutUint16(rawKey, unitId)
+	rawKey[2] = dbId
+	rawKey[3] = key.TableId
+	rawKey[4] = uint8(len(key.RowKey))
+	copy(rawKey[5:], key.RowKey)
+	rawKey[5+len(key.RowKey)] = key.ColSpace
+	copy(rawKey[(6+len(key.RowKey)):], key.ColKey)
+
+	return rawKey
+}
+
+func ParseRawKey(rawKey []byte) (unitId uint16, dbId uint8, key TableKey) {
+	unitId = binary.BigEndian.Uint16(rawKey)
+	dbId = rawKey[2]
+	key.TableId = rawKey[3]
+	var keyLen = rawKey[4]
+	var colTypePos = 5 + int(keyLen)
+	key.RowKey = rawKey[5:colTypePos]
+	key.ColSpace = rawKey[colTypePos]
+	key.ColKey = rawKey[(colTypePos + 1):]
+	return
 }

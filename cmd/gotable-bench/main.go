@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/stevejiang/gotable/api/go/table"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -15,9 +16,9 @@ var (
 	host        = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
 	cliNum      = flag.Int("c", 50, "Number of parallel clients")
 	reqNum      = flag.Int("n", 100000, "Total number of requests")
-	dataSize    = flag.Int("d", 8, "Data size of SET/GET value in bytes")
+	dataSize    = flag.Int("d", 8, "Data size of SET/MSET value in bytes")
 	testCase    = flag.String("t", "set,get", "Comma separated list of tests: set,get,scan,scan200")
-	scanNum     = flag.Int("range", 100, "Scan range number")
+	rangeNum    = flag.Int("range", 100, "Scan/MGet/Mset range number")
 	histogram   = flag.Int("histogram", 0, "Print histogram of operation timings")
 	verbose     = flag.Int("v", 0, "Verbose mode, if enabled it will slow down the test")
 	poolNum     = flag.Int("pool", 5, "Max number of pool connections")
@@ -192,23 +193,22 @@ func benchZget() {
 }
 
 func benchScan() {
-	var colKey = []byte("")
 	var op = func(v int, c *table.Client, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		//var colKey = key[len(key)-3:]
 
-		scan(c, rowKey, colKey, *scanNum)
+		scan(c, rowKey, nil, *rangeNum)
 	}
 
-	benchmark(fmt.Sprintf("SCAN %d", *scanNum), op)
+	benchmark(fmt.Sprintf("SCAN %d", *rangeNum), op)
 }
 
 func set(c *table.Client, zop bool, rowKey, colKey, value []byte, score int64) {
 	_, err := c.Set(zop, &table.OneArgs{0, rowKey, colKey, value, score, 0})
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
-		return
+		os.Exit(1)
 	}
 
 	if *verbose != 0 {
@@ -220,7 +220,7 @@ func get(c *table.Client, zop bool, rowKey, colKey []byte) {
 	r, err := c.Get(zop, &table.OneArgs{0, rowKey, colKey, nil, 0, 0})
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
-		return
+		os.Exit(1)
 	}
 
 	if *verbose != 0 {
@@ -230,17 +230,11 @@ func get(c *table.Client, zop bool, rowKey, colKey []byte) {
 }
 
 func scan(c *table.Client, rowKey, colKey []byte, num int) {
-	var sa table.ScanArgs
-	sa.Num = uint16(num)
-	sa.Direction = 0
-	sa.TableId = 0
-	sa.RowKey = []byte(rowKey)
-	sa.ColKey = []byte(colKey)
-
+	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{0, rowKey, colKey, nil, 0, 0}}
 	r, err := c.Scan(false, &sa)
 	if err != nil {
-		fmt.Printf("Get failed: %s\n", err)
-		return
+		fmt.Printf("Scan failed: %s\n", err)
+		os.Exit(1)
 	}
 
 	if *verbose != 0 {

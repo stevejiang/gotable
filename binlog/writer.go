@@ -488,7 +488,7 @@ func (bin *BinLog) loadAndFixHeadAndTail(idxs []uint64) error {
 			for {
 				_, err := io.ReadFull(r, oneRecord)
 				if err != nil {
-					if err == io.EOF {
+					if err == io.EOF || err == io.ErrUnexpectedEOF {
 						break
 					} else {
 						f.Close()
@@ -524,7 +524,7 @@ func (bin *BinLog) loadAndFixHeadAndTail(idxs []uint64) error {
 			for {
 				_, err := io.ReadFull(r, oneRecord)
 				if err != nil {
-					if err == io.EOF {
+					if err == io.EOF || err == io.ErrUnexpectedEOF {
 						break
 					} else {
 						f.Close()

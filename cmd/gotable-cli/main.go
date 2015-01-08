@@ -57,13 +57,13 @@ func main() {
 		case "ping":
 			fallthrough
 		case "get":
-			checkError(cli.get(fields[1:]))
+			checkError(cli.get(false, fields[1:]))
 		case "set":
-			checkError(cli.set(fields[1:]))
+			checkError(cli.set(false, fields[1:]))
 		case "zget":
-			checkError(cli.zget(fields[1:]))
+			checkError(cli.get(true, fields[1:]))
 		case "zset":
-			checkError(cli.zset(fields[1:]))
+			checkError(cli.set(true, fields[1:]))
 		case "scan":
 			checkError(cli.scan(fields[1:]))
 		case "zscan":
@@ -96,20 +96,20 @@ func quit() {
 }
 
 func writeHelp() {
-	fmt.Println("help                   print this message")
-	fmt.Println("use <databaseId>       use database (0 ~ 200)")
-	fmt.Println("set <tableId> <rowKey> <colKey> <value>")
+	fmt.Println(" help                  print this message")
+	fmt.Println("  use <databaseId>     use database (0 ~ 200)")
+	fmt.Println("  set <tableId> <rowKey> <colKey> <value> [score]")
 	fmt.Println("                       set key/value for table in selected database")
-	fmt.Println("get <tableId> <rowKey> <colKey>")
+	fmt.Println("  get <tableId> <rowKey> <colKey>")
 	fmt.Println("                       get key/value for table in selected database")
-	fmt.Println("zset <tableId> <rowKey> <colKey> <value> <score>")
+	fmt.Println(" zset <tableId> <rowKey> <colKey> <value> [score]")
 	fmt.Println("                       zset key/value for table in selected database")
-	fmt.Println("zget <tableId> <rowKey> <colKey>")
+	fmt.Println(" zget <tableId> <rowKey> <colKey>")
 	fmt.Println("                       zget key/value for table in selected database")
-	fmt.Println("scan <tableId> <rowKey> <colKey> <num>")
-	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> <num>")
+	fmt.Println(" scan <tableId> <rowKey> <colKey> [num]")
+	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> [num]")
 	fmt.Println("clear                  clear the screen")
-	fmt.Println("quit                   exit")
+	fmt.Println(" quit                  exit")
 	fmt.Println("")
 	fmt.Println("Use the arrow up and down keys to walk through history.")
 	fmt.Println("")

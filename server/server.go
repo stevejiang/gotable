@@ -22,13 +22,13 @@ type Server struct {
 
 func NewServer(dbname string) *Server {
 	var binlogDir = fmt.Sprintf("%s/binlog", dbname)
-	var rocksdbDir = fmt.Sprintf("%s/rocksdb", dbname)
+	var tableDir = fmt.Sprintf("%s/table", dbname)
 	os.MkdirAll(binlogDir, os.ModeDir|os.ModePerm)
-	os.MkdirAll(rocksdbDir, os.ModeDir|os.ModePerm)
+	os.MkdirAll(tableDir, os.ModeDir|os.ModePerm)
 
 	srv := new(Server)
 
-	srv.tbl = store.NewTable(&srv.rwMtx, rocksdbDir)
+	srv.tbl = store.NewTable(&srv.rwMtx, tableDir)
 	if srv.tbl == nil {
 		return nil
 	}
@@ -70,12 +70,40 @@ func (srv *Server) get(req *Request) {
 	var resp = Response(req.PkgArgs)
 	resp.Pkg = srv.tbl.Get(&req.PkgArgs)
 
+	srv.addResp(false, req, &resp)
+}
+
+func (srv *Server) set(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Set(&req.PkgArgs)
+
 	srv.addResp(true, req, &resp)
 }
 
-func (srv *Server) put(req *Request) {
+func (srv *Server) del(req *Request) {
 	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Set(&req.PkgArgs)
+	resp.Pkg = srv.tbl.Del(&req.PkgArgs)
+
+	srv.addResp(true, req, &resp)
+}
+
+func (srv *Server) mget(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Mget(&req.PkgArgs)
+
+	srv.addResp(false, req, &resp)
+}
+
+func (srv *Server) mset(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Mset(&req.PkgArgs)
+
+	srv.addResp(true, req, &resp)
+}
+
+func (srv *Server) mdel(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Mdel(&req.PkgArgs)
 
 	srv.addResp(true, req, &resp)
 }
@@ -84,7 +112,7 @@ func (srv *Server) scan(req *Request) {
 	var resp = Response(req.PkgArgs)
 	resp.Pkg = srv.tbl.Scan(&req.PkgArgs)
 
-	srv.addResp(true, req, &resp)
+	srv.addResp(false, req, &resp)
 }
 
 func (srv *Server) newMaster(req *Request) {
@@ -112,7 +140,15 @@ func (srv *Server) doProcess(req *Request) {
 	case proto.CmdGet:
 		srv.get(req)
 	case proto.CmdSet:
-		srv.put(req)
+		srv.set(req)
+	case proto.CmdDel:
+		srv.del(req)
+	case proto.CmdMGet:
+		srv.mget(req)
+	case proto.CmdMSet:
+		srv.mset(req)
+	case proto.CmdMDel:
+		srv.mdel(req)
 	case proto.CmdScan:
 		srv.scan(req)
 	case proto.CmdMaster:

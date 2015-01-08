@@ -7,8 +7,7 @@ import (
 )
 
 type client struct {
-	c    *table.Client
-	dbId uint8
+	c *table.Client
 }
 
 func newClient() *client {
@@ -23,14 +22,10 @@ func newClient() *client {
 	return c
 }
 
-func (c *client) do(cmd string, args []string) {
-	fmt.Println(args)
-}
-
 func (c *client) use(args []string) error {
 	//use <databaseId>
 	if len(args) != 1 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
 	dbId, err := getDatabaseId(args[0])
@@ -39,52 +34,16 @@ func (c *client) use(args []string) error {
 	}
 
 	fmt.Printf("OK, current database is %d\n", dbId)
-	c.dbId = dbId
+	c.c.Use(dbId)
 
 	return nil
 }
 
-func (c *client) get(args []string) error {
-	//get <tableId> <rowKey> <colKey>
-	if len(args) != 3 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
-	}
-
-	tableId, err := getTableId(args[0])
-	if err != nil {
-		return err
-	}
-
-	rowKey, err := extractKey(args[1])
-	if err != nil {
-		return err
-	}
-	colKey, err := extractKey(args[2])
-	if err != nil {
-		return err
-	}
-
-	r, err := c.c.Get(false, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0})
-	if err != nil {
-		return err
-	}
-
-	switch r.ErrCode {
-	case table.EcodeOk:
-		fmt.Printf("%q\n", r.Value)
-	case table.EcodeNotExist:
-		fmt.Println("(nil)")
-	default:
-		fmt.Printf("<Unknown error code %d>\n", r.ErrCode)
-	}
-
-	return nil
-}
-
-func (c *client) zget(args []string) error {
+func (c *client) get(zop bool, args []string) error {
+	// get <tableId> <rowKey> <colKey>
 	//zget <tableId> <rowKey> <colKey>
 	if len(args) != 3 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
 	tableId, err := getTableId(args[0])
@@ -101,14 +60,15 @@ func (c *client) zget(args []string) error {
 		return err
 	}
 
-	r, err := c.c.Get(true, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0})
+	r, err := c.c.Get(zop, &table.OneArgs{tableId, []byte(rowKey),
+		[]byte(colKey), nil, 0, 0})
 	if err != nil {
 		return err
 	}
 
 	switch r.ErrCode {
 	case table.EcodeOk:
-		fmt.Printf("%d\t%q\n", r.Score, r.Value)
+		fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
 	case table.EcodeNotExist:
 		fmt.Println("(nil)")
 	default:
@@ -118,10 +78,11 @@ func (c *client) zget(args []string) error {
 	return nil
 }
 
-func (c *client) set(args []string) error {
-	//set <tableId> <rowKey> <colKey> <value>
-	if len(args) != 4 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+func (c *client) set(zop bool, args []string) error {
+	// set <tableId> <rowKey> <colKey> <value> [score]
+	//zset <tableId> <rowKey> <colKey> <value> [score]
+	if len(args) < 4 && len(args) > 5 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
 	tableId, err := getTableId(args[0])
@@ -141,53 +102,16 @@ func (c *client) set(args []string) error {
 	if err != nil {
 		return err
 	}
-
-	r, err := c.c.Set(false, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey),
-		[]byte(value), 0, 0})
-	if err != nil {
-		return err
+	var score int64
+	if len(args) >= 5 {
+		score, err = strconv.ParseInt(args[4], 10, 64)
+		if err != nil {
+			return err
+		}
 	}
 
-	switch r.ErrCode {
-	case table.EcodeCasNotMatch:
-		fmt.Printf("CAS not match, the new cas is %d\n", r.Cas)
-	default:
-		fmt.Println("OK")
-	}
-
-	return nil
-}
-
-func (c *client) zset(args []string) error {
-	//zset <tableId> <rowKey> <colKey> <value> <score>
-	if len(args) != 5 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
-	}
-
-	tableId, err := getTableId(args[0])
-	if err != nil {
-		return err
-	}
-
-	rowKey, err := extractKey(args[1])
-	if err != nil {
-		return err
-	}
-	colKey, err := extractKey(args[2])
-	if err != nil {
-		return err
-	}
-	value, err := extractKey(args[3])
-	if err != nil {
-		return err
-	}
-	score, err := strconv.ParseInt(args[4], 10, 64)
-	if err != nil {
-		return err
-	}
-
-	r, err := c.c.Set(true, &table.OneArgs{tableId, []byte(rowKey), []byte(colKey),
-		[]byte(value), score, 0})
+	r, err := c.c.Set(zop, &table.OneArgs{tableId, []byte(rowKey),
+		[]byte(colKey), []byte(value), score, 0})
 	if err != nil {
 		return err
 	}
@@ -203,9 +127,9 @@ func (c *client) zset(args []string) error {
 }
 
 func (c *client) scan(args []string) error {
-	//scan <tableId> <rowKey> <colKey> <num>
-	if len(args) != 4 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+	//scan <tableId> <rowKey> <colKey> [num]
+	if len(args) < 3 || len(args) > 4 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
 	tableId, err := getTableId(args[0])
@@ -222,9 +146,12 @@ func (c *client) scan(args []string) error {
 		return err
 	}
 
-	num, err := strconv.ParseInt(args[3], 10, 16)
-	if err != nil {
-		return err
+	var num int64 = 10
+	if len(args) >= 4 {
+		num, err = strconv.ParseInt(args[3], 10, 16)
+		if err != nil {
+			return err
+		}
 	}
 
 	var sa table.ScanArgs
@@ -244,7 +171,7 @@ func (c *client) scan(args []string) error {
 	} else {
 		for i := 0; i < len(r.Reply); i++ {
 			var one = &r.Reply[i]
-			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
+			fmt.Printf("%2d) [%q\t%q]\t[%d\t%q]\n", i,
 				one.RowKey, one.ColKey, one.Score, one.Value)
 		}
 	}
@@ -253,9 +180,9 @@ func (c *client) scan(args []string) error {
 }
 
 func (c *client) zscan(args []string) error {
-	//zscan <tableId> <rowKey> <score> <colKey> <num>
-	if len(args) != 5 {
-		return fmt.Errorf("Invalid number of arguments (%d)", len(args))
+	//zscan <tableId> <rowKey> <score> <colKey> [num]
+	if len(args) < 4 || len(args) > 5 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
 	tableId, err := getTableId(args[0])
@@ -277,9 +204,12 @@ func (c *client) zscan(args []string) error {
 		return err
 	}
 
-	num, err := strconv.ParseInt(args[4], 10, 16)
-	if err != nil {
-		return err
+	var num int64 = 10
+	if len(args) >= 5 {
+		num, err = strconv.ParseInt(args[4], 10, 16)
+		if err != nil {
+			return err
+		}
 	}
 
 	var sa table.ScanArgs
@@ -300,7 +230,7 @@ func (c *client) zscan(args []string) error {
 	} else {
 		for i := 0; i < len(r.Reply); i++ {
 			var one = &r.Reply[i]
-			fmt.Printf("%02d) [%q\t%d\t%q]\t[%q]\n", i,
+			fmt.Printf("%2d) [%q\t%d\t%q]\t[%q]\n", i,
 				one.RowKey, one.Score, one.ColKey, one.Value)
 		}
 	}

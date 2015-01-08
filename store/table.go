@@ -22,15 +22,17 @@ type PkgArgs struct {
 
 type Table struct {
 	db    *TableDB
+	tl    *TableLock
 	rwMtx *sync.RWMutex
 }
 
-func NewTable(rwMtx *sync.RWMutex, rocksdbDir string) *Table {
+func NewTable(rwMtx *sync.RWMutex, tableDir string) *Table {
 	tbl := new(Table)
+	tbl.tl = NewTableLock()
 	tbl.rwMtx = rwMtx
 
 	tbl.db = NewTableDB()
-	err := tbl.db.Open(rocksdbDir, true)
+	err := tbl.db.Open(tableDir, true)
 	if err != nil {
 		log.Println("Open DB failed: ", err)
 		return nil
@@ -39,13 +41,21 @@ func NewTable(rwMtx *sync.RWMutex, rocksdbDir string) *Table {
 	return tbl
 }
 
-func (tbl *Table) getKV(dbId uint8, kv *proto.KeyValueCtrl) error {
+func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCtrl) error {
 	var err error
 	var zop = (kv.ColSpace == proto.ColSpaceScore1 ||
 		kv.ColSpace == proto.ColSpaceScore2)
+	var rawColSpace uint8 = proto.ColSpaceDefault
+	if zop {
+		rawColSpace = proto.ColSpaceScore2
+	}
 
 	if zop {
-		kv.Value, err = tbl.db.Get(nil, dbId, TableKey{kv.TableId,
+		if srOpt == nil {
+			srOpt = tbl.db.NewSnapReadOptions()
+			defer srOpt.Release()
+		}
+		kv.Value, err = tbl.db.Get(srOpt, dbId, TableKey{kv.TableId,
 			kv.RowKey, proto.ColSpaceScore2, kv.ColKey})
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
@@ -60,7 +70,7 @@ func (tbl *Table) getKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 			binary.BigEndian.PutUint64(col, uint64(kv.Score)+zopScoreUp)
 			copy(col[8:], kv.ColKey)
 
-			kv.Value, err = tbl.db.Get(nil, dbId, TableKey{kv.TableId,
+			kv.Value, err = tbl.db.Get(srOpt, dbId, TableKey{kv.TableId,
 				kv.RowKey, proto.ColSpaceScore1, col})
 			if err != nil {
 				kv.CtrlFlag |= proto.CtrlErrCode
@@ -79,8 +89,9 @@ func (tbl *Table) getKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 				}
 			}
 		}
+
 	} else {
-		kv.Value, err = tbl.db.Get(nil, dbId, TableKey{kv.TableId,
+		kv.Value, err = tbl.db.Get(srOpt, dbId, TableKey{kv.TableId,
 			kv.RowKey, proto.ColSpaceDefault, kv.ColKey})
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
@@ -100,6 +111,18 @@ func (tbl *Table) getKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 		}
 	}
 
+	if kv.Cas != 0 {
+		var rawKey = GetRawKey(dbId, TableKey{kv.TableId,
+			kv.RowKey, rawColSpace, kv.ColKey})
+
+		var lck = tbl.tl.GetLock(rawKey)
+		lck.Lock()
+		defer lck.Unlock()
+
+		kv.Cas = lck.NewCas(rawKey)
+		kv.CtrlFlag |= proto.CtrlCas
+	}
+
 	return nil
 }
 
@@ -107,6 +130,26 @@ func (tbl *Table) setKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 	var err error
 	var zop = (kv.ColSpace == proto.ColSpaceScore1 ||
 		kv.ColSpace == proto.ColSpaceScore2)
+	var rawColSpace uint8 = proto.ColSpaceDefault
+	if zop {
+		rawColSpace = proto.ColSpaceScore2
+	}
+
+	var rawKey = GetRawKey(dbId, TableKey{kv.TableId,
+		kv.RowKey, rawColSpace, kv.ColKey})
+	var lck = tbl.tl.GetLock(rawKey)
+	lck.Lock()
+	defer lck.Unlock()
+	if kv.Cas != 0 {
+		var cas = lck.GetCas(rawKey)
+		if cas != kv.Cas {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.CtrlFlag &^= (proto.CtrlCas | proto.CtrlValue | proto.CtrlScore)
+			kv.ErrCode = table.EcodeCasNotMatch
+			return nil
+		}
+	}
+	lck.ClearCas(rawKey)
 
 	if zop {
 		var oldVal []byte
@@ -171,11 +214,74 @@ func (tbl *Table) setKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 	return nil
 }
 
+func (tbl *Table) delKV(dbId uint8, kv *proto.KeyValueCtrl) error {
+	var err error
+	var zop = (kv.ColSpace == proto.ColSpaceScore1 ||
+		kv.ColSpace == proto.ColSpaceScore2)
+	var rawColSpace uint8 = proto.ColSpaceDefault
+	if zop {
+		rawColSpace = proto.ColSpaceScore2
+	}
+
+	var rawKey = GetRawKey(dbId, TableKey{kv.TableId,
+		kv.RowKey, rawColSpace, kv.ColKey})
+	var lck = tbl.tl.GetLock(rawKey)
+	lck.Lock()
+	defer lck.Unlock()
+
+	if zop {
+		var oldVal []byte
+		oldVal, err = tbl.db.Get(nil, dbId, TableKey{kv.TableId,
+			kv.RowKey, proto.ColSpaceScore2, kv.ColKey})
+		if err != nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcodeReadFailed
+			return err
+		} else if oldVal != nil {
+			var oldScore int64
+			oldVal, oldScore = ParseRawValue(oldVal)
+			var col = make([]byte, 8+len(kv.ColKey))
+			binary.BigEndian.PutUint64(col, uint64(oldScore)+zopScoreUp)
+			copy(col[8:], kv.ColKey)
+
+			err = tbl.db.Del(dbId, TableKey{kv.TableId,
+				kv.RowKey, proto.ColSpaceScore1, col})
+			if err != nil {
+				kv.CtrlFlag |= proto.CtrlErrCode
+				kv.ErrCode = table.EcodeWriteFailed
+				return err
+			}
+		}
+
+		err = tbl.db.Del(dbId, TableKey{kv.TableId,
+			kv.RowKey, proto.ColSpaceScore2, kv.ColKey})
+		if err != nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcodeWriteFailed
+			return err
+		}
+
+		kv.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+	} else {
+		err = tbl.db.Del(dbId, TableKey{kv.TableId,
+			kv.RowKey, proto.ColSpaceDefault, kv.ColKey})
+		if err != nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcodeWriteFailed
+			return err
+		}
+
+		kv.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+	}
+
+	return nil
+}
+
 func (tbl *Table) Get(req *PkgArgs) []byte {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		err = tbl.getKV(in.DbId, &in.KeyValueCtrl)
+		err = tbl.getKV(nil, in.DbId, &in.KeyValueCtrl)
 		if err != nil {
 			log.Printf("getKV failed: %s\n", err)
 		}
@@ -198,8 +304,10 @@ func (tbl *Table) Mget(req *PkgArgs) []byte {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
+		var srOpt = tbl.db.NewSnapReadOptions()
+		defer srOpt.Release()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.getKV(in.DbId, &in.Kvs[i])
+			err = tbl.getKV(srOpt, in.DbId, &in.Kvs[i])
 			if err != nil {
 				log.Printf("getKV failed: %s\n", err)
 				break
@@ -274,6 +382,60 @@ func (tbl *Table) Mset(req *PkgArgs) []byte {
 	return pkg
 }
 
+func (tbl *Table) Del(req *PkgArgs) []byte {
+	var in proto.PkgOneOp
+	_, err := in.Decode(req.Pkg)
+	if err == nil {
+		tbl.rwMtx.RLock()
+		err = tbl.delKV(in.DbId, &in.KeyValueCtrl)
+		tbl.rwMtx.RUnlock()
+
+		if err != nil {
+			log.Printf("delKV failed: %s\n", err)
+		}
+	} else {
+		in = proto.PkgOneOp{}
+		in.Cmd = req.Cmd
+		in.DbId = req.DbId
+		in.Seq = req.Seq
+		in.ErrCode = table.EcodeDecodeFailed
+	}
+
+	pkg, _, err := in.Encode(nil)
+	if err != nil {
+		log.Fatalf("Encode failed: %s\n", err)
+	}
+	return pkg
+}
+
+func (tbl *Table) Mdel(req *PkgArgs) []byte {
+	var in proto.PkgMultiOp
+	_, err := in.Decode(req.Pkg)
+	if err == nil {
+		tbl.rwMtx.RLock()
+		for i := 0; i < len(in.Kvs); i++ {
+			err = tbl.delKV(in.DbId, &in.Kvs[i])
+			if err != nil {
+				log.Printf("delKV failed: %s\n", err)
+				break
+			}
+		}
+		tbl.rwMtx.RUnlock()
+	} else {
+		in = proto.PkgMultiOp{}
+		in.Cmd = req.Cmd
+		in.DbId = req.DbId
+		in.Seq = req.Seq
+		in.ErrCode = table.EcodeDecodeFailed
+	}
+
+	pkg, _, err := in.Encode(nil)
+	if err != nil {
+		log.Fatalf("Encode failed: %s\n", err)
+	}
+	return pkg
+}
+
 func iterMove(it *Iterator, direction uint8) {
 	if direction == 0 {
 		it.Next()
@@ -299,7 +461,11 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 		if dbId != in.DbId || tblKey.TableId != in.TableId ||
 			tblKey.ColSpace != scanColSpace ||
 			bytes.Compare(tblKey.RowKey, in.RowKey) != 0 {
-			break
+			if i == 0 {
+				continue
+			} else {
+				break
+			}
 		}
 
 		var zScore int64
@@ -307,8 +473,20 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 		if len(tblKey.ColKey) >= 8 {
 			zScore = int64(binary.BigEndian.Uint64(tblKey.ColKey) - zopScoreUp)
 			zColKey = tblKey.ColKey[8:]
-			if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) == 0 {
-				continue
+			if in.Direction == 0 {
+				if zScore < in.Score {
+					continue
+				}
+				if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) <= 0 {
+					continue
+				}
+			} else {
+				if zScore > in.Score {
+					continue
+				}
+				if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) >= 0 {
+					continue
+				}
 			}
 		} else {
 			break
@@ -370,11 +548,21 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 		if dbId != in.DbId || tblKey.TableId != in.TableId ||
 			tblKey.ColSpace != scanColSpace ||
 			bytes.Compare(tblKey.RowKey, in.RowKey) != 0 {
-			break
+			if i == 0 {
+				continue
+			} else {
+				break
+			}
 		}
 
-		if bytes.Compare(tblKey.ColKey, in.ColKey) == 0 {
-			continue
+		if in.Direction == 0 {
+			if bytes.Compare(tblKey.ColKey, in.ColKey) <= 0 {
+				continue
+			}
+		} else {
+			if bytes.Compare(tblKey.ColKey, in.ColKey) >= 0 {
+				continue
+			}
 		}
 
 		var kv proto.KeyValueCtrl

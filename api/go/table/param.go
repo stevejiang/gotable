@@ -22,7 +22,7 @@ type MultiReply struct {
 type ScanArgs struct {
 	Num       uint16 // Max number of scan reply records
 	Direction uint8
-	proto.KeyValue
+	OneArgs
 }
 
 type ScanReply struct {
@@ -33,7 +33,7 @@ type ScanReply struct {
 
 type DumpArgs struct {
 	Scope uint8 // 1: dump TableId; 1: dump DbId; 2: Dump full DB
-	*proto.KeyValue
+	OneArgs
 }
 
 type DumpRecord struct {
