@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The official client API of GoTable. GoTable is a high performance
-// NoSQL database.
+// The client API of GoTable. GoTable is a high performance NoSQL database.
 
 package table
 
@@ -28,8 +27,7 @@ import (
 	"sync"
 )
 
-// GoTable version
-const VERSION = "0.1"
+const VERSION = "0.1" // GoTable version
 
 var (
 	ErrCasNotMatch = errors.New("cas is not match")
