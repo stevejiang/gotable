@@ -60,10 +60,18 @@ func main() {
 			checkError(cli.get(false, fields[1:]))
 		case "set":
 			checkError(cli.set(false, fields[1:]))
+		case "del":
+			checkError(cli.del(false, fields[1:]))
+		case "incr":
+			checkError(cli.incr(false, fields[1:]))
 		case "zget":
 			checkError(cli.get(true, fields[1:]))
 		case "zset":
 			checkError(cli.set(true, fields[1:]))
+		case "zdel":
+			checkError(cli.del(true, fields[1:]))
+		case "zincr":
+			checkError(cli.incr(true, fields[1:]))
 		case "scan":
 			checkError(cli.scan(fields[1:]))
 		case "zscan":
@@ -96,20 +104,28 @@ func quit() {
 }
 
 func writeHelp() {
-	fmt.Println(" help                  print this message")
-	fmt.Println("  use <databaseId>     use database (0 ~ 200)")
+	fmt.Println(" help                    print this message")
+	fmt.Println("  use <databaseId>       use database (0 ~ 200)")
 	fmt.Println("  set <tableId> <rowKey> <colKey> <value> [score]")
-	fmt.Println("                       set key/value for table in selected database")
+	fmt.Println("                         set key/value for table in selected database")
 	fmt.Println("  get <tableId> <rowKey> <colKey>")
-	fmt.Println("                       get key/value for table in selected database")
+	fmt.Println("                         get key/value for table in selected database")
+	fmt.Println("  del <tableId> <rowKey> <colKey>")
+	fmt.Println("                         del key for table in selected database")
+	fmt.Println(" incr <tableId> <rowKey> <colKey> [score]")
+	fmt.Println("                         incr key score for table in selected database")
 	fmt.Println(" zset <tableId> <rowKey> <colKey> <value> [score]")
-	fmt.Println("                       zset key/value for table in selected database")
+	fmt.Println("                         zset key/value for table in selected database")
 	fmt.Println(" zget <tableId> <rowKey> <colKey>")
 	fmt.Println("                       zget key/value for table in selected database")
+	fmt.Println(" zdel <tableId> <rowKey> <colKey>")
+	fmt.Println("                         zdel key for table in selected database")
+	fmt.Println("zincr <tableId> <rowKey> <colKey> [score]")
+	fmt.Println("                         zincr key score for table in selected database")
 	fmt.Println(" scan <tableId> <rowKey> <colKey> [num]")
 	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> [num]")
-	fmt.Println("clear                  clear the screen")
-	fmt.Println(" quit                  exit")
+	fmt.Println("clear                    clear the screen")
+	fmt.Println(" quit                    exit")
 	fmt.Println("")
 	fmt.Println("Use the arrow up and down keys to walk through history.")
 	fmt.Println("")
@@ -121,7 +137,7 @@ func writeUnrecognized() {
 
 func checkError(err error) {
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Failed with error: %s\n", err)
 	}
 }
 

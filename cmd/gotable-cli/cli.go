@@ -60,8 +60,13 @@ func (c *client) get(zop bool, args []string) error {
 		return err
 	}
 
-	r, err := c.c.Get(zop, &table.OneArgs{tableId, []byte(rowKey),
-		[]byte(colKey), nil, 0, 0})
+	var r *table.OneReply
+	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0}
+	if zop {
+		r, err = c.c.ZGet(&oa)
+	} else {
+		r, err = c.c.Get(&oa)
+	}
 	if err != nil {
 		return err
 	}
@@ -72,7 +77,7 @@ func (c *client) get(zop bool, args []string) error {
 	case table.EcodeNotExist:
 		fmt.Println("(nil)")
 	default:
-		fmt.Printf("<Unknown error code %d>\n", r.ErrCode)
+		fmt.Printf("<Unexpected error code %d>\n", r.ErrCode)
 	}
 
 	return nil
@@ -110,19 +115,100 @@ func (c *client) set(zop bool, args []string) error {
 		}
 	}
 
-	r, err := c.c.Set(zop, &table.OneArgs{tableId, []byte(rowKey),
-		[]byte(colKey), []byte(value), score, 0})
+	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0}
+	if zop {
+		_, err = c.c.ZSet(&oa)
+	} else {
+		_, err = c.c.Set(&oa)
+	}
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("OK")
+	return nil
+}
+
+func (c *client) del(zop bool, args []string) error {
+	// del <tableId> <rowKey> <colKey>
+	//zdel <tableId> <rowKey> <colKey>
+	if len(args) != 3 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
+	}
+
+	tableId, err := getTableId(args[0])
+	if err != nil {
+		return err
+	}
+
+	rowKey, err := extractKey(args[1])
+	if err != nil {
+		return err
+	}
+	colKey, err := extractKey(args[2])
+	if err != nil {
+		return err
+	}
+
+	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0}
+	if zop {
+		_, err = c.c.ZDel(&oa)
+	} else {
+		_, err = c.c.Del(&oa)
+	}
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("OK")
+	return nil
+}
+
+func (c *client) incr(zop bool, args []string) error {
+	// incr <tableId> <rowKey> <colKey> [score]
+	//zincr <tableId> <rowKey> <colKey> [score]
+	if len(args) < 3 && len(args) > 4 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
+	}
+
+	tableId, err := getTableId(args[0])
+	if err != nil {
+		return err
+	}
+
+	rowKey, err := extractKey(args[1])
+	if err != nil {
+		return err
+	}
+	colKey, err := extractKey(args[2])
+	if err != nil {
+		return err
+	}
+	var score int64 = 1
+	if len(args) >= 4 {
+		score, err = strconv.ParseInt(args[3], 10, 64)
+		if err != nil {
+			return err
+		}
+	}
+
+	var r *table.OneReply
+	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, score, 0}
+	if zop {
+		r, err = c.c.ZIncr(&oa)
+	} else {
+		r, err = c.c.Incr(&oa)
+	}
 	if err != nil {
 		return err
 	}
 
 	switch r.ErrCode {
-	case table.EcodeCasNotMatch:
-		fmt.Printf("CAS not match, the new cas is %d\n", r.Cas)
+	case table.EcodeOk:
+		fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
 	default:
-		fmt.Println("OK")
+		fmt.Printf("<Unexpected error code %d>\n", r.ErrCode)
 	}
-
 	return nil
 }
 
@@ -154,14 +240,9 @@ func (c *client) scan(args []string) error {
 		}
 	}
 
-	var sa table.ScanArgs
-	sa.Num = uint16(num)
-	sa.Direction = 0
-	sa.TableId = tableId
-	sa.RowKey = []byte(rowKey)
-	sa.ColKey = []byte(colKey)
-
-	r, err := c.c.Scan(false, &sa)
+	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{tableId, []byte(rowKey),
+		[]byte(colKey), nil, 0, 0}}
+	r, err := c.c.Scan(&sa)
 	if err != nil {
 		return err
 	}
@@ -212,15 +293,9 @@ func (c *client) zscan(args []string) error {
 		}
 	}
 
-	var sa table.ScanArgs
-	sa.Num = uint16(num)
-	sa.Direction = 0
-	sa.TableId = tableId
-	sa.RowKey = []byte(rowKey)
-	sa.ColKey = []byte(colKey)
-	sa.Score = score
-
-	r, err := c.c.Scan(true, &sa)
+	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{tableId, []byte(rowKey),
+		[]byte(colKey), nil, score, 0}}
+	r, err := c.c.ZScan(&sa)
 	if err != nil {
 		return err
 	}

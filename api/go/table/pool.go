@@ -1,21 +1,14 @@
 package table
 
 import (
-	"errors"
 	"log"
 	"net"
 	"sync"
 	"time"
 )
 
-var (
-	ErrClosedPool  = errors.New("pool is closed")
-	ErrInvalidTag  = errors.New("invalid tag id")
-	ErrNoValidAddr = errors.New("no valid address")
-)
-
 const (
-	MaxTag = 5
+	maxTagId = 5
 )
 
 const (
@@ -51,9 +44,9 @@ type Pool struct {
 func NewPool(as []Addr, connNum int) *Pool {
 	var p = new(Pool)
 	p.connNum = connNum
-	p.pas = make([]*poolAddr, MaxTag+1)
+	p.pas = make([]*poolAddr, maxTagId+1)
 	for _, t := range as {
-		if t.Tag > 0 && t.Tag <= MaxTag {
+		if t.Tag > 0 && t.Tag <= maxTagId {
 			p.tags = append(p.tags, t.Tag)
 
 			var a = new(poolAddr)
@@ -72,7 +65,7 @@ func NewPool(as []Addr, connNum int) *Pool {
 }
 
 func (p *Pool) Get(tag uint8) (*Client, error) {
-	if tag > MaxTag {
+	if tag > maxTagId {
 		return nil, ErrInvalidTag
 	}
 

@@ -25,10 +25,12 @@ const (
 	CmdDump = 0x14
 
 	// Front Write
-	CmdSet  = 0x60
-	CmdMSet = 0x61
-	CmdDel  = 0x62
-	CmdMDel = 0x63
+	CmdSet   = 0x60
+	CmdMSet  = 0x61
+	CmdDel   = 0x62
+	CmdMDel  = 0x63
+	CmdIncr  = 0x64
+	CmdMIncr = 0x65
 
 	// Inner Write
 	CmdSync = 0xB0

@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	TotalUnitNum = 4096
+	TotalUnitNum = 8192
 )
 
 func GetUnitId(dbId, tableId uint8, rowKey []byte) uint16 {

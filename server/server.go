@@ -87,23 +87,37 @@ func (srv *Server) del(req *Request) {
 	srv.addResp(true, req, &resp)
 }
 
-func (srv *Server) mget(req *Request) {
+func (srv *Server) incr(req *Request) {
 	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Mget(&req.PkgArgs)
-
-	srv.addResp(false, req, &resp)
-}
-
-func (srv *Server) mset(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Mset(&req.PkgArgs)
+	resp.Pkg = srv.tbl.Incr(&req.PkgArgs)
 
 	srv.addResp(true, req, &resp)
 }
 
-func (srv *Server) mdel(req *Request) {
+func (srv *Server) mGet(req *Request) {
 	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Mdel(&req.PkgArgs)
+	resp.Pkg = srv.tbl.MGet(&req.PkgArgs)
+
+	srv.addResp(false, req, &resp)
+}
+
+func (srv *Server) mSet(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.MSet(&req.PkgArgs)
+
+	srv.addResp(true, req, &resp)
+}
+
+func (srv *Server) mDel(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.MDel(&req.PkgArgs)
+
+	srv.addResp(true, req, &resp)
+}
+
+func (srv *Server) mIncr(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.MIncr(&req.PkgArgs)
 
 	srv.addResp(true, req, &resp)
 }
@@ -113,6 +127,13 @@ func (srv *Server) scan(req *Request) {
 	resp.Pkg = srv.tbl.Scan(&req.PkgArgs)
 
 	srv.addResp(false, req, &resp)
+}
+
+func (srv *Server) sync(req *Request) {
+	var resp = Response(req.PkgArgs)
+	resp.Pkg = srv.tbl.Set(&req.PkgArgs)
+
+	srv.addResp(true, req, &resp)
 }
 
 func (srv *Server) newMaster(req *Request) {
@@ -143,14 +164,20 @@ func (srv *Server) doProcess(req *Request) {
 		srv.set(req)
 	case proto.CmdDel:
 		srv.del(req)
+	case proto.CmdIncr:
+		srv.incr(req)
 	case proto.CmdMGet:
-		srv.mget(req)
+		srv.mGet(req)
 	case proto.CmdMSet:
-		srv.mset(req)
+		srv.mSet(req)
 	case proto.CmdMDel:
-		srv.mdel(req)
+		srv.mDel(req)
+	case proto.CmdMIncr:
+		srv.mIncr(req)
 	case proto.CmdScan:
 		srv.scan(req)
+	case proto.CmdSync:
+		srv.sync(req)
 	case proto.CmdMaster:
 		srv.newMaster(req)
 	}

@@ -13,11 +13,12 @@ import (
 )
 
 var (
-	host        = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
-	cliNum      = flag.Int("c", 50, "Number of parallel clients")
-	reqNum      = flag.Int("n", 100000, "Total number of requests")
-	dataSize    = flag.Int("d", 8, "Data size of SET/MSET value in bytes")
-	testCase    = flag.String("t", "set,get", "Comma separated list of tests: set,get,scan,scan200")
+	host     = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
+	cliNum   = flag.Int("c", 50, "Number of parallel clients")
+	reqNum   = flag.Int("n", 100000, "Total number of requests")
+	dataSize = flag.Int("d", 8, "Data size of SET/MSET value in bytes")
+	testCase = flag.String("t", "set,get", "Comma separated list of tests: "+
+		"set,get,zset,zget,scan,zscan,incr,zincr")
 	rangeNum    = flag.Int("range", 100, "Scan/MGet/Mset range number")
 	histogram   = flag.Int("histogram", 0, "Print histogram of operation timings")
 	verbose     = flag.Int("v", 0, "Verbose mode, if enabled it will slow down the test")
@@ -41,12 +42,18 @@ func main() {
 			benchGet()
 		case "set":
 			benchSet()
+		case "incr":
+			benchIncr()
 		case "zget":
-			benchZget()
+			benchZGet()
 		case "zset":
-			benchZset()
+			benchZSet()
+		case "zincr":
+			benchZIncr()
 		case "scan":
 			benchScan()
+		case "zscan":
+			benchZScan()
 		default:
 			fmt.Printf("Unknown test case: %s\n", t)
 		}
@@ -151,7 +158,7 @@ func benchSet() {
 	benchmark("SET", op)
 }
 
-func benchZset() {
+func benchZSet() {
 	var op = func(v int, c *table.Client, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
@@ -180,7 +187,7 @@ func benchGet() {
 	benchmark("GET", op)
 }
 
-func benchZget() {
+func benchZGet() {
 	var op = func(v int, c *table.Client, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
@@ -192,20 +199,60 @@ func benchZget() {
 	benchmark("ZGET", op)
 }
 
+func benchIncr() {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+		var colKey = key[len(key)-3:]
+
+		incr(c, false, rowKey, colKey, 1)
+	}
+
+	benchmark("INCR", op)
+}
+
+func benchZIncr() {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+		var colKey = key[len(key)-3:]
+
+		incr(c, true, rowKey, colKey, 1)
+	}
+
+	benchmark("ZINCR", op)
+}
+
 func benchScan() {
 	var op = func(v int, c *table.Client, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
-		//var colKey = key[len(key)-3:]
 
-		scan(c, rowKey, nil, *rangeNum)
+		scan(c, false, rowKey, nil, 0, *rangeNum)
 	}
 
 	benchmark(fmt.Sprintf("SCAN %d", *rangeNum), op)
 }
 
+func benchZScan() {
+	var op = func(v int, c *table.Client, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+
+		scan(c, true, rowKey, nil, -500000000, *rangeNum)
+	}
+
+	benchmark(fmt.Sprintf("ZSCAN %d", *rangeNum), op)
+}
+
 func set(c *table.Client, zop bool, rowKey, colKey, value []byte, score int64) {
-	_, err := c.Set(zop, &table.OneArgs{0, rowKey, colKey, value, score, 0})
+	var err error
+	var oa = table.OneArgs{0, rowKey, colKey, value, score, 0}
+	if zop {
+		_, err = c.ZSet(&oa)
+	} else {
+		_, err = c.Set(&oa)
+	}
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
 		os.Exit(1)
@@ -217,7 +264,14 @@ func set(c *table.Client, zop bool, rowKey, colKey, value []byte, score int64) {
 }
 
 func get(c *table.Client, zop bool, rowKey, colKey []byte) {
-	r, err := c.Get(zop, &table.OneArgs{0, rowKey, colKey, nil, 0, 0})
+	var err error
+	var r *table.OneReply
+	var oa = table.OneArgs{0, rowKey, colKey, nil, 0, 0}
+	if zop {
+		r, err = c.ZGet(&oa)
+	} else {
+		r, err = c.Get(&oa)
+	}
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
 		os.Exit(1)
@@ -229,9 +283,35 @@ func get(c *table.Client, zop bool, rowKey, colKey []byte) {
 	}
 }
 
-func scan(c *table.Client, rowKey, colKey []byte, num int) {
-	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{0, rowKey, colKey, nil, 0, 0}}
-	r, err := c.Scan(false, &sa)
+func incr(c *table.Client, zop bool, rowKey, colKey []byte, score int64) {
+	var err error
+	var r *table.OneReply
+	var oa = table.OneArgs{0, rowKey, colKey, nil, score, 0}
+	if zop {
+		r, err = c.ZIncr(&oa)
+	} else {
+		r, err = c.Incr(&oa)
+	}
+	if err != nil {
+		fmt.Printf("Incr failed: %s\n", err)
+		os.Exit(1)
+	}
+
+	if *verbose != 0 {
+		fmt.Printf("rowKey: %2s, colKey: %s, value: %s, score:%d\n",
+			string(rowKey), string(colKey), string(r.Value), r.Score)
+	}
+}
+
+func scan(c *table.Client, zop bool, rowKey, colKey []byte, score int64, num int) {
+	var err error
+	var r *table.ScanReply
+	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{0, rowKey, colKey, nil, score, 0}}
+	if zop {
+		r, err = c.ZScan(&sa)
+	} else {
+		r, err = c.Scan(&sa)
+	}
 	if err != nil {
 		fmt.Printf("Scan failed: %s\n", err)
 		os.Exit(1)

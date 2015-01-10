@@ -119,13 +119,17 @@ func (cli *Client) GoReadRequest(ch *RequestChan) {
 			fallthrough
 		case proto.CmdGet:
 			ch.ReadReqChan <- &req
-		case proto.CmdSync:
+		case proto.CmdMIncr:
 			fallthrough
 		case proto.CmdMDel:
 			fallthrough
 		case proto.CmdMSet:
 			fallthrough
+		case proto.CmdIncr:
+			fallthrough
 		case proto.CmdDel:
+			fallthrough
+		case proto.CmdSync:
 			fallthrough
 		case proto.CmdSet:
 			ch.WriteReqChan <- &req

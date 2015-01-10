@@ -15,14 +15,17 @@ var (
 	ErrCasNotMatch = errors.New("cas is not match")
 	ErrShutdown    = errors.New("connection is shut down")
 	ErrUnknownCmd  = errors.New("unknown cmd")
+
+	ErrClosedPool  = errors.New("connection pool is closed")
+	ErrInvalidTag  = errors.New("invalid tag id")
+	ErrNoValidAddr = errors.New("no valid address")
 )
 
 const (
-	// <10: normal cases
-	EcodeOk       = 0 // Success
-	EcodeNotExist = 1 // Key not exist, normal case
+	EcodeOk          = 0  // Success, normal case
+	EcodeNotExist    = 1  // Key not exist, normal case
+	EcodeCasNotMatch = 10 // CAS not match, get new CAS and try again
 
-	EcodeCasNotMatch   = 10 // Cas not match, get new Cas and try again
 	EcodeTempReadFail  = 11 // Temporary fail, retry may fix this
 	EcodeTempWriteFail = 12 // Temporary fail, retry may fix this
 
@@ -119,8 +122,8 @@ func (c *Client) Use(dbId uint8) {
 	c.dbId = dbId
 }
 
-func (c *Client) Get(zop bool, args *OneArgs) (*OneReply, error) {
-	call := c.GoGet(zop, args)
+func (c *Client) Get(args *OneArgs) (*OneReply, error) {
+	call := c.GoGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -132,8 +135,8 @@ func (c *Client) Get(zop bool, args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) Set(zop bool, args *OneArgs) (*OneReply, error) {
-	call := c.GoSet(zop, args)
+func (c *Client) ZGet(args *OneArgs) (*OneReply, error) {
+	call := c.GoZGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -145,8 +148,8 @@ func (c *Client) Set(zop bool, args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) Del(zop bool, args *OneArgs) (*OneReply, error) {
-	call := c.GoDel(zop, args)
+func (c *Client) Set(args *OneArgs) (*OneReply, error) {
+	call := c.GoSet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -158,8 +161,73 @@ func (c *Client) Del(zop bool, args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) Mget(zop bool, args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMget(zop, args)
+func (c *Client) ZSet(args *OneArgs) (*OneReply, error) {
+	call := c.GoZSet(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
+}
+
+func (c *Client) Del(args *OneArgs) (*OneReply, error) {
+	call := c.GoDel(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
+}
+
+func (c *Client) ZDel(args *OneArgs) (*OneReply, error) {
+	call := c.GoZDel(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
+}
+
+func (c *Client) Incr(args *OneArgs) (*OneReply, error) {
+	call := c.GoIncr(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
+}
+
+func (c *Client) ZIncr(args *OneArgs) (*OneReply, error) {
+	call := c.GoZIncr(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
+}
+
+func (c *Client) MGet(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoMGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -171,8 +239,8 @@ func (c *Client) Mget(zop bool, args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) Mset(zop bool, args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMset(zop, args)
+func (c *Client) ZmGet(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoZmGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -184,8 +252,8 @@ func (c *Client) Mset(zop bool, args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) Mdel(zop bool, args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMdel(zop, args)
+func (c *Client) MSet(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoMSet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -197,8 +265,73 @@ func (c *Client) Mdel(zop bool, args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) Scan(zop bool, args *ScanArgs) (*ScanReply, error) {
-	call := c.GoScan(zop, args)
+func (c *Client) ZmSet(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoZmSet(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func (c *Client) MDel(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoMDel(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func (c *Client) ZmDel(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoZmDel(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func (c *Client) MIncr(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoMIncr(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func (c *Client) ZmIncr(args *MultiArgs) (*MultiReply, error) {
+	call := c.GoZmIncr(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func (c *Client) Scan(args *ScanArgs) (*ScanReply, error) {
+	call := c.GoScan(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
 	}
@@ -210,8 +343,22 @@ func (c *Client) Scan(zop bool, args *ScanArgs) (*ScanReply, error) {
 	return r.(*ScanReply), nil
 }
 
-func (c *Client) GoGet(zop bool, args *OneArgs) *Call {
-	call := c.newCall(proto.CmdGet)
+func (c *Client) ZScan(args *ScanArgs) (*ScanReply, error) {
+	call := c.GoZScan(args, nil)
+	if call.Error != nil {
+		return nil, call.Error
+	}
+
+	r, err := c.ParseReply(<-call.Done)
+	if err != nil {
+		return nil, err
+	}
+	return r.(*ScanReply), nil
+}
+
+// Get, Set, Del, Incr, ZGet, ZSet, ZDel, ZIncr
+func (c *Client) goOneOp(zop bool, args *OneArgs, cmd uint8, done chan *Call) *Call {
+	call := c.newCall(cmd, done)
 	if call.Error != nil {
 		return call
 	}
@@ -223,12 +370,25 @@ func (c *Client) GoGet(zop bool, args *OneArgs) *Call {
 	p.TableId = args.TableId
 	p.RowKey = args.RowKey
 	p.ColKey = args.ColKey
+
 	if args.Cas != 0 {
 		p.Cas = args.Cas
 		p.CtrlFlag |= proto.CtrlCas
 	}
+	if proto.CmdSet == cmd || proto.CmdIncr == cmd {
+		if args.Score != 0 {
+			p.Score = args.Score
+			p.CtrlFlag |= proto.CtrlScore
+		}
+	}
+	if proto.CmdSet == cmd {
+		if args.Value != nil {
+			p.Value = args.Value
+			p.CtrlFlag |= proto.CtrlValue
+		}
+	}
 
-	// ZGet
+	// ZGet, ZSet, ZDel, ZIncr
 	if zop {
 		p.ColSpace = proto.ColSpaceScore1
 		p.CtrlFlag |= proto.CtrlColSpace
@@ -247,84 +407,41 @@ func (c *Client) GoGet(zop bool, args *OneArgs) *Call {
 	return call
 }
 
-func (c *Client) GoSet(zop bool, args *OneArgs) *Call {
-	call := c.newCall(proto.CmdSet)
-	if call.Error != nil {
-		return call
-	}
-
-	var p proto.PkgOneOp
-	p.Seq = call.seq
-	p.DbId = c.dbId
-	p.Cmd = call.cmd
-	p.TableId = args.TableId
-	p.RowKey = args.RowKey
-	p.ColKey = args.ColKey
-	if args.Value != nil {
-		p.Value = args.Value
-		p.CtrlFlag |= proto.CtrlValue
-	}
-	if args.Score != 0 {
-		p.Score = args.Score
-		p.CtrlFlag |= proto.CtrlScore
-	}
-	if args.Cas != 0 {
-		p.Cas = args.Cas
-		p.CtrlFlag |= proto.CtrlCas
-	}
-
-	// ZSet
-	if zop {
-		p.ColSpace = proto.ColSpaceScore1
-		p.CtrlFlag |= proto.CtrlColSpace
-	}
-
-	var err error
-	call.pkg, _, err = p.Encode(nil)
-	if err != nil {
-		c.errCall(call, err)
-		return call
-	}
-
-	c.sending <- call
-
-	return call
+func (c *Client) GoGet(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(false, args, proto.CmdGet, done)
 }
 
-func (c *Client) GoDel(zop bool, args *OneArgs) *Call {
-	call := c.newCall(proto.CmdDel)
-	if call.Error != nil {
-		return call
-	}
-
-	var p proto.PkgOneOp
-	p.Seq = call.seq
-	p.DbId = c.dbId
-	p.Cmd = call.cmd
-	p.TableId = args.TableId
-	p.RowKey = args.RowKey
-	p.ColKey = args.ColKey
-
-	// ZDel
-	if zop {
-		p.ColSpace = proto.ColSpaceScore1
-		p.CtrlFlag |= proto.CtrlColSpace
-	}
-
-	var err error
-	call.pkg, _, err = p.Encode(nil)
-	if err != nil {
-		c.errCall(call, err)
-		return call
-	}
-
-	c.sending <- call
-
-	return call
+func (c *Client) GoZGet(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(true, args, proto.CmdGet, done)
 }
 
-func (c *Client) GoMget(zop bool, args *MultiArgs) *Call {
-	call := c.newCall(proto.CmdMGet)
+func (c *Client) GoSet(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(false, args, proto.CmdSet, done)
+}
+
+func (c *Client) GoZSet(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(true, args, proto.CmdSet, done)
+}
+
+func (c *Client) GoDel(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(false, args, proto.CmdDel, done)
+}
+
+func (c *Client) GoZDel(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(true, args, proto.CmdDel, done)
+}
+
+func (c *Client) GoIncr(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(false, args, proto.CmdIncr, done)
+}
+
+func (c *Client) GoZIncr(args *OneArgs, done chan *Call) *Call {
+	return c.goOneOp(true, args, proto.CmdIncr, done)
+}
+
+// MGet, MSet, MDel, MIncr, ZMGet, ZMSet, ZMDel, ZMIncr
+func (c *Client) goMultiOp(zop bool, args *MultiArgs, cmd uint8, done chan *Call) *Call {
+	call := c.newCall(cmd, done)
 	if call.Error != nil {
 		return call
 	}
@@ -339,12 +456,25 @@ func (c *Client) GoMget(zop bool, args *MultiArgs) *Call {
 		p.Kvs[i].TableId = args.Args[i].TableId
 		p.Kvs[i].RowKey = args.Args[i].RowKey
 		p.Kvs[i].ColKey = args.Args[i].ColKey
+
 		if args.Args[i].Cas != 0 {
 			p.Kvs[i].Cas = args.Args[i].Cas
 			p.Kvs[i].CtrlFlag |= proto.CtrlCas
 		}
+		if proto.CmdMSet == cmd || proto.CmdIncr == cmd {
+			if args.Args[i].Score != 0 {
+				p.Kvs[i].Score = args.Args[i].Score
+				p.Kvs[i].CtrlFlag |= proto.CtrlScore
+			}
+		}
+		if proto.CmdMSet == cmd {
+			if args.Args[i].Value != nil {
+				p.Kvs[i].Value = args.Args[i].Value
+				p.Kvs[i].CtrlFlag |= proto.CtrlValue
+			}
+		}
 
-		// ZMGet
+		// ZMGet, ZMSet, ZMDel, ZMIncr
 		if zop {
 			p.Kvs[i].ColSpace = proto.ColSpaceScore1
 			p.Kvs[i].CtrlFlag |= proto.CtrlColSpace
@@ -363,92 +493,40 @@ func (c *Client) GoMget(zop bool, args *MultiArgs) *Call {
 	return call
 }
 
-func (c *Client) GoMset(zop bool, args *MultiArgs) *Call {
-	call := c.newCall(proto.CmdMSet)
-	if call.Error != nil {
-		return call
-	}
-
-	var p proto.PkgMultiOp
-	p.Seq = call.seq
-	p.DbId = c.dbId
-	p.Cmd = call.cmd
-
-	p.Kvs = make([]proto.KeyValueCtrl, len(args.Args))
-	for i := 0; i < len(args.Args); i++ {
-		p.Kvs[i].TableId = args.Args[i].TableId
-		p.Kvs[i].RowKey = args.Args[i].RowKey
-		p.Kvs[i].ColKey = args.Args[i].ColKey
-		if args.Args[i].Value != nil {
-			p.Kvs[i].Value = args.Args[i].Value
-			p.Kvs[i].CtrlFlag |= proto.CtrlValue
-		}
-		if args.Args[i].Score != 0 {
-			p.Kvs[i].Score = args.Args[i].Score
-			p.Kvs[i].CtrlFlag |= proto.CtrlScore
-		}
-		if args.Args[i].Cas != 0 {
-			p.Kvs[i].Cas = args.Args[i].Cas
-			p.Kvs[i].CtrlFlag |= proto.CtrlCas
-		}
-
-		// ZMset
-		if zop {
-			p.Kvs[i].ColSpace = proto.ColSpaceScore1
-			p.Kvs[i].CtrlFlag |= proto.CtrlColSpace
-		}
-	}
-
-	var err error
-	call.pkg, _, err = p.Encode(nil)
-	if err != nil {
-		c.errCall(call, err)
-		return call
-	}
-
-	c.sending <- call
-
-	return call
+func (c *Client) GoMGet(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(false, args, proto.CmdMGet, done)
 }
 
-func (c *Client) GoMdel(zop bool, args *MultiArgs) *Call {
-	call := c.newCall(proto.CmdMSet)
-	if call.Error != nil {
-		return call
-	}
-
-	var p proto.PkgMultiOp
-	p.Seq = call.seq
-	p.DbId = c.dbId
-	p.Cmd = call.cmd
-
-	p.Kvs = make([]proto.KeyValueCtrl, len(args.Args))
-	for i := 0; i < len(args.Args); i++ {
-		p.Kvs[i].TableId = args.Args[i].TableId
-		p.Kvs[i].RowKey = args.Args[i].RowKey
-		p.Kvs[i].ColKey = args.Args[i].ColKey
-
-		// ZMdel
-		if zop {
-			p.Kvs[i].ColSpace = proto.ColSpaceScore1
-			p.Kvs[i].CtrlFlag |= proto.CtrlColSpace
-		}
-	}
-
-	var err error
-	call.pkg, _, err = p.Encode(nil)
-	if err != nil {
-		c.errCall(call, err)
-		return call
-	}
-
-	c.sending <- call
-
-	return call
+func (c *Client) GoZmGet(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(true, args, proto.CmdMGet, done)
 }
 
-func (c *Client) GoScan(zop bool, args *ScanArgs) *Call {
-	call := c.newCall(proto.CmdScan)
+func (c *Client) GoMSet(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(false, args, proto.CmdMSet, done)
+}
+
+func (c *Client) GoZmSet(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(true, args, proto.CmdMSet, done)
+}
+
+func (c *Client) GoMDel(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(false, args, proto.CmdMDel, done)
+}
+
+func (c *Client) GoZmDel(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(true, args, proto.CmdMDel, done)
+}
+
+func (c *Client) GoMIncr(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(false, args, proto.CmdMIncr, done)
+}
+
+func (c *Client) GoZmIncr(args *MultiArgs, done chan *Call) *Call {
+	return c.goMultiOp(true, args, proto.CmdMIncr, done)
+}
+
+func (c *Client) goScan(zop bool, args *ScanArgs, done chan *Call) *Call {
+	call := c.newCall(proto.CmdScan, done)
 	if call.Error != nil {
 		return call
 	}
@@ -485,12 +563,22 @@ func (c *Client) GoScan(zop bool, args *ScanArgs) *Call {
 	return call
 }
 
+func (c *Client) GoScan(args *ScanArgs, done chan *Call) *Call {
+	return c.goScan(false, args, done)
+}
+
+func (c *Client) GoZScan(args *ScanArgs, done chan *Call) *Call {
+	return c.goScan(true, args, done)
+}
+
 func (c *Client) ParseReply(call *Call) (interface{}, error) {
 	if call.Error != nil {
 		return nil, call.Error
 	}
 
 	switch call.cmd {
+	case proto.CmdIncr:
+		fallthrough
 	case proto.CmdDel:
 		fallthrough
 	case proto.CmdSet:
@@ -510,6 +598,8 @@ func (c *Client) ParseReply(call *Call) (interface{}, error) {
 
 		return &OneReply{p.ErrCode, &p.KeyValue}, nil
 
+	case proto.CmdMIncr:
+		fallthrough
 	case proto.CmdMDel:
 		fallthrough
 	case proto.CmdMSet:
@@ -630,10 +720,17 @@ func (call *Call) done() {
 	}
 }
 
-func (c *Client) newCall(cmd uint8) *Call {
+func (c *Client) newCall(cmd uint8, done chan *Call) *Call {
 	var call = new(Call)
 	call.cmd = cmd
-	call.Done = make(chan *Call, 1)
+	if done == nil {
+		done = make(chan *Call, 2)
+	} else {
+		if cap(done) == 0 {
+			log.Panic("gotable: done channel is unbuffered")
+		}
+	}
+	call.Done = done
 
 	c.mtx.Lock()
 	if c.shutdown || c.closing {
@@ -662,6 +759,7 @@ func (c *Client) errCall(call *Call, err error) {
 }
 
 func isNormalErrorCode(code uint8) bool {
+	// <10: normal cases
 	return code < 10
 }
 
