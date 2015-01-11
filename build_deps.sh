@@ -6,16 +6,20 @@ DEPS_DIR=/tmp/gotable-deps
 DEPS_ULR=https://github.com/stevejiang/gotable-deps/raw/master
 
 ROCKSDB_VER=rocksdb-3.8
+ROCKSDB_URL=$DEPS_ULR/$ROCKSDB_VER.tar.gz
 ROCKSDB=$DEPS_DIR/$ROCKSDB_VER
 
 if [ ! -d "$DEPS_DIR" ]; then
-	mkdir -p $DEPS_DIR;
+	mkdir -p $DEPS_DIR
 fi
 
 if [ "$1" = "-dl" ]; then
-	tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR
+	tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR 2>/dev/null
 	if [ "$?" != "0" ]; then
-		wget --no-check-certificate $DEPS_ULR/$ROCKSDB_VER.tar.gz -O $ROCKSDB.tar.gz
+		curl -L $ROCKSDB_URL -o $ROCKSDB.tar.gz
+		if [ "$?" != "0" ]; then
+			wget --no-check-certificate $ROCKSDB_URL -O $ROCKSDB.tar.gz
+		fi
 		tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR
 	fi
 else	
