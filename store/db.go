@@ -14,10 +14,8 @@
 
 package store
 
-// #cgo LDFLAGS: -lrocksdb -lsnappy -lz
 // #include <rocksdb/c.h>
-// #include <malloc.h>
-// #include <string.h>
+// #include <stdlib.h>
 import "C"
 
 import (

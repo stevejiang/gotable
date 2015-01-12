@@ -8,7 +8,7 @@ include build_config.mk
 OPT += -g -O2 -DNDEBUG
 OPT += -Wall -Werror -Wsign-compare
 export CGO_CFLAGS=$(OPT) -I$(ROCKSDB)/include
-export CGO_LDFLAGS=-L$(ROCKSDB)
+export CGO_LDFLAGS=-L$(ROCKSDB) -lrocksdb $(PLATFORM_LDFLAGS)
 
 GO_FLAGS  = --ldflags '-extldflags "-static-libstdc++"'
 #GO_FLAGS = --ldflags '-extldflags "-static-libstdc++ -static-libgcc"'
@@ -19,19 +19,18 @@ all: build rocksdb-clean
 build: rocksdb-lib go-deps
 	go install $(GO_FLAGS) ./...
 
-get: rocksdb-lib
+get: rocksdb-lib go-deps
 	go get ./...
 
 clean: rocksdb-clean
 	go clean -i ./...
+	rm build_config.mk
 
 rocksdb-clean:
-	rm build_config.mk
 	rm -rf $(ROCKSDB)
 
 rocksdb-lib:
 	if [ ! -f "$(ROCKSDB)/librocksdb.a" ]; then \
-		rm -rf $(ROCKSDB); \
 		./build_deps.sh -dl; \
 		make -C $(ROCKSDB) static_lib; \
 	fi
