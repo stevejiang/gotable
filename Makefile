@@ -6,7 +6,6 @@ $(shell ./build_deps.sh build_config.mk)
 include build_config.mk
 
 OPT += -g -O2 -DNDEBUG
-OPT += -Wall -Werror -Wsign-compare
 export CGO_CFLAGS=$(OPT) -I$(ROCKSDB)/include
 export CGO_LDFLAGS=-L$(ROCKSDB) -lrocksdb $(PLATFORM_LDFLAGS)
 
