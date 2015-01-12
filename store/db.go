@@ -19,26 +19,11 @@ package store
 import "C"
 
 import (
-	"encoding/binary"
 	"fmt"
-	"github.com/stevejiang/gotable/api/go/table/proto"
 	"unsafe"
 )
 
-const (
-	ColSpaceDefault     = 0x1
-	ColSpaceScore       = 0x2
-	ColSpaceScoreSorted = 0x4
-)
-
-type TableKey struct {
-	TableId  uint8
-	RowKey   []byte // len(rowKey) < 256
-	ColSpace uint8
-	ColKey   []byte
-}
-
-type TableDB struct {
+type DB struct {
 	db   *C.rocksdb_t
 	opt  *C.rocksdb_options_t
 	rOpt *C.rocksdb_readoptions_t
@@ -55,13 +40,17 @@ type SnapReadOptions struct {
 	db   *C.rocksdb_t
 }
 
-func NewTableDB() *TableDB {
-	db := new(TableDB)
+type WriteBatch struct {
+	batch *C.rocksdb_writebatch_t
+}
+
+func NewTableDB() *DB {
+	db := new(DB)
 
 	return db
 }
 
-func (db *TableDB) Close() {
+func (db *DB) Close() {
 	if db.db != nil {
 		C.rocksdb_close(db.db)
 		db.db = nil
@@ -72,7 +61,7 @@ func (db *TableDB) Close() {
 	}
 }
 
-func (db *TableDB) Open(name string, createIfMissing bool) error {
+func (db *DB) Open(name string, createIfMissing bool) error {
 	var errStr *C.char
 
 	db.opt = C.rocksdb_options_create()
@@ -105,9 +94,7 @@ func (db *TableDB) Open(name string, createIfMissing bool) error {
 	return nil
 }
 
-func (db *TableDB) Put(dbId uint8, key TableKey, value []byte) error {
-	var rawKey = GetRawKey(dbId, key)
-
+func (db *DB) Put(rawKey, value []byte, wb *WriteBatch) error {
 	var ck, cv *C.char
 	if len(rawKey) > 0 {
 		ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
@@ -116,19 +103,22 @@ func (db *TableDB) Put(dbId uint8, key TableKey, value []byte) error {
 		cv = (*C.char)(unsafe.Pointer(&value[0]))
 	}
 
-	var errStr *C.char
-	C.rocksdb_put(db.db, db.wOpt, ck, C.size_t(len(rawKey)), cv, C.size_t(len(value)),
-		&errStr)
-	if errStr != nil {
-		defer C.free(unsafe.Pointer(errStr))
-		return fmt.Errorf(C.GoString(errStr))
+	if wb == nil {
+		var errStr *C.char
+		C.rocksdb_put(db.db, db.wOpt, ck, C.size_t(len(rawKey)), cv, C.size_t(len(value)),
+			&errStr)
+		if errStr != nil {
+			defer C.free(unsafe.Pointer(errStr))
+			return fmt.Errorf(C.GoString(errStr))
+		}
+	} else {
+		C.rocksdb_writebatch_put(wb.batch, ck, C.size_t(len(rawKey)), cv, C.size_t(len(value)))
 	}
 
 	return nil
 }
 
-func (db *TableDB) Get(opt *SnapReadOptions, dbId uint8, key TableKey) ([]byte, error) {
-	var rawKey = GetRawKey(dbId, key)
+func (db *DB) Get(opt *SnapReadOptions, rawKey []byte) ([]byte, error) {
 	var ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
 
 	var rOpt = db.rOpt
@@ -154,59 +144,24 @@ func (db *TableDB) Get(opt *SnapReadOptions, dbId uint8, key TableKey) ([]byte, 
 	return nil, err
 }
 
-func (db *TableDB) Del(dbId uint8, key TableKey) error {
-	var rawKey = GetRawKey(dbId, key)
+func (db *DB) Del(rawKey []byte, wb *WriteBatch) error {
 	var ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
 
-	var errStr *C.char
-	C.rocksdb_delete(db.db, db.wOpt, ck, C.size_t(len(rawKey)), &errStr)
-
-	var err error
-	if errStr != nil {
-		defer C.free(unsafe.Pointer(errStr))
-		err = fmt.Errorf(C.GoString(errStr))
-	}
-
-	return err
-}
-
-func (db *TableDB) Mput(dbId uint8, keys []TableKey, values [][]byte) error {
-	if len(keys) != len(values) {
-		return fmt.Errorf("invalid keys or values")
-	}
-
-	if len(keys) == 0 {
-		return nil // nothing to do
-	}
-
-	var batch = C.rocksdb_writebatch_create()
-	defer C.rocksdb_writebatch_destroy(batch)
-
-	for i := 0; i < len(keys); i++ {
-		var value = values[i]
-		var rawKey = GetRawKey(dbId, keys[i])
-
-		var ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
-		var cv *C.char
-		if len(value) > 0 {
-			cv = (*C.char)(unsafe.Pointer(&value[0]))
+	if wb == nil {
+		var errStr *C.char
+		C.rocksdb_delete(db.db, db.wOpt, ck, C.size_t(len(rawKey)), &errStr)
+		if errStr != nil {
+			defer C.free(unsafe.Pointer(errStr))
+			return fmt.Errorf(C.GoString(errStr))
 		}
-
-		C.rocksdb_writebatch_put(batch, ck, C.size_t(len(rawKey)), cv, C.size_t(len(value)))
-	}
-
-	var errStr *C.char
-
-	C.rocksdb_write(db.db, db.wOpt, batch, &errStr)
-	if errStr != nil {
-		defer C.free(unsafe.Pointer(errStr))
-		return fmt.Errorf(C.GoString(errStr))
+	} else {
+		C.rocksdb_writebatch_delete(wb.batch, ck, C.size_t(len(rawKey)))
 	}
 
 	return nil
 }
 
-func (db *TableDB) NewSnapReadOptions() *SnapReadOptions {
+func (db *DB) NewSnapReadOptions() *SnapReadOptions {
 	var opt = new(SnapReadOptions)
 	opt.rOpt = C.rocksdb_readoptions_create()
 	opt.snap = C.rocksdb_create_snapshot(db.db)
@@ -230,7 +185,32 @@ func (opt *SnapReadOptions) Release() {
 	opt.db = nil
 }
 
-func (db *TableDB) NewIterator(fillCache bool) *Iterator {
+func (db *DB) NewWriteBatch() *WriteBatch {
+	return &WriteBatch{C.rocksdb_writebatch_create()}
+}
+
+func (db *DB) Commit(wb *WriteBatch) error {
+	if wb != nil && wb.batch != nil {
+		var errStr *C.char
+		C.rocksdb_write(db.db, db.wOpt, wb.batch, &errStr)
+		C.rocksdb_writebatch_clear(wb.batch)
+		if errStr != nil {
+			defer C.free(unsafe.Pointer(errStr))
+			return fmt.Errorf(C.GoString(errStr))
+		}
+	}
+
+	return nil
+}
+
+func (wb *WriteBatch) Close() {
+	if wb.batch != nil {
+		C.rocksdb_writebatch_destroy(wb.batch)
+		wb.batch = nil
+	}
+}
+
+func (db *DB) NewIterator(fillCache bool) *Iterator {
 	var iter = new(Iterator)
 	var scanOpt = C.rocksdb_readoptions_create()
 	defer C.rocksdb_readoptions_destroy(scanOpt)
@@ -276,11 +256,19 @@ func (iter *Iterator) Valid() bool {
 	return C.rocksdb_iter_valid(iter.iter) != 0
 }
 
+/*
 func (iter *Iterator) Key() (unitId uint16, dbId uint8, key TableKey) {
 	var keyLen C.size_t
 	var ck = C.rocksdb_iter_key(iter.iter, &keyLen)
 	var rawKey = C.GoBytes(unsafe.Pointer(ck), C.int(keyLen))
 	return ParseRawKey(rawKey)
+}
+*/
+
+func (iter *Iterator) Key() []byte {
+	var keyLen C.size_t
+	var ck = C.rocksdb_iter_key(iter.iter, &keyLen)
+	return C.GoBytes(unsafe.Pointer(ck), C.int(keyLen))
 }
 
 func (iter *Iterator) Value() []byte {
@@ -295,33 +283,4 @@ func boolToUchar(b bool) C.uchar {
 	} else {
 		return 0
 	}
-}
-
-func GetRawKey(dbId uint8, key TableKey) []byte {
-	var unitId = proto.GetUnitId(dbId, key.TableId, key.RowKey)
-
-	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colType+sColKey
-	var rawLen = 6 + len(key.RowKey) + len(key.ColKey)
-	var rawKey = make([]byte, rawLen, rawLen)
-	binary.BigEndian.PutUint16(rawKey, unitId)
-	rawKey[2] = dbId
-	rawKey[3] = key.TableId
-	rawKey[4] = uint8(len(key.RowKey))
-	copy(rawKey[5:], key.RowKey)
-	rawKey[5+len(key.RowKey)] = key.ColSpace
-	copy(rawKey[(6+len(key.RowKey)):], key.ColKey)
-
-	return rawKey
-}
-
-func ParseRawKey(rawKey []byte) (unitId uint16, dbId uint8, key TableKey) {
-	unitId = binary.BigEndian.Uint16(rawKey)
-	dbId = rawKey[2]
-	key.TableId = rawKey[3]
-	var keyLen = rawKey[4]
-	var colTypePos = 5 + int(keyLen)
-	key.RowKey = rawKey[5:colTypePos]
-	key.ColSpace = rawKey[colTypePos]
-	key.ColKey = rawKey[(colTypePos + 1):]
-	return
 }

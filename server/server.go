@@ -56,98 +56,152 @@ func NewServer(dbname string) *Server {
 	return srv
 }
 
-func (srv *Server) addResp(write bool, req *Request, resp *Response) {
+func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
 	switch req.Cli.cliType {
 	case ClientTypeNormal:
 		req.Cli.AddResp(resp)
-		if write {
+		if write && ok {
 			srv.bin.AddRequest(&binlog.Request{0, 0, req.Pkg})
 		}
 	case ClientTypeSlaver:
-		if write {
+		if write && ok {
 			var masterId uint16 = 1
 			srv.bin.AddRequest(&binlog.Request{masterId, req.Seq, req.Pkg})
+		}
+		if !ok && resp.Pkg != nil {
+			req.Cli.AddResp(resp)
 		}
 	}
 }
 
 func (srv *Server) ping(req *Request) {
-	var resp = new(Response)
-	resp.Cmd = req.Cmd
-	resp.Seq = req.Seq
-	resp.Pkg = req.Pkg
+	var resp = Response(req.PkgArgs)
 
-	srv.addResp(false, req, resp)
+	srv.sendResp(false, true, req, &resp)
 }
 
 func (srv *Server) get(req *Request) {
 	var resp = Response(req.PkgArgs)
 	resp.Pkg = srv.tbl.Get(&req.PkgArgs)
 
-	srv.addResp(false, req, &resp)
+	srv.sendResp(false, true, req, &resp)
 }
 
 func (srv *Server) set(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Set(&req.PkgArgs)
-
-	srv.addResp(true, req, &resp)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.Set(&req.PkgArgs)
+		srv.sendResp(true, ok, req, &resp)
+	case ClientTypeMaster:
+		log.Printf("Slaver set failed: [%d, %d]\n", req.DbId, req.Seq)
+	}
 }
 
 func (srv *Server) del(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Del(&req.PkgArgs)
-
-	srv.addResp(true, req, &resp)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.Del(&req.PkgArgs)
+		srv.sendResp(true, ok, req, &resp)
+	case ClientTypeMaster:
+		log.Printf("Slaver del failed: [%d, %d]\n", req.DbId, req.Seq)
+	}
 }
 
 func (srv *Server) incr(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Incr(&req.PkgArgs)
-
-	srv.addResp(true, req, &resp)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.Incr(&req.PkgArgs)
+		srv.sendResp(true, ok, req, &resp)
+	case ClientTypeMaster:
+		log.Printf("Slaver incr failed: [%d, %d]\n", req.DbId, req.Seq)
+	}
 }
 
 func (srv *Server) mGet(req *Request) {
 	var resp = Response(req.PkgArgs)
 	resp.Pkg = srv.tbl.MGet(&req.PkgArgs)
 
-	srv.addResp(false, req, &resp)
+	srv.sendResp(false, true, req, &resp)
 }
 
 func (srv *Server) mSet(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.MSet(&req.PkgArgs)
-
-	srv.addResp(true, req, &resp)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.MSet(&req.PkgArgs)
+		srv.sendResp(true, ok, req, &resp)
+	case ClientTypeMaster:
+		log.Printf("Slaver mSet failed: [%d, %d]\n", req.DbId, req.Seq)
+	}
 }
 
 func (srv *Server) mDel(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.MDel(&req.PkgArgs)
-
-	srv.addResp(true, req, &resp)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.MDel(&req.PkgArgs)
+		srv.sendResp(true, ok, req, &resp)
+	case ClientTypeMaster:
+		log.Printf("Slaver mDel failed: [%d, %d]\n", req.DbId, req.Seq)
+	}
 }
 
 func (srv *Server) mIncr(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.MIncr(&req.PkgArgs)
-
-	srv.addResp(true, req, &resp)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.MIncr(&req.PkgArgs)
+		srv.sendResp(true, ok, req, &resp)
+	case ClientTypeMaster:
+		log.Printf("Slaver mIncr failed: [%d, %d]\n", req.DbId, req.Seq)
+	}
 }
 
 func (srv *Server) scan(req *Request) {
 	var resp = Response(req.PkgArgs)
 	resp.Pkg = srv.tbl.Scan(&req.PkgArgs)
 
-	srv.addResp(false, req, &resp)
+	srv.sendResp(false, true, req, &resp)
 }
 
 func (srv *Server) sync(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Set(&req.PkgArgs)
+	switch req.Cli.cliType {
+	case ClientTypeSlaver:
+		var resp = Response(req.PkgArgs)
+		var ok bool
+		resp.Pkg, ok = srv.tbl.Sync(&req.PkgArgs)
 
-	srv.addResp(true, req, &resp)
+		srv.sendResp(true, ok, req, &resp)
+		if !ok && resp.Pkg != nil {
+			req.Cli.AddResp(&resp) // Reply Error msg
+		}
+	case ClientTypeNormal:
+		log.Printf("User cannot send SYNC command\n")
+	case ClientTypeMaster:
+		log.Printf("Slaver sync failed: [%d, %d]\n", req.DbId, req.Seq)
+		req.Cli.Close() // stop full sync
+	}
 }
 
 func (srv *Server) newMaster(req *Request) {

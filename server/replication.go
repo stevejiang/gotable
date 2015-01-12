@@ -131,29 +131,39 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 			time.Sleep(1e6)
 			lastSeq, valid = ms.bin.GetLastLogSeq()
 		}
-		var iter = tbl.NewIterator(false)
+		var it = tbl.NewIterator(false)
 		rwMtx.Unlock()
 
 		// Full sync
-		for iter.SeekToFirst(); iter.Valid(); iter.Next() {
-			_, dbId, key := iter.Key()
-			value := iter.Value()
+		var hasRecord = false
+		var one proto.PkgOneOp
+		one.Cmd = proto.CmdSync
+		for it.SeekToFirst(); it.Valid(); it.Next() {
+			if hasRecord {
+				pkg, _, _ := one.Encode(nil)
+				ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
+			}
 
-			var one proto.PkgOneOp
-			one.Cmd = proto.CmdSync
+			_, dbId, tableId, colSpace, rowKey, colKey := store.ParseRawKey(it.Key())
+			value := it.Value()
+
 			one.DbId = dbId
-			one.TableId = key.TableId
-			one.ColSpace = key.ColSpace
-			one.RowKey = key.RowKey
-			one.ColKey = key.ColKey
+			one.TableId = tableId
+			one.ColSpace = colSpace
+			one.RowKey = rowKey
+			one.ColKey = colKey
 			one.Value = value
 			one.CtrlFlag |= (proto.CtrlColSpace | proto.CtrlValue)
-
-			pkg, _, _ := one.Encode(nil)
-			ms.cli.AddResp(&Response{pkg[1], dbId, 0, pkg})
+			hasRecord = true
 		}
 
-		iter.Close()
+		it.Close()
+
+		if hasRecord {
+			one.Seq = lastSeq
+			pkg, _, _ := one.Encode(nil)
+			ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
+		}
 
 		log.Println("full async finished")
 	}

@@ -101,10 +101,10 @@ type BinLog struct {
 func NewBinLog(dir string) *BinLog {
 	var bin = new(BinLog)
 	bin.dir = dir
-	bin.reqChan = make(chan *Request, 100000)
+	bin.reqChan = make(chan *Request, 10000)
 
 	bin.msChanged = true
-
+	bin.logSeq = 1000000 // start from here
 	bin.memlog = make([]byte, memBinLogSize)
 
 	err := bin.init()
@@ -564,7 +564,7 @@ func (bin *BinLog) loadAndFixHeadAndTail(idxs []uint64) error {
 					minSeq = logSeq
 				}
 
-				//log.Printf("%d\t%d\t%d\t%d\n", n, logSeq, masterId, masterSeq)
+				//log.Printf("%d\t%d\t%d\n", logSeq, masterId, masterSeq)
 			}
 
 			f.Close()

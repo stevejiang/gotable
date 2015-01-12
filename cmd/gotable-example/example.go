@@ -29,24 +29,25 @@ var (
 func main() {
 	flag.Parse()
 
-	var tc, err = table.Dial("tcp", *host)
+	client, err := table.Dial("tcp", *host)
 	if err != nil {
-		fmt.Printf("Dial fialed: %s", err)
+		fmt.Printf("Dial fialed: %s\n", err)
 		return
 	}
-	defer tc.Close()
+	defer client.Close()
 
-	testGet(tc)
-	testMGet(tc)
-	testScan(tc)
-	testZScan(tc)
-	testCas(tc)
-	testBinary(tc)
+	ctx := client.NewContext(1)
 
-	time.Sleep(time.Millisecond)
+	testGet(ctx)
+	testMGet(ctx)
+	testScan(ctx)
+	testZScan(ctx)
+	testCas(ctx)
+	testBinary(ctx)
+	testPing(ctx)
 }
 
-func testGet(tc *table.Client) {
+func testGet(tc *table.Context) {
 	// set
 	_, err := tc.Set(&table.OneArgs{1, []byte("row1"), []byte("col1"), []byte("v01"), 10, 0})
 	if err != nil {
@@ -86,7 +87,7 @@ func testGet(tc *table.Client) {
 	}
 }
 
-func testMGet(tc *table.Client) {
+func testMGet(tc *table.Context) {
 	var ma table.MultiArgs
 	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col0"), []byte("v00"), 10, 0})
 	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col1"), []byte("v01"), 9, 0})
@@ -118,7 +119,7 @@ func testMGet(tc *table.Client) {
 	}
 }
 
-func testScan(tc *table.Client) {
+func testScan(tc *table.Context) {
 	var sa = table.ScanArgs{10, 0, table.OneArgs{1, []byte("row1"), []byte("col0"), nil, 0, 0}}
 	r, err := tc.Scan(&sa)
 	if err != nil {
@@ -134,7 +135,7 @@ func testScan(tc *table.Client) {
 	}
 }
 
-func testZScan(tc *table.Client) {
+func testZScan(tc *table.Context) {
 	_, err := tc.ZSet(&table.OneArgs{1, []byte("row1"), []byte("000"), []byte("v00"), 10, 0})
 	if err != nil {
 		fmt.Printf("Set fialed: %s\n", err)
@@ -166,7 +167,7 @@ func testZScan(tc *table.Client) {
 	}
 }
 
-func testCas(tc *table.Client) {
+func testCas(tc *table.Context) {
 	var cas uint32
 	for i := 0; i < 1; i++ {
 		r, err := tc.Get(&table.OneArgs{1, []byte("row1"), []byte("col1"), nil, 0, 1})
@@ -198,7 +199,7 @@ func testCas(tc *table.Client) {
 	fmt.Printf("CAS result: %q\t%d\n", r.Value, r.Score)
 }
 
-func testBinary(tc *table.Client) {
+func testBinary(tc *table.Context) {
 	var colKey = make([]byte, 4)
 	var value = make([]byte, 8)
 	binary.BigEndian.PutUint32(colKey, 998365)
@@ -216,4 +217,17 @@ func testBinary(tc *table.Client) {
 
 	fmt.Printf("Binary result: %q\t%d\t%d\n",
 		r.Value, binary.BigEndian.Uint64(r.Value), r.Score)
+}
+
+func testPing(tc *table.Context) {
+	start := time.Now()
+	err := tc.Ping()
+	if err != nil {
+		fmt.Printf("Ping fialed: %s\n", err)
+		return
+	}
+
+	elapsed := time.Since(start)
+
+	fmt.Printf("Ping succeed: %.2f ms\n", float64(elapsed)/1e6)
 }

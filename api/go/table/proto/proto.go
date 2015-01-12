@@ -46,7 +46,7 @@ const (
 	CmdIncr  = 0x64
 	CmdMIncr = 0x65
 
-	// Inner Write
+	// Inner SYNC
 	CmdSync = 0xB0
 
 	// Inner CTRL

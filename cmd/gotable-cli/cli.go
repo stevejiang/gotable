@@ -21,17 +21,18 @@ import (
 )
 
 type client struct {
-	c *table.Client
+	c *table.Context
 }
 
 func newClient() *client {
 	var c = new(client)
-	var err error
-	c.c, err = table.Dial("tcp", *host)
+	cli, err := table.Dial("tcp", *host)
 	if err != nil {
 		fmt.Println("dial failed: ", err)
 		return nil
 	}
+
+	c.c = cli.NewContext(1)
 
 	return c
 }

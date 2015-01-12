@@ -120,6 +120,9 @@ func (cli *Client) GoReadRequest(ch *RequestChan) {
 			return
 		}
 
+		//log.Printf("recv(%s): [%d\t%d\t%d]\n",
+		//	cli.c.RemoteAddr(), head.Cmd, head.DbId, head.Seq)
+
 		var req = Request{cli, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
 
 		switch head.Cmd {
@@ -166,6 +169,8 @@ func (cli *Client) GoSendResponse() {
 			}
 
 			if err == nil && !cli.IsClosed() {
+				//log.Printf("send(%s): [%d\t%d\t%d]\n",
+				//	cli.c.RemoteAddr(), resp.Cmd, resp.DbId, resp.Seq)
 				_, err = cli.c.Write(resp.Pkg)
 				if err != nil {
 					cli.Close()

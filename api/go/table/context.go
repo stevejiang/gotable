@@ -1,69 +1,14 @@
-// Copyright 2015 stevejiang. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// The official client API of GoTable. GoTable is a high performance
-// NoSQL database.
 package table
 
 import (
-	"bufio"
-	"errors"
 	"github.com/stevejiang/gotable/api/go/table/proto"
-	"io"
-	"log"
-	"net"
-	"strconv"
-	"sync"
 )
 
-const VERSION = "0.1" // GoTable version
-
-var (
-	ErrCasNotMatch = errors.New("cas is not match")
-	ErrShutdown    = errors.New("connection is shut down")
-	ErrUnknownCmd  = errors.New("unknown cmd")
-
-	ErrClosedPool  = errors.New("connection pool is closed")
-	ErrInvalidTag  = errors.New("invalid tag id")
-	ErrNoValidAddr = errors.New("no valid address")
-)
-
-const (
-	EcodeOk          = 0  // Success, normal case
-	EcodeNotExist    = 1  // Key not exist, normal case
-	EcodeCasNotMatch = 10 // CAS not match, get new CAS and try again
-
-	EcodeTempReadFail  = 11 // Temporary fail, retry may fix this
-	EcodeTempWriteFail = 12 // Temporary fail, retry may fix this
-
-	EcodeDecodeFailed = 21 // Decode request PKG failed
-	EcodeReadFailed   = 22
-	EcodeWriteFailed  = 23
-)
-
-type Client struct {
-	p       *Pool
-	c       net.Conn
-	r       *bufio.Reader
-	sending chan *Call
-
-	mtx      sync.Mutex // protects following
-	seq      uint64
-	pending  map[uint64]*Call
-	dbId     uint8
-	closing  bool // user has called Close
-	shutdown bool // server has told us to stop
+// Connection Context to GoTable server.
+// It's NOT safe to use in multiple goroutines.
+type Context struct {
+	cli  *Client
+	dbId uint8
 }
 
 type Call struct {
@@ -75,72 +20,26 @@ type Call struct {
 	cmd uint8
 }
 
-func NewClient(conn net.Conn) *Client {
-	var c = new(Client)
-	c.c = conn
-	c.r = bufio.NewReader(conn)
-	c.sending = make(chan *Call, 128)
-	c.pending = make(map[uint64]*Call)
-
-	go c.recv()
-	go c.send()
-
-	return c
+// Get the underling connection Client of the Context.
+func (c *Context) Client() *Client {
+	return c.cli
 }
 
-func newPoolClient(network, address string, pool *Pool) *Client {
-	c, err := Dial(network, address)
-	if err != nil {
-		return nil
-	}
-
-	c.p = pool
-	return c
-}
-
-func Dial(network, address string) (*Client, error) {
-	conn, err := net.Dial(network, address)
-	if err != nil {
-		return nil, err
-	}
-	return NewClient(conn), nil
-}
-
-func (c *Client) Close() error {
-	if c.p == nil {
-		return c.doClose()
-	} else {
-		return c.p.put(c)
-	}
-}
-
-func (c *Client) doClose() error {
-	c.mtx.Lock()
-	if c.closing {
-		c.mtx.Unlock()
-		return ErrShutdown
-	}
-	c.closing = true
-	c.mtx.Unlock()
-
-	close(c.sending)
-	var err = c.c.Close()
-
-	var p = c.p
-	if p != nil {
-		p.remove(c)
-	}
-
-	return err
-}
-
-func (c *Client) Use(dbId uint8) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
+func (c *Context) Use(dbId uint8) {
 	c.dbId = dbId
 }
 
-func (c *Client) Get(args *OneArgs) (*OneReply, error) {
+func (c *Context) Ping() error {
+	call := c.GoPing(nil)
+	if call.Error != nil {
+		return call.Error
+	}
+
+	_, err := c.ParseReply(<-call.Done)
+	return err
+}
+
+func (c *Context) Get(args *OneArgs) (*OneReply, error) {
 	call := c.GoGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -153,7 +52,7 @@ func (c *Client) Get(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) ZGet(args *OneArgs) (*OneReply, error) {
+func (c *Context) ZGet(args *OneArgs) (*OneReply, error) {
 	call := c.GoZGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -166,7 +65,7 @@ func (c *Client) ZGet(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) Set(args *OneArgs) (*OneReply, error) {
+func (c *Context) Set(args *OneArgs) (*OneReply, error) {
 	call := c.GoSet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -179,7 +78,7 @@ func (c *Client) Set(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) ZSet(args *OneArgs) (*OneReply, error) {
+func (c *Context) ZSet(args *OneArgs) (*OneReply, error) {
 	call := c.GoZSet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -192,7 +91,7 @@ func (c *Client) ZSet(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) Del(args *OneArgs) (*OneReply, error) {
+func (c *Context) Del(args *OneArgs) (*OneReply, error) {
 	call := c.GoDel(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -205,7 +104,7 @@ func (c *Client) Del(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) ZDel(args *OneArgs) (*OneReply, error) {
+func (c *Context) ZDel(args *OneArgs) (*OneReply, error) {
 	call := c.GoZDel(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -218,7 +117,7 @@ func (c *Client) ZDel(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) Incr(args *OneArgs) (*OneReply, error) {
+func (c *Context) Incr(args *OneArgs) (*OneReply, error) {
 	call := c.GoIncr(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -231,7 +130,7 @@ func (c *Client) Incr(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) ZIncr(args *OneArgs) (*OneReply, error) {
+func (c *Context) ZIncr(args *OneArgs) (*OneReply, error) {
 	call := c.GoZIncr(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -244,7 +143,7 @@ func (c *Client) ZIncr(args *OneArgs) (*OneReply, error) {
 	return r.(*OneReply), nil
 }
 
-func (c *Client) MGet(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) MGet(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoMGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -257,7 +156,7 @@ func (c *Client) MGet(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) ZmGet(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) ZmGet(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoZmGet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -270,7 +169,7 @@ func (c *Client) ZmGet(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) MSet(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) MSet(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoMSet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -283,7 +182,7 @@ func (c *Client) MSet(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) ZmSet(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) ZmSet(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoZmSet(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -296,7 +195,7 @@ func (c *Client) ZmSet(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) MDel(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) MDel(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoMDel(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -309,7 +208,7 @@ func (c *Client) MDel(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) ZmDel(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) ZmDel(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoZmDel(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -322,7 +221,7 @@ func (c *Client) ZmDel(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) MIncr(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) MIncr(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoMIncr(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -335,7 +234,7 @@ func (c *Client) MIncr(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) ZmIncr(args *MultiArgs) (*MultiReply, error) {
+func (c *Context) ZmIncr(args *MultiArgs) (*MultiReply, error) {
 	call := c.GoZmIncr(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -348,7 +247,7 @@ func (c *Client) ZmIncr(args *MultiArgs) (*MultiReply, error) {
 	return r.(*MultiReply), nil
 }
 
-func (c *Client) Scan(args *ScanArgs) (*ScanReply, error) {
+func (c *Context) Scan(args *ScanArgs) (*ScanReply, error) {
 	call := c.GoScan(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -361,7 +260,7 @@ func (c *Client) Scan(args *ScanArgs) (*ScanReply, error) {
 	return r.(*ScanReply), nil
 }
 
-func (c *Client) ZScan(args *ScanArgs) (*ScanReply, error) {
+func (c *Context) ZScan(args *ScanArgs) (*ScanReply, error) {
 	call := c.GoZScan(args, nil)
 	if call.Error != nil {
 		return nil, call.Error
@@ -375,8 +274,8 @@ func (c *Client) ZScan(args *ScanArgs) (*ScanReply, error) {
 }
 
 // Get, Set, Del, Incr, ZGet, ZSet, ZDel, ZIncr
-func (c *Client) goOneOp(zop bool, args *OneArgs, cmd uint8, done chan *Call) *Call {
-	call := c.newCall(cmd, done)
+func (c *Context) goOneOp(zop bool, args *OneArgs, cmd uint8, done chan *Call) *Call {
+	call := c.cli.newCall(cmd, done)
 	if call.Error != nil {
 		return call
 	}
@@ -415,51 +314,56 @@ func (c *Client) goOneOp(zop bool, args *OneArgs, cmd uint8, done chan *Call) *C
 	var err error
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
-		c.errCall(call, err)
+		c.cli.errCall(call, err)
 		return call
 	}
 
 	// put request pkg to sending channel
-	c.sending <- call
+	c.cli.sending <- call
 
 	return call
 }
 
-func (c *Client) GoGet(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoPing(done chan *Call) *Call {
+	var oa OneArgs
+	return c.goOneOp(false, &oa, proto.CmdPing, done)
+}
+
+func (c *Context) GoGet(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(false, args, proto.CmdGet, done)
 }
 
-func (c *Client) GoZGet(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoZGet(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(true, args, proto.CmdGet, done)
 }
 
-func (c *Client) GoSet(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoSet(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(false, args, proto.CmdSet, done)
 }
 
-func (c *Client) GoZSet(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoZSet(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(true, args, proto.CmdSet, done)
 }
 
-func (c *Client) GoDel(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoDel(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(false, args, proto.CmdDel, done)
 }
 
-func (c *Client) GoZDel(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoZDel(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(true, args, proto.CmdDel, done)
 }
 
-func (c *Client) GoIncr(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoIncr(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(false, args, proto.CmdIncr, done)
 }
 
-func (c *Client) GoZIncr(args *OneArgs, done chan *Call) *Call {
+func (c *Context) GoZIncr(args *OneArgs, done chan *Call) *Call {
 	return c.goOneOp(true, args, proto.CmdIncr, done)
 }
 
 // MGet, MSet, MDel, MIncr, ZMGet, ZMSet, ZMDel, ZMIncr
-func (c *Client) goMultiOp(zop bool, args *MultiArgs, cmd uint8, done chan *Call) *Call {
-	call := c.newCall(cmd, done)
+func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8, done chan *Call) *Call {
+	call := c.cli.newCall(cmd, done)
 	if call.Error != nil {
 		return call
 	}
@@ -502,49 +406,49 @@ func (c *Client) goMultiOp(zop bool, args *MultiArgs, cmd uint8, done chan *Call
 	var err error
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
-		c.errCall(call, err)
+		c.cli.errCall(call, err)
 		return call
 	}
 
-	c.sending <- call
+	c.cli.sending <- call
 
 	return call
 }
 
-func (c *Client) GoMGet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMGet(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(false, args, proto.CmdMGet, done)
 }
 
-func (c *Client) GoZmGet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmGet(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(true, args, proto.CmdMGet, done)
 }
 
-func (c *Client) GoMSet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMSet(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(false, args, proto.CmdMSet, done)
 }
 
-func (c *Client) GoZmSet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmSet(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(true, args, proto.CmdMSet, done)
 }
 
-func (c *Client) GoMDel(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMDel(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(false, args, proto.CmdMDel, done)
 }
 
-func (c *Client) GoZmDel(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmDel(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(true, args, proto.CmdMDel, done)
 }
 
-func (c *Client) GoMIncr(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMIncr(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(false, args, proto.CmdMIncr, done)
 }
 
-func (c *Client) GoZmIncr(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmIncr(args *MultiArgs, done chan *Call) *Call {
 	return c.goMultiOp(true, args, proto.CmdMIncr, done)
 }
 
-func (c *Client) goScan(zop bool, args *ScanArgs, done chan *Call) *Call {
-	call := c.newCall(proto.CmdScan, done)
+func (c *Context) goScan(zop bool, args *ScanArgs, done chan *Call) *Call {
+	call := c.cli.newCall(proto.CmdScan, done)
 	if call.Error != nil {
 		return call
 	}
@@ -572,29 +476,31 @@ func (c *Client) goScan(zop bool, args *ScanArgs, done chan *Call) *Call {
 	var err error
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
-		c.errCall(call, err)
+		c.cli.errCall(call, err)
 		return call
 	}
 
-	c.sending <- call
+	c.cli.sending <- call
 
 	return call
 }
 
-func (c *Client) GoScan(args *ScanArgs, done chan *Call) *Call {
+func (c *Context) GoScan(args *ScanArgs, done chan *Call) *Call {
 	return c.goScan(false, args, done)
 }
 
-func (c *Client) GoZScan(args *ScanArgs, done chan *Call) *Call {
+func (c *Context) GoZScan(args *ScanArgs, done chan *Call) *Call {
 	return c.goScan(true, args, done)
 }
 
-func (c *Client) ParseReply(call *Call) (interface{}, error) {
+func (c *Context) ParseReply(call *Call) (interface{}, error) {
 	if call.Error != nil {
 		return nil, call.Error
 	}
 
 	switch call.cmd {
+	case proto.CmdPing:
+		fallthrough
 	case proto.CmdIncr:
 		fallthrough
 	case proto.CmdDel:
@@ -658,132 +564,4 @@ func (c *Client) ParseReply(call *Call) (interface{}, error) {
 	}
 
 	return nil, ErrUnknownCmd
-}
-
-func (c *Client) recv() {
-	var headBuf = make([]byte, proto.HeadSize)
-	var head proto.PkgHead
-
-	var pkg []byte
-	var err error
-	for err == nil {
-		pkg, err = proto.ReadPkg(c.r, headBuf, &head, nil)
-		if err != nil {
-			break
-		}
-
-		var call *Call
-		var ok bool
-
-		c.mtx.Lock()
-		if call, ok = c.pending[head.Seq]; ok {
-			delete(c.pending, head.Seq)
-		}
-		c.mtx.Unlock()
-
-		if call != nil {
-			call.pkg = pkg
-			call.done()
-		}
-	}
-
-	// Terminate pending calls.
-	c.mtx.Lock()
-	c.shutdown = true
-	if err == io.EOF {
-		if c.closing {
-			err = ErrShutdown
-		} else {
-			err = io.ErrUnexpectedEOF
-		}
-	}
-	for _, call := range c.pending {
-		call.Error = err
-		call.done()
-	}
-	c.mtx.Unlock()
-
-	c.doClose()
-}
-
-func (c *Client) send() {
-	var err error
-	for {
-		select {
-		case call, ok := <-c.sending:
-			if !ok {
-				return
-			}
-
-			if err == nil {
-				_, err = c.c.Write(call.pkg)
-				if err != nil {
-					c.mtx.Lock()
-					c.shutdown = true
-					c.mtx.Unlock()
-				}
-			}
-		}
-	}
-}
-
-func (call *Call) done() {
-	select {
-	case call.Done <- call:
-		// ok
-	default:
-		// We don't want to block here.  It is the caller's responsibility to make
-		// sure the channel has enough buffer space. See comment in Go().
-		log.Println("gotable: discarding Call reply due to insufficient Done chan capacity")
-	}
-}
-
-func (c *Client) newCall(cmd uint8, done chan *Call) *Call {
-	var call = new(Call)
-	call.cmd = cmd
-	if done == nil {
-		done = make(chan *Call, 2)
-	} else {
-		if cap(done) == 0 {
-			log.Panic("gotable: done channel is unbuffered")
-		}
-	}
-	call.Done = done
-
-	c.mtx.Lock()
-	if c.shutdown || c.closing {
-		c.mtx.Unlock()
-		c.errCall(call, ErrShutdown)
-		return call
-	}
-	c.seq += 1
-	call.seq = c.seq
-	c.pending[call.seq] = call
-	c.mtx.Unlock()
-
-	return call
-}
-
-func (c *Client) errCall(call *Call, err error) {
-	call.Error = err
-
-	if call.seq > 0 {
-		c.mtx.Lock()
-		delete(c.pending, call.seq)
-		c.mtx.Unlock()
-	}
-
-	call.done()
-}
-
-func isNormalErrorCode(code uint8) bool {
-	// <10: normal cases
-	return code < 10
-}
-
-func newErrorCode(code uint8) error {
-	if EcodeCasNotMatch == code {
-		return ErrCasNotMatch
-	}
-	return errors.New("error code " + strconv.Itoa(int(code)))
 }
