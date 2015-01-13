@@ -41,16 +41,17 @@ type RequestChan struct {
 	ReadReqChan  chan *Request
 	WriteReqChan chan *Request
 	SyncReqChan  chan *Request
+	CtrlReqChan  chan *Request
 }
 
 type Client struct {
-	cliType  int
 	c        net.Conn
 	r        *bufio.Reader
 	respChan chan *Response
 
 	// atomic
-	closed uint32
+	closed  uint32
+	cliType uint32
 
 	// protects following
 	mtx      sync.Mutex
@@ -59,75 +60,81 @@ type Client struct {
 }
 
 func NewClient(conn net.Conn) *Client {
-	cli := new(Client)
-	cli.cliType = ClientTypeNormal
-	cli.c = conn
-	cli.r = bufio.NewReader(conn)
-	cli.respChan = make(chan *Response, 64)
-	return cli
+	var c = new(Client)
+	c.c = conn
+	c.r = bufio.NewReader(conn)
+	c.respChan = make(chan *Response, 64)
+	atomic.StoreUint32(&c.cliType, ClientTypeNormal)
+	return c
 }
 
-func (cli *Client) AddResp(resp *Response) {
-	if !cli.IsClosed() {
+func (c *Client) AddResp(resp *Response) {
+	if !c.IsClosed() {
 		defer recover()
-		cli.respChan <- resp
+		c.respChan <- resp
 	}
 }
 
-func (cli *Client) Close() {
-	if !cli.IsClosed() {
-		atomic.AddUint32(&cli.closed, 1)
+func (c *Client) Close() {
+	if !c.IsClosed() {
+		atomic.AddUint32(&c.closed, 1)
 
-		cli.mtx.Lock()
-		if !cli.shutdown {
-			cli.shutdown = true
-			cli.mtx.Unlock()
+		c.mtx.Lock()
+		if !c.shutdown {
+			c.shutdown = true
+			c.mtx.Unlock()
 		} else {
-			cli.mtx.Unlock()
+			c.mtx.Unlock()
 			return
 		}
 
-		cli.c.Close()
+		c.c.Close()
 
-		if cli.ms != nil {
-			cli.ms.Close()
-			cli.ms = nil
+		if c.ms != nil {
+			c.ms.Close()
+			c.ms = nil
 		}
 
 		defer recover()
-		close(cli.respChan)
+		close(c.respChan)
 	}
 }
 
-func (cli *Client) IsClosed() bool {
-	return atomic.LoadUint32(&cli.closed) > 0
+func (c *Client) IsClosed() bool {
+	return atomic.LoadUint32(&c.closed) > 0
 }
 
-func (cli *Client) SetMaster(ms *master) {
-	cli.mtx.Lock()
-	defer cli.mtx.Unlock()
-	cli.ms = ms
+func (c *Client) SetClientType(cliType uint32) {
+	atomic.StoreUint32(&c.cliType, cliType)
 }
 
-func (cli *Client) GoReadRequest(ch *RequestChan) {
+func (c *Client) ClientType() uint32 {
+	return atomic.LoadUint32(&c.cliType)
+}
+
+func (c *Client) SetMaster(ms *master) {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+	c.ms = ms
+}
+
+func (c *Client) GoReadRequest(ch *RequestChan) {
 	var headBuf = make([]byte, proto.HeadSize)
 	var head proto.PkgHead
 	for {
-		pkg, err := proto.ReadPkg(cli.r, headBuf, &head, nil)
+		pkg, err := proto.ReadPkg(c.r, headBuf, &head, nil)
 		if err != nil {
-			log.Printf("ReadPkg failed: %s\n", err)
-			cli.Close()
+			//log.Printf("ReadPkg failed: %s\n", err)
+			c.Close()
 			return
 		}
 
-		//log.Printf("recv(%s): [%d\t%d\t%d]\n",
-		//	cli.c.RemoteAddr(), head.Cmd, head.DbId, head.Seq)
+		//log.Printf("recv(%s): [0x%X\t%d\t%d]\n",
+		//	c.c.RemoteAddr(), head.Cmd, head.DbId, head.Seq)
 
-		var req = Request{cli, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
+		var req = Request{c, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
 
 		switch head.Cmd {
-		case proto.CmdMaster:
-			fallthrough
 		case proto.CmdPing:
 			fallthrough
 		case proto.CmdScan:
@@ -146,34 +153,42 @@ func (cli *Client) GoReadRequest(ch *RequestChan) {
 			fallthrough
 		case proto.CmdDel:
 			fallthrough
-		case proto.CmdSync:
-			fallthrough
 		case proto.CmdSet:
-			ch.WriteReqChan <- &req
+			if ClientTypeNormal == c.ClientType() {
+				ch.WriteReqChan <- &req
+			} else {
+				ch.SyncReqChan <- &req
+			}
+		case proto.CmdSync:
+			if ClientTypeNormal != c.ClientType() {
+				ch.SyncReqChan <- &req
+			}
+		case proto.CmdMaster:
+			ch.CtrlReqChan <- &req
 		default:
-			cli.Close()
 			log.Printf("Invalid cmd %x\n", head.Cmd)
+			c.Close()
 			return
 		}
 	}
 }
 
-func (cli *Client) GoSendResponse() {
+func (c *Client) GoSendResponse() {
 	var err error
 	for {
 		select {
-		case resp, ok := <-cli.respChan:
+		case resp, ok := <-c.respChan:
 			if !ok {
-				log.Printf("channel closed %p\n", cli)
+				//log.Printf("channel closed %p\n", c)
 				return
 			}
 
-			if err == nil && !cli.IsClosed() {
-				//log.Printf("send(%s): [%d\t%d\t%d]\n",
-				//	cli.c.RemoteAddr(), resp.Cmd, resp.DbId, resp.Seq)
-				_, err = cli.c.Write(resp.Pkg)
+			if err == nil && !c.IsClosed() {
+				//log.Printf("send(%s): [0x%X\t%d\t%d]\n",
+				//	c.c.RemoteAddr(), resp.Cmd, resp.DbId, resp.Seq)
+				_, err = c.c.Write(resp.Pkg)
 				if err != nil {
-					cli.Close()
+					c.Close()
 				}
 			}
 		}

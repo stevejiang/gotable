@@ -48,8 +48,10 @@ func NewServer(dbname string) *Server {
 	}
 
 	srv.reqChan = new(RequestChan)
-	srv.reqChan.ReadReqChan = make(chan *Request, 10000)
-	srv.reqChan.WriteReqChan = make(chan *Request, 10000)
+	srv.reqChan.ReadReqChan = make(chan *Request, 1000)
+	srv.reqChan.WriteReqChan = make(chan *Request, 1000)
+	srv.reqChan.SyncReqChan = make(chan *Request, 64)
+	srv.reqChan.CtrlReqChan = make(chan *Request, 16)
 
 	srv.bin = binlog.NewBinLog(binlogDir)
 
@@ -57,7 +59,7 @@ func NewServer(dbname string) *Server {
 }
 
 func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeNormal:
 		req.Cli.AddResp(resp)
 		if write && ok {
@@ -88,7 +90,7 @@ func (srv *Server) get(req *Request) {
 }
 
 func (srv *Server) set(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeNormal:
@@ -102,7 +104,7 @@ func (srv *Server) set(req *Request) {
 }
 
 func (srv *Server) del(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeNormal:
@@ -116,7 +118,7 @@ func (srv *Server) del(req *Request) {
 }
 
 func (srv *Server) incr(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeNormal:
@@ -137,7 +139,7 @@ func (srv *Server) mGet(req *Request) {
 }
 
 func (srv *Server) mSet(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeNormal:
@@ -151,7 +153,7 @@ func (srv *Server) mSet(req *Request) {
 }
 
 func (srv *Server) mDel(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeNormal:
@@ -165,7 +167,7 @@ func (srv *Server) mDel(req *Request) {
 }
 
 func (srv *Server) mIncr(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeNormal:
@@ -186,7 +188,7 @@ func (srv *Server) scan(req *Request) {
 }
 
 func (srv *Server) sync(req *Request) {
-	switch req.Cli.cliType {
+	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
@@ -204,22 +206,48 @@ func (srv *Server) sync(req *Request) {
 	}
 }
 
-func (srv *Server) newMaster(req *Request) {
-	var in ctrl.PkgCmdMasterReq
-	in.Decode(req.Pkg)
+func (srv *Server) newMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	switch req.Cli.ClientType() {
+	case ClientTypeSlaver:
+		var pm ctrl.PkgMaster
+		err := de.Decode(req.Pkg, nil, &pm)
+		req.Cli.Close()
+		if err != nil {
+			log.Printf("Failed to Decode pkg: %s\n", err)
+			return
+		}
+		log.Printf("Master failed with msg: %s\n", err)
+	case ClientTypeNormal:
+		var pm ctrl.PkgMaster
+		err := de.Decode(req.Pkg, nil, &pm)
+		if err != nil {
+			log.Printf("Failed to Decode pkg: %s\n", err)
+			pm = ctrl.PkgMaster{}
+			pm.ErrMsg = fmt.Sprintf("decode failed %s", err)
+			var resp = Response(req.PkgArgs)
+			resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &pm)
+			if err == nil {
+				srv.sendResp(false, true, req, &resp)
+			}
+			return
+		}
 
-	req.Cli.cliType = ClientTypeMaster
-	var startLogSeq = in.LastSeq
+		req.Cli.SetClientType(ClientTypeMaster) // switch client type
+		var startLogSeq = pm.LastSeq
 
-	log.Printf("receive a slave connection from %s, startLogSeq=%d\n",
-		req.Cli.c.RemoteAddr(), startLogSeq)
+		log.Printf("Receive a slave connection from %s, startLogSeq=%d\n",
+			req.Cli.c.RemoteAddr(), startLogSeq)
 
-	srv.rwMtx.Lock()
-	var ms = newMaster(req.Cli, srv.bin, startLogSeq)
-	srv.rwMtx.Unlock()
+		srv.rwMtx.Lock()
+		var ms = newMaster(req.Cli, srv.bin, startLogSeq)
+		srv.rwMtx.Unlock()
 
-	srv.bin.RegisterMonitor(ms)
-	go ms.goAsync(srv.tbl, &srv.rwMtx)
+		srv.bin.RegisterMonitor(ms)
+		go ms.goAsync(srv.tbl, &srv.rwMtx)
+	case ClientTypeMaster:
+		log.Printf("Already in master status, cannot create master again!\n")
+		req.Cli.Close()
+	}
 }
 
 func (srv *Server) doProcess(req *Request) {
@@ -244,10 +272,6 @@ func (srv *Server) doProcess(req *Request) {
 		srv.mIncr(req)
 	case proto.CmdScan:
 		srv.scan(req)
-	case proto.CmdSync:
-		srv.sync(req)
-	case proto.CmdMaster:
-		srv.newMaster(req)
 	}
 }
 
@@ -273,6 +297,48 @@ func (srv *Server) processWrite() {
 	}
 }
 
+func (srv *Server) processSync() {
+	for {
+		select {
+		case req := <-srv.reqChan.SyncReqChan:
+			if !req.Cli.IsClosed() {
+				switch req.Cmd {
+				case proto.CmdSet:
+					srv.set(req)
+				case proto.CmdDel:
+					srv.del(req)
+				case proto.CmdIncr:
+					srv.incr(req)
+				case proto.CmdMSet:
+					srv.mSet(req)
+				case proto.CmdMDel:
+					srv.mDel(req)
+				case proto.CmdMIncr:
+					srv.mIncr(req)
+				case proto.CmdSync:
+					srv.sync(req)
+				}
+			}
+		}
+	}
+}
+
+func (srv *Server) processCtrl() {
+	var de = ctrl.NewDecoder()
+	var en = ctrl.NewEncoder()
+	for {
+		select {
+		case req := <-srv.reqChan.CtrlReqChan:
+			if !req.Cli.IsClosed() {
+				switch req.Cmd {
+				case proto.CmdMaster:
+					srv.newMaster(de, en, req)
+				}
+			}
+		}
+	}
+}
+
 func Run(dbName, host, masterHost string) {
 	var srv = NewServer(dbName)
 	if srv == nil {
@@ -286,14 +352,18 @@ func Run(dbName, host, masterHost string) {
 	if writeProcNum < 2 {
 		writeProcNum = 2
 	}
+	var syncProcNum = 1 // Use 1 goroutine to make sure data consistency
 
 	for i := 0; i < readProcNum; i++ {
 		go srv.processRead()
 	}
-
 	for i := 0; i < writeProcNum; i++ {
 		go srv.processWrite()
 	}
+	for i := 0; i < syncProcNum; i++ {
+		go srv.processSync()
+	}
+	go srv.processCtrl()
 
 	go srv.bin.GoWriteBinLog()
 
@@ -302,8 +372,8 @@ func Run(dbName, host, masterHost string) {
 		log.Println("listen error: ", err)
 	}
 
-	log.Printf("Listen TCP started! readProcNum=%d, writeProcNum=%d\n",
-		readProcNum, writeProcNum)
+	log.Printf("GoTable started on (%s)! read: %d, write: %d, sync: %d\n",
+		host, readProcNum, writeProcNum, syncProcNum)
 
 	if masterHost != "" {
 		var slv = newSlaver(masterHost, srv.reqChan, srv.bin)
@@ -312,12 +382,9 @@ func Run(dbName, host, masterHost string) {
 
 	for {
 		if c, err := link.Accept(); err == nil {
-			log.Println(c.RemoteAddr().(*net.TCPAddr))
+			log.Printf("New connection %s\n", c.RemoteAddr())
 
 			cli := NewClient(c)
-			//runtime.SetFinalizer(cli, func(cli *client) {
-			//	log.Printf("finalized %p\n", cli)
-			//})
 			go cli.GoReadRequest(srv.reqChan)
 			go cli.GoSendResponse()
 		}

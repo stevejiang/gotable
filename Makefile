@@ -13,7 +13,7 @@ GO_FLAGS  = --ldflags '-extldflags "-static-libstdc++"'
 #GO_FLAGS = --ldflags '-extldflags "-static-libstdc++ -static-libgcc"'
 #GO_FLAGS = -v -x --ldflags '-extldflags "-static"'
 
-all: build rocksdb-clean
+all: build
 
 build: rocksdb-lib go-deps
 	go install $(GO_FLAGS) ./...

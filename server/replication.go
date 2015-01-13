@@ -47,28 +47,31 @@ func (slv *slaver) goConnectToMaster() {
 		// Connect to master host
 		if c, err := net.Dial("tcp", slv.masterHost); err == nil {
 			cli = NewClient(c)
-			cli.cliType = ClientTypeSlaver
+			cli.SetClientType(ClientTypeSlaver)
 
 			go cli.GoReadRequest(slv.reqChan)
 			go cli.GoSendResponse()
 
-			var one ctrl.PkgCmdMasterReq
-			one.Cmd = proto.CmdMaster
+			var pm ctrl.PkgMaster
+			pm.LastSeq = slv.bin.GetMasterSeq(1) //TODO
+			log.Printf("Connect to master with start log seq %d\n", pm.LastSeq)
 
-			one.LastSeq = slv.bin.GetMasterSeq(1) //TODO
-			log.Printf("Connect to master with start log seq %d\n", one.LastSeq)
-
-			var resp = &Response{one.Cmd, 0, 0, nil}
-			one.Encode(&resp.Pkg)
+			var resp = &Response{proto.CmdMaster, 0, 0, nil}
+			var en = ctrl.NewEncoder()
+			resp.Pkg, err = en.Encode(proto.CmdMaster, 0, 0, &pm)
+			if err != nil {
+				log.Printf("Fatal Encode error: %s\n", err)
+				return
+			}
 			cli.AddResp(resp)
 
 			for !cli.IsClosed() {
-				time.Sleep(1e9)
+				time.Sleep(time.Second)
 			}
 		} else {
-			log.Printf("connect to master %s failed, sleep 1 second and try again.\n",
+			log.Printf("Connect to master %s failed, sleep 1 second and try again.\n",
 				slv.masterHost)
-			time.Sleep(1e9)
+			time.Sleep(time.Second)
 		}
 	}
 }
@@ -121,7 +124,7 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 	var lastSeq uint64
 	if ms.startLogSeq > 0 {
 		lastSeq = ms.startLogSeq
-		log.Printf("already full asynced. startLogSeq=%d\n", ms.startLogSeq)
+		log.Printf("Already full asynced, startLogSeq=%d\n", ms.startLogSeq)
 	} else {
 		// Stop write globally
 		rwMtx.Lock()
@@ -165,10 +168,10 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 			ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
 		}
 
-		log.Println("full async finished")
+		log.Println("Full async finished")
 	}
 
-	log.Printf("start incremental sync. lastSeq=%d\n", lastSeq)
+	log.Printf("Start incremental sync, lastSeq=%d\n", lastSeq)
 
 	ms.NewLogComming()
 
@@ -183,7 +186,7 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 					reader.Close()
 				}
 				ms.doClose()
-				log.Printf("master sync channel closed %p\n", ms)
+				log.Printf("Master sync channel closed %p\n", ms)
 				return
 			}
 
@@ -192,7 +195,7 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 			}
 			if reader == nil {
 				ms.doClose()
-				log.Printf("master sync channel closed %p\n", ms)
+				log.Printf("Master sync channel closed %p\n", ms)
 				return
 			}
 
@@ -210,14 +213,12 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 
 				lastResp = &Response{head.Cmd, head.DbId, head.Seq, pkg}
 				ms.cli.AddResp(lastResp)
-
-				//log.Printf("sync seq=%d\n", lastResp.seq)
 			}
 
 		case <-tick:
 			ms.NewLogComming()
 			if lastResp != nil {
-				log.Printf("sync seq=%d\n", lastResp.Seq)
+				//log.Printf("Sync seq=%d\n", lastResp.Seq)
 				lastResp = nil
 			}
 		}

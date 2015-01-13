@@ -143,7 +143,7 @@ func benchmark(cliPool *table.Pool, name string,
 					if v%10000 == 0 && v > 0 {
 						elapsed := time.Since(start)
 						speed := float64(v+1) * 1e9 / float64(elapsed)
-						fmt.Printf("%-9s : %9.1f op/s    \r", name, speed)
+						fmt.Printf("%-10s : %9.1f op/s    \r", name, speed)
 					}
 				}
 			}
@@ -154,7 +154,7 @@ func benchmark(cliPool *table.Pool, name string,
 
 	elapsed := time.Since(start)
 	speed := float64(*reqNum) * 1e9 / float64(elapsed)
-	fmt.Printf("%-9s : %9.1f op/s\n", name, speed)
+	fmt.Printf("%-10s : %9.1f op/s\n", name, speed)
 
 	if recordHist {
 		var hist = hists[0]

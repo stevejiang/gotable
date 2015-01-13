@@ -19,12 +19,12 @@ import (
 )
 
 const (
-	CtrlDbIdResp = 0x1
+	CtrlDbIdExt  = 0x1
 	CtrlErrCode  = 0x2
 	CtrlCas      = 0x4
 	CtrlColSpace = 0x8
-	CtrlScore    = 0x10
-	CtrlValue    = 0x20
+	CtrlValue    = 0x10
+	CtrlScore    = 0x20
 )
 
 const (
@@ -42,11 +42,12 @@ type KeyValue struct {
 	Cas     uint32 // default: 0 if missing
 }
 
-// KeyValueCtrl=cCtrlFlag+[cDbIdResp]+cTableId+[cErrCode]+[dwCas]+[cColSpace]
-//             +cRowKeyLen+sRowKey+wColKeyLen+sColKey+[dwValueLen+sValue]+[ddwScore]
+// KeyValueCtrl=cCtrlFlag+[cDbIdExt]+cTableId+[cErrCode]+[dwCas]
+//             +[cColSpace]+cRowKeyLen+sRowKey+wColKeyLen+sColKey
+//             +[dwValueLen+sValue]+[ddwScore]
 type KeyValueCtrl struct {
 	CtrlFlag uint8
-	DbIdResp uint8 // default: 0 if missing
+	DbIdExt  uint8 // default: 0 if missing
 	ErrCode  uint8 // default: 0 if missing
 	ColSpace uint8 // default: 0 if missing
 	KeyValue
@@ -89,10 +90,11 @@ type PkgScanResp struct {
 }
 
 func (kv *KeyValueCtrl) Length() int {
-	// cCtrlFlag+[cDbId]+cTableId+[cErrCode]+[dwCas]+[cColSpace]+cRowKeyLen+sRowKey
-	//+wColKeyLen+sColKey+[dwValueLen+sValue]+[ddwScore]
+	// KeyValueCtrl=cCtrlFlag+[cDbIdExt]+cTableId+[cErrCode]+[dwCas]
+	//             +[cColSpace]+cRowKeyLen+sRowKey+wColKeyLen+sColKey
+	//             +[dwValueLen+sValue]+[ddwScore]
 	var n = 2
-	if kv.CtrlFlag&CtrlDbIdResp != 0 {
+	if kv.CtrlFlag&CtrlDbIdExt != 0 {
 		n += 1
 	}
 	if kv.CtrlFlag&CtrlErrCode != 0 {
@@ -131,8 +133,8 @@ func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
 	var n int
 	pkg[n] = kv.CtrlFlag
 	n += 1
-	if kv.CtrlFlag&CtrlDbIdResp != 0 {
-		pkg[n] = kv.DbIdResp
+	if kv.CtrlFlag&CtrlDbIdExt != 0 {
+		pkg[n] = kv.DbIdExt
 		n += 1
 	}
 	pkg[n] = kv.TableId
@@ -182,11 +184,11 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 	kv.CtrlFlag = pkg[n]
 	n += 1
 
-	if kv.CtrlFlag&CtrlDbIdResp != 0 {
+	if kv.CtrlFlag&CtrlDbIdExt != 0 {
 		if n+1 > pkgLen {
 			return n, ErrPkgLen
 		}
-		kv.DbIdResp = pkg[n]
+		kv.DbIdExt = pkg[n]
 		n += 1
 	}
 

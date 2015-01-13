@@ -36,7 +36,6 @@ type Monitor interface {
 }
 
 const (
-	//memBinLogSize  = 3170000
 	memBinLogSize  = 1024 * 1024 * 8
 	keepBinFileNum = 5
 )
@@ -253,7 +252,7 @@ func (bin *BinLog) GoWriteBinLog() {
 				bin.seqBufW.Flush()
 			}
 			if lastReq != nil {
-				log.Printf("write binlog seq=%d, mid=%d, mseq=%d\n",
+				log.Printf("Write binlog: seq=%d, mId=%d, mSeq=%d\n",
 					bin.logSeq, lastReq.MasterId, lastReq.MasterSeq)
 				lastReq = nil
 			}
@@ -522,15 +521,15 @@ func (bin *BinLog) loadAndFixHeadAndTail(idxs []uint64) error {
 			if int(tailNum) == len(tmpSeq) {
 				f.Close()
 				mSeq = tmpSeq
-				log.Printf("succeed to parse seq tail!\n")
+				log.Printf("Succeed to parse seq tail\n")
 			} else {
 				f.Seek(seqFileHeadSize, os.SEEK_SET)
 				failed = true
-				log.Printf("failed to parse seq tail, try scan seq file\n")
+				log.Printf("Failed to parse seq tail! try scan seq file\n")
 			}
 		}
 
-		// fix seq file
+		// Fix seq file
 		if tailPos == 0 || failed {
 			var r = bufio.NewReader(f)
 			var oneRecord = make([]byte, 19)
@@ -575,7 +574,7 @@ func (bin *BinLog) loadAndFixHeadAndTail(idxs []uint64) error {
 				return err
 			}
 
-			log.Printf("fix seq file (%s): %v\n", name, mSeq)
+			log.Printf("Fix seq file (%s): %v\n", name, mSeq)
 			_, err = bin.seqFile.Write(make([]byte, seqFileHeadSize))
 			if err != nil {
 				bin.seqFile.Close()
