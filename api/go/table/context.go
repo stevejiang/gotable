@@ -44,20 +44,20 @@ func (c *Context) Use(dbId uint8) {
 }
 
 func (c *Context) Ping() error {
-	call := c.GoPing(nil)
-	if call.err != nil {
-		return call.err
+	call, err := c.GoPing(nil)
+	if err != nil {
+		return err
 	}
 
-	_, err := (<-call.Done).Reply()
+	_, err = (<-call.Done).Reply()
 	return err
 }
 
 func (c *Context) Get(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call := c.GoGet(tableId, rowKey, colKey, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoGet(tableId, rowKey, colKey, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -69,9 +69,9 @@ func (c *Context) Get(tableId uint8, rowKey, colKey []byte,
 
 func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call := c.GoZGet(tableId, rowKey, colKey, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZGet(tableId, rowKey, colKey, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -83,9 +83,9 @@ func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte,
 
 func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call := c.GoSet(tableId, rowKey, colKey, value, score, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoSet(tableId, rowKey, colKey, value, score, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -97,9 +97,9 @@ func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
 
 func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call := c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -111,9 +111,9 @@ func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 
 func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call := c.GoDel(tableId, rowKey, colKey, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoDel(tableId, rowKey, colKey, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -125,9 +125,9 @@ func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
 
 func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call := c.GoZDel(tableId, rowKey, colKey, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZDel(tableId, rowKey, colKey, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -139,9 +139,9 @@ func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
 
 func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call := c.GoIncr(tableId, rowKey, colKey, score, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoIncr(tableId, rowKey, colKey, score, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -153,9 +153,9 @@ func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
 
 func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call := c.GoZIncr(tableId, rowKey, colKey, score, cas, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZIncr(tableId, rowKey, colKey, score, cas, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -166,9 +166,9 @@ func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 }
 
 func (c *Context) MGet(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMGet(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoMGet(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -179,9 +179,9 @@ func (c *Context) MGet(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) ZmGet(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoZmGet(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZmGet(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -192,9 +192,9 @@ func (c *Context) ZmGet(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) MSet(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMSet(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoMSet(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -205,9 +205,9 @@ func (c *Context) MSet(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) ZmSet(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoZmSet(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZmSet(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -218,9 +218,9 @@ func (c *Context) ZmSet(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) MDel(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMDel(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoMDel(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -231,9 +231,9 @@ func (c *Context) MDel(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) ZmDel(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoZmDel(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZmDel(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -244,9 +244,9 @@ func (c *Context) ZmDel(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) MIncr(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoMIncr(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoMIncr(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -257,9 +257,9 @@ func (c *Context) MIncr(args *MultiArgs) (*MultiReply, error) {
 }
 
 func (c *Context) ZmIncr(args *MultiArgs) (*MultiReply, error) {
-	call := c.GoZmIncr(args, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZmIncr(args, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -271,9 +271,9 @@ func (c *Context) ZmIncr(args *MultiArgs) (*MultiReply, error) {
 
 func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int) (*ScanReply, error) {
-	call := c.GoScan(tableId, rowKey, colKey, asc, num, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoScan(tableId, rowKey, colKey, asc, num, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -285,9 +285,10 @@ func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 
 func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int) (*ScanReply, error) {
-	call := c.GoZScan(tableId, rowKey, colKey, score, asc, orderByScore, num, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.GoZScan(tableId, rowKey, colKey, score, asc, orderByScore,
+		num, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -303,15 +304,16 @@ func (c *Context) scanMore(zop bool, last *ScanReply) (*ScanReply, error) {
 	}
 	var a = last.Reply[len(last.Reply)-1].KeyValue
 	var call *Call
+	var err error
 	if zop {
-		call = c.GoZScan(a.TableId, a.RowKey, a.ColKey, a.Score,
+		call, err = c.GoZScan(a.TableId, a.RowKey, a.ColKey, a.Score,
 			last.ctx.asc, last.ctx.orderByScore, last.ctx.num, nil)
 	} else {
-		call = c.GoScan(a.TableId, a.RowKey, a.ColKey,
+		call, err = c.GoScan(a.TableId, a.RowKey, a.ColKey,
 			last.ctx.asc, last.ctx.num, nil)
 	}
-	if call.err != nil {
-		return nil, call.err
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -338,9 +340,9 @@ func (c *Context) Dump(scope, tableId uint8) (*DumpReply, error) {
 	}
 	rec := &DumpRecord{dbId, 0, &proto.KeyValue{tableId, nil, nil, nil, 0, 0}}
 
-	call := c.goDump(scope, 0, rec, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.goDump(scope, 0, rec, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -365,9 +367,9 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 		rec = &last.Reply[len(last.Reply)-1]
 	}
 
-	var call = c.goDump(last.ctx.scope, unitId, rec, nil)
-	if call.err != nil {
-		return nil, call.err
+	call, err := c.goDump(last.ctx.scope, unitId, rec, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	r, err := (<-call.Done).Reply()
@@ -389,10 +391,10 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 
 // Get, Set, Del, Incr, ZGet, ZSet, ZDel, ZIncr
 func (c *Context) goOneOp(zop bool, args *OneArgs, cmd uint8,
-	done chan *Call) *Call {
+	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(cmd, done)
 	if call.err != nil {
-		return call
+		return call, call.err
 	}
 
 	var p proto.PkgOneOp
@@ -430,73 +432,74 @@ func (c *Context) goOneOp(zop bool, args *OneArgs, cmd uint8,
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
 		c.cli.errCall(call, err)
-		return call
+		return call, err
 	}
 
 	// put request pkg to sending channel
 	c.cli.sending <- call
 
-	return call
+	return call, nil
 }
 
-func (c *Context) GoPing(done chan *Call) *Call {
+func (c *Context) GoPing(done chan *Call) (*Call, error) {
 	var oa OneArgs
 	return c.goOneOp(false, &oa, proto.CmdPing, done)
 }
 
 func (c *Context) GoGet(tableId uint8, rowKey, colKey []byte, cas uint32,
-	done chan *Call) *Call {
+	done chan *Call) (*Call, error) {
 	var args = NewGetArgs(tableId, rowKey, colKey, cas)
 	return c.goOneOp(false, args, proto.CmdGet, done)
 }
 
 func (c *Context) GoZGet(tableId uint8, rowKey, colKey []byte, cas uint32,
-	done chan *Call) *Call {
+	done chan *Call) (*Call, error) {
 	var args = NewGetArgs(tableId, rowKey, colKey, cas)
 	return c.goOneOp(true, args, proto.CmdGet, done)
 }
 
 func (c *Context) GoSet(tableId uint8, rowKey, colKey, value []byte, score int64,
-	cas uint32, done chan *Call) *Call {
+	cas uint32, done chan *Call) (*Call, error) {
 	var args = NewSetArgs(tableId, rowKey, colKey, value, score, cas)
 	return c.goOneOp(false, args, proto.CmdSet, done)
 }
 
 func (c *Context) GoZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
-	cas uint32, done chan *Call) *Call {
+	cas uint32, done chan *Call) (*Call, error) {
 	var args = NewSetArgs(tableId, rowKey, colKey, value, score, cas)
 	return c.goOneOp(true, args, proto.CmdSet, done)
 }
 
 func (c *Context) GoDel(tableId uint8, rowKey, colKey []byte,
-	cas uint32, done chan *Call) *Call {
+	cas uint32, done chan *Call) (*Call, error) {
 	var args = NewDelArgs(tableId, rowKey, colKey, cas)
 	return c.goOneOp(false, args, proto.CmdDel, done)
 }
 
 func (c *Context) GoZDel(tableId uint8, rowKey, colKey []byte,
-	cas uint32, done chan *Call) *Call {
+	cas uint32, done chan *Call) (*Call, error) {
 	var args = NewDelArgs(tableId, rowKey, colKey, cas)
 	return c.goOneOp(true, args, proto.CmdDel, done)
 }
 
 func (c *Context) GoIncr(tableId uint8, rowKey, colKey []byte, score int64,
-	cas uint32, done chan *Call) *Call {
+	cas uint32, done chan *Call) (*Call, error) {
 	var args = NewIncrArgs(tableId, rowKey, colKey, score, cas)
 	return c.goOneOp(false, args, proto.CmdIncr, done)
 }
 
 func (c *Context) GoZIncr(tableId uint8, rowKey, colKey []byte, score int64,
-	cas uint32, done chan *Call) *Call {
+	cas uint32, done chan *Call) (*Call, error) {
 	var args = NewIncrArgs(tableId, rowKey, colKey, score, cas)
 	return c.goOneOp(true, args, proto.CmdIncr, done)
 }
 
 // MGet, MSet, MDel, MIncr, ZMGet, ZMSet, ZMDel, ZMIncr
-func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8, done chan *Call) *Call {
+func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
+	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(cmd, done)
 	if call.err != nil {
-		return call
+		return call, call.err
 	}
 
 	var p proto.PkgMultiOp
@@ -538,56 +541,56 @@ func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8, done chan *Cal
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
 		c.cli.errCall(call, err)
-		return call
+		return call, err
 	}
 
 	c.cli.sending <- call
 
-	return call
+	return call, nil
 }
 
-func (c *Context) GoMGet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMGet(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, args, proto.CmdMGet, done)
 }
 
-func (c *Context) GoZmGet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmGet(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, args, proto.CmdMGet, done)
 }
 
-func (c *Context) GoMSet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMSet(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, args, proto.CmdMSet, done)
 }
 
-func (c *Context) GoZmSet(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmSet(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, args, proto.CmdMSet, done)
 }
 
-func (c *Context) GoMDel(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMDel(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, args, proto.CmdMDel, done)
 }
 
-func (c *Context) GoZmDel(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmDel(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, args, proto.CmdMDel, done)
 }
 
-func (c *Context) GoMIncr(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoMIncr(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, args, proto.CmdMIncr, done)
 }
 
-func (c *Context) GoZmIncr(args *MultiArgs, done chan *Call) *Call {
+func (c *Context) GoZmIncr(args *MultiArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, args, proto.CmdMIncr, done)
 }
 
 func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
-	score int64, asc, orderByScore bool, num int, done chan *Call) *Call {
+	score int64, asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
 	call := c.cli.newCall(proto.CmdScan, done)
 	if call.err != nil {
-		return call
+		return call, call.err
 	}
 
 	if num < 1 {
 		c.cli.errCall(call, ErrInvScanNum)
-		return call
+		return call, call.err
 	}
 
 	var p proto.PkgScanReq
@@ -623,31 +626,31 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
 		c.cli.errCall(call, err)
-		return call
+		return call, err
 	}
 
 	call.args = scanContext{asc, orderByScore, num}
 	c.cli.sending <- call
 
-	return call
+	return call, nil
 }
 
 func (c *Context) GoScan(tableId uint8, rowKey, colKey []byte,
-	asc bool, num int, done chan *Call) *Call {
+	asc bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(false, tableId, rowKey, colKey, 0, asc, false, num, done)
 }
 
 func (c *Context) GoZScan(tableId uint8, rowKey, colKey []byte, score int64,
-	asc, orderByScore bool, num int, done chan *Call) *Call {
+	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(true, tableId, rowKey, colKey, score, asc, orderByScore, num,
 		done)
 }
 
 func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
-	done chan *Call) *Call {
+	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(proto.CmdDump, done)
 	if call.err != nil {
-		return call
+		return call, call.err
 	}
 
 	var p proto.PkgDumpReq
@@ -662,13 +665,13 @@ func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
 	call.pkg, _, err = p.Encode(nil)
 	if err != nil {
 		c.cli.errCall(call, err)
-		return call
+		return call, err
 	}
 
 	call.args = dumpContext{scope, unitId, rec.DbId, rec.TableId}
 	c.cli.sending <- call
 
-	return call
+	return call, nil
 }
 
 func (call *Call) Reply() (interface{}, error) {
