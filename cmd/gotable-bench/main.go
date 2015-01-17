@@ -271,11 +271,10 @@ func benchZScan(cliPool *table.Pool) {
 
 func set(c *table.Context, zop bool, rowKey, colKey, value []byte, score int64) {
 	var err error
-	var oa = table.OneArgs{0, rowKey, colKey, value, score, 0}
 	if zop {
-		_, err = c.ZSet(&oa)
+		_, err = c.ZSet(0, rowKey, colKey, value, score, 0)
 	} else {
-		_, err = c.Set(&oa)
+		_, err = c.Set(0, rowKey, colKey, value, score, 0)
 	}
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
@@ -290,11 +289,10 @@ func set(c *table.Context, zop bool, rowKey, colKey, value []byte, score int64) 
 func get(c *table.Context, zop bool, rowKey, colKey []byte) {
 	var err error
 	var r *table.OneReply
-	var oa = table.OneArgs{0, rowKey, colKey, nil, 0, 0}
 	if zop {
-		r, err = c.ZGet(&oa)
+		r, err = c.ZGet(0, rowKey, colKey, 0)
 	} else {
-		r, err = c.Get(&oa)
+		r, err = c.Get(0, rowKey, colKey, 0)
 	}
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
@@ -310,11 +308,10 @@ func get(c *table.Context, zop bool, rowKey, colKey []byte) {
 func incr(c *table.Context, zop bool, rowKey, colKey []byte, score int64) {
 	var err error
 	var r *table.OneReply
-	var oa = table.OneArgs{0, rowKey, colKey, nil, score, 0}
 	if zop {
-		r, err = c.ZIncr(&oa)
+		r, err = c.ZIncr(0, rowKey, colKey, score, 0)
 	} else {
-		r, err = c.Incr(&oa)
+		r, err = c.Incr(0, rowKey, colKey, score, 0)
 	}
 	if err != nil {
 		fmt.Printf("Incr failed: %s\n", err)
@@ -330,11 +327,10 @@ func incr(c *table.Context, zop bool, rowKey, colKey []byte, score int64) {
 func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num int) {
 	var err error
 	var r *table.ScanReply
-	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{0, rowKey, colKey, nil, score, 0}}
 	if zop {
-		r, err = c.ZScan(&sa)
+		r, err = c.ZScan(0, rowKey, colKey, score, true, true, num)
 	} else {
-		r, err = c.Scan(&sa)
+		r, err = c.Scan(0, rowKey, colKey, true, num)
 	}
 	if err != nil {
 		fmt.Printf("Scan failed: %s\n", err)

@@ -63,11 +63,14 @@ const (
 )
 
 type PkgEncoding interface {
-	DecodeHead(pkg []byte) error
-	EncodeHead(pkg []byte) error
 	Length() int
-	Encode(ppkg *[]byte) (n int, err error)
-	Decode(pkg []byte) (n int, err error)
+	Encode(pkg []byte) ([]byte, int, error)
+	Decode(pkg []byte) (int, error)
+}
+
+type PkgResponse interface {
+	PkgEncoding
+	SetErrCode(errCode uint8)
 }
 
 type PkgHead struct {
@@ -114,7 +117,8 @@ func OverwriteSeq(pkg []byte, seq uint64) error {
 	return nil
 }
 
-func ReadPkg(r *bufio.Reader, headBuf []byte, head *PkgHead, pkgBuf []byte) (pkg []byte, err error) {
+func ReadPkg(r *bufio.Reader, headBuf []byte, head *PkgHead,
+	pkgBuf []byte) (pkg []byte, err error) {
 	if len(headBuf) != HeadSize {
 		return nil, ErrHeadBuf
 	}

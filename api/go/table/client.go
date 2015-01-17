@@ -19,6 +19,7 @@ package table
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"io"
 	"log"
@@ -30,28 +31,45 @@ import (
 const Version = "0.1" // GoTable version
 
 var (
-	ErrCasNotMatch = errors.New("cas is not match")
 	ErrShutdown    = errors.New("connection is shut down")
 	ErrUnknownCmd  = errors.New("unknown cmd")
-
 	ErrClosedPool  = errors.New("connection pool is closed")
 	ErrInvalidTag  = errors.New("invalid tag id")
 	ErrNoValidAddr = errors.New("no valid address")
 )
 
+var (
+	ErrCasNotMatch = initErrCode(EcodeCasNotMatch, "cas not match")
+	ErrTempFail    = initErrCode(EcodeTempFail, "temporary failed")
+
+	ErrReadFail    = initErrCode(EcodeReadFail, "read failed")
+	ErrWriteFail   = initErrCode(EcodeWriteFail, "write failed")
+	ErrDecodeFail  = initErrCode(EcodeDecodeFail, "decode request pkg failed")
+	ErrNoPrivilege = initErrCode(EcodeNoPrivilege, "no access privilege")
+	ErrInvDbId     = initErrCode(EcodeInvDbId, "invalid DB id")
+	ErrInvScope    = initErrCode(EcodeInvScope, "invalid dump scope")
+	ErrInvRowKey   = initErrCode(EcodeInvRowKey, "invalid rowkey")
+	ErrInvScanNum  = initErrCode(EcodeInvScanNum, "scan number out of range")
+	ErrScanEnded   = errors.New("already scan/dump to end")
+)
+
+// GoTable Error Code List
 const (
-	EcodeOk          = 0  // Success, normal case
-	EcodeNotExist    = 1  // Key not exist, normal case
+	EcodeOk       = 0 // Success, normal case
+	EcodeNotExist = 1 // Key not exist, normal case
+
 	EcodeCasNotMatch = 11 // CAS not match, get new CAS and try again
+	EcodeTempFail    = 12 // Temporary failed, retry may fix this
 
-	EcodeTempReadFail  = 12 // Temporary fail, retry may fix this
-	EcodeTempWriteFail = 13 // Temporary fail, retry may fix this
-
-	EcodeNoPrivilege  = 21 // No access privilege
-	EcodeInvalidDbId  = 22 // Invalid DB ID
-	EcodeDecodeFailed = 23 // Decode request PKG failed
-	EcodeReadFailed   = 24
-	EcodeWriteFailed  = 25
+	EcodeReadFail    = 21 // Read failed
+	EcodeWriteFail   = 22 // Write failed
+	EcodeDecodeFail  = 23 // Decode request PKG failed
+	EcodeNoPrivilege = 24 // No access privilege
+	EcodeInvDbId     = 25 // Invalid DB ID (cannot be 0)
+	EcodeInvColSpace = 26 // Invalid Col Space
+	EcodeInvScope    = 27 // Invalid Dump Scope
+	EcodeInvRowKey   = 28 // Invalid RowKey (cannot be empty)
+	EcodeInvScanNum  = 29 // Scan number out of range
 )
 
 // A Client is a connection to GoTable server.
@@ -171,7 +189,7 @@ func (c *Client) recv() {
 		}
 	}
 	for _, call := range c.pending {
-		call.Error = err
+		call.err = err
 		call.done()
 	}
 	c.mtx.Unlock()
@@ -215,7 +233,7 @@ func (c *Client) newCall(cmd uint8, done chan *Call) *Call {
 	var call = new(Call)
 	call.cmd = cmd
 	if done == nil {
-		done = make(chan *Call, 2)
+		done = make(chan *Call, 4)
 	} else {
 		if cap(done) == 0 {
 			log.Panic("gotable: done channel is unbuffered")
@@ -238,7 +256,7 @@ func (c *Client) newCall(cmd uint8, done chan *Call) *Call {
 }
 
 func (c *Client) errCall(call *Call, err error) {
-	call.Error = err
+	call.err = err
 
 	if call.seq > 0 {
 		c.mtx.Lock()
@@ -249,14 +267,33 @@ func (c *Client) errCall(call *Call, err error) {
 	call.done()
 }
 
+const (
+	maxErrNormalCase = 10
+	maxErrTableCode  = 64
+)
+
+var errTalbe = make([]error, maxErrTableCode)
+
 func isNormalErrorCode(code uint8) bool {
-	// <10: normal cases
-	return code < 10
+	// normal cases, not failure
+	return code < maxErrNormalCase
 }
 
-func newErrorCode(code uint8) error {
-	if EcodeCasNotMatch == code {
-		return ErrCasNotMatch
+func initErrCode(code uint8, msg string) error {
+	if code < maxErrTableCode {
+		if errTalbe[code] == nil {
+			errTalbe[code] = errors.New(fmt.Sprintf("%s (%d)", msg, code))
+		}
+		return errTalbe[code]
 	}
-	return errors.New("error code " + strconv.Itoa(int(code)))
+	return newErrCode(code)
+}
+
+func newErrCode(code uint8) error {
+	if code < maxErrTableCode {
+		if errTalbe[code] != nil {
+			return errTalbe[code]
+		}
+	}
+	return errors.New("error code (" + strconv.Itoa(int(code)) + ")")
 }

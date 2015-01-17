@@ -221,6 +221,18 @@ func (db *DB) NewIterator(fillCache bool) *Iterator {
 	return iter
 }
 
+func (db *DB) NewIteratorSnap(opt *SnapReadOptions) *Iterator {
+	var iter = new(Iterator)
+
+	if opt != nil {
+		iter.iter = C.rocksdb_create_iterator(db.db, opt.rOpt)
+	} else {
+		return db.NewIterator(true)
+	}
+
+	return iter
+}
+
 func (iter *Iterator) Close() {
 	if iter.iter != nil {
 		C.rocksdb_iter_destroy(iter.iter)

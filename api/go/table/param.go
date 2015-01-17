@@ -21,7 +21,7 @@ import (
 type OneArgs proto.KeyValue
 
 type OneReply struct {
-	ErrCode uint8
+	ErrCode uint8 // Error code replied
 	*proto.KeyValue
 }
 
@@ -33,31 +33,60 @@ type MultiReply struct {
 	Reply []OneReply
 }
 
-type ScanArgs struct {
-	Num       uint16 // Max number of scan reply records
-	Direction uint8
-	OneArgs
+func NewGetArgs(tableId uint8, rowKey, colKey []byte, cas uint32) *OneArgs {
+	return &OneArgs{tableId, rowKey, colKey, nil, 0, cas}
+}
+
+func NewSetArgs(tableId uint8, rowKey, colKey, value []byte, score int64,
+	cas uint32) *OneArgs {
+	return &OneArgs{tableId, rowKey, colKey, value, score, cas}
+}
+
+func NewDelArgs(tableId uint8, rowKey, colKey []byte, cas uint32) *OneArgs {
+	return &OneArgs{tableId, rowKey, colKey, nil, 0, cas}
+}
+
+func NewIncrArgs(tableId uint8, rowKey, colKey []byte, score int64,
+	cas uint32) *OneArgs {
+	return &OneArgs{tableId, rowKey, colKey, nil, score, cas}
+}
+
+type scanContext struct {
+	asc          bool // true: Ascending  order; false: Descending  order
+	orderByScore bool // true: Score+ColKey; false: ColKey
+	num          int  // Max number of scan reply records
 }
 
 type ScanReply struct {
-	Direction uint8
-	End       uint8 // 0: has more records; 1: no more records
-	Reply     []OneReply
+	Reply []OneReply
+	End   bool // false: Not end yet; true: Scan to end, stop now
+
+	ctx scanContext
 }
 
-type DumpArgs struct {
-	Scope uint8 // 1: dump TableId; 1: dump DbId; 2: Dump full DB
-	OneArgs
+// Dump Scope
+const (
+	ScopeTableId = iota // Dump only the specified TableId
+	ScopeDbId           // Dump only the specified DbId
+	ScopeFullDB         // Dump the entire database
+)
+
+type dumpContext struct {
+	scope   uint8 // Dump Scope
+	unitId  uint16
+	dbId    uint8
+	tableId uint8
 }
 
 type DumpRecord struct {
-	DbId     uint8
-	ColSpace uint8
+	DbId     uint8 // DbId of current record
+	ColSpace uint8 // ColSpace of current record
 	*proto.KeyValue
 }
 
 type DumpReply struct {
-	Scope uint8
-	End   uint8 // 0: has more records; 1: no more records
 	Reply []DumpRecord
+	End   bool // false: Not end yet; true: Has scan to end, stop now
+
+	ctx dumpContext
 }

@@ -51,6 +51,7 @@ func NewServer(dbname string) *Server {
 	srv.reqChan.ReadReqChan = make(chan *Request, 1000)
 	srv.reqChan.WriteReqChan = make(chan *Request, 1000)
 	srv.reqChan.SyncReqChan = make(chan *Request, 64)
+	srv.reqChan.DumpReqChan = make(chan *Request, 16)
 	srv.reqChan.CtrlReqChan = make(chan *Request, 16)
 
 	srv.bin = binlog.NewBinLog(binlogDir)
@@ -206,6 +207,19 @@ func (srv *Server) sync(req *Request) {
 	}
 }
 
+func (srv *Server) dump(req *Request) {
+	switch req.Cli.ClientType() {
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		resp.Pkg = srv.tbl.Dump(&req.PkgArgs)
+		srv.sendResp(false, true, req, &resp)
+	case ClientTypeSlaver:
+		log.Printf("Master cannot send DUMP command\n")
+	case ClientTypeMaster:
+		log.Printf("Slaver cannot send DUMP command\n")
+	}
+}
+
 func (srv *Server) newMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 	switch req.Cli.ClientType() {
 	case ClientTypeSlaver:
@@ -323,6 +337,20 @@ func (srv *Server) processSync() {
 	}
 }
 
+func (srv *Server) processDump() {
+	for {
+		select {
+		case req := <-srv.reqChan.DumpReqChan:
+			if !req.Cli.IsClosed() {
+				switch req.Cmd {
+				case proto.CmdDump:
+					srv.dump(req)
+				}
+			}
+		}
+	}
+}
+
 func (srv *Server) processCtrl() {
 	var de = ctrl.NewDecoder()
 	var en = ctrl.NewEncoder()
@@ -363,6 +391,7 @@ func Run(dbName, host, masterHost string) {
 	for i := 0; i < syncProcNum; i++ {
 		go srv.processSync()
 	}
+	go srv.processDump()
 	go srv.processCtrl()
 
 	go srv.bin.GoWriteBinLog()

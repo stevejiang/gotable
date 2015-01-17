@@ -76,11 +76,10 @@ func (c *client) get(zop bool, args []string) error {
 	}
 
 	var r *table.OneReply
-	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0}
 	if zop {
-		r, err = c.c.ZGet(&oa)
+		r, err = c.c.ZGet(tableId, []byte(rowKey), []byte(colKey), 0)
 	} else {
-		r, err = c.c.Get(&oa)
+		r, err = c.c.Get(tableId, []byte(rowKey), []byte(colKey), 0)
 	}
 	if err != nil {
 		return err
@@ -130,11 +129,10 @@ func (c *client) set(zop bool, args []string) error {
 		}
 	}
 
-	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0}
 	if zop {
-		_, err = c.c.ZSet(&oa)
+		_, err = c.c.ZSet(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
 	} else {
-		_, err = c.c.Set(&oa)
+		_, err = c.c.Set(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
 	}
 	if err != nil {
 		return err
@@ -165,11 +163,10 @@ func (c *client) del(zop bool, args []string) error {
 		return err
 	}
 
-	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, 0, 0}
 	if zop {
-		_, err = c.c.ZDel(&oa)
+		_, err = c.c.ZDel(tableId, []byte(rowKey), []byte(colKey), 0)
 	} else {
-		_, err = c.c.Del(&oa)
+		_, err = c.c.Del(tableId, []byte(rowKey), []byte(colKey), 0)
 	}
 	if err != nil {
 		return err
@@ -208,11 +205,10 @@ func (c *client) incr(zop bool, args []string) error {
 	}
 
 	var r *table.OneReply
-	var oa = table.OneArgs{tableId, []byte(rowKey), []byte(colKey), nil, score, 0}
 	if zop {
-		r, err = c.c.ZIncr(&oa)
+		r, err = c.c.ZIncr(tableId, []byte(rowKey), []byte(colKey), score, 0)
 	} else {
-		r, err = c.c.Incr(&oa)
+		r, err = c.c.Incr(tableId, []byte(rowKey), []byte(colKey), score, 0)
 	}
 	if err != nil {
 		return err
@@ -255,9 +251,7 @@ func (c *client) scan(args []string) error {
 		}
 	}
 
-	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{tableId, []byte(rowKey),
-		[]byte(colKey), nil, 0, 0}}
-	r, err := c.c.Scan(&sa)
+	r, err := c.c.Scan(tableId, []byte(rowKey), []byte(colKey), true, int(num))
 	if err != nil {
 		return err
 	}
@@ -308,9 +302,8 @@ func (c *client) zscan(args []string) error {
 		}
 	}
 
-	var sa = table.ScanArgs{uint16(num), 0, table.OneArgs{tableId, []byte(rowKey),
-		[]byte(colKey), nil, score, 0}}
-	r, err := c.c.ZScan(&sa)
+	r, err := c.c.ZScan(tableId, []byte(rowKey), []byte(colKey), score,
+		true, true, int(num))
 	if err != nil {
 		return err
 	}

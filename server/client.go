@@ -41,6 +41,7 @@ type RequestChan struct {
 	ReadReqChan  chan *Request
 	WriteReqChan chan *Request
 	SyncReqChan  chan *Request
+	DumpReqChan  chan *Request
 	CtrlReqChan  chan *Request
 }
 
@@ -163,6 +164,8 @@ func (c *Client) GoReadRequest(ch *RequestChan) {
 			if ClientTypeNormal != c.ClientType() {
 				ch.SyncReqChan <- &req
 			}
+		case proto.CmdDump:
+			ch.DumpReqChan <- &req
 		case proto.CmdMaster:
 			ch.CtrlReqChan <- &req
 		default:
