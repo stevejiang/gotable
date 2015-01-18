@@ -101,10 +101,10 @@ func testMGet(tc *table.Context) {
 	}
 
 	ma = table.MultiArgs{}
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col1"), nil, 0, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col2"), nil, 0, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col3"), nil, 0, 0})
 	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col4"), nil, 0, 0})
+	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col2"), nil, 0, 0})
+	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col1"), nil, 0, 0})
+	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col3"), nil, 0, 0})
 	r, err := tc.MGet(&ma)
 	if err != nil {
 		fmt.Printf("Mget fialed: %s\n", err)
@@ -150,13 +150,15 @@ func testZScan(tc *table.Context) {
 	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("002"), []byte("v02"), 6, 0})
 	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("003"), []byte("v03"), 7, 0})
 	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("004"), []byte("v04"), 8, 0})
+	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("005"), []byte("v05"), -5, 0})
 	_, err = tc.ZmSet(&ma)
 	if err != nil {
 		fmt.Printf("Mset fialed: %s\n", err)
 		return
 	}
 
-	r, err := tc.ZScan(1, []byte("row1"), []byte(""), 6, true, true, 4)
+	//r, err := tc.ZScan(1, []byte("row1"), nil, 0, true, true, 4)
+	r, err := tc.ZScanStart(1, []byte("row1"), true, true, 4)
 	if err != nil {
 		fmt.Printf("ZScan fialed: %s\n", err)
 		return

@@ -252,16 +252,24 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 	if n+rowKeyLen+2 > pkgLen {
 		return n, ErrPkgLen
 	}
-	kv.RowKey = pkg[n : n+rowKeyLen]
-	n += rowKeyLen
+	if rowKeyLen > 0 {
+		kv.RowKey = pkg[n : n+rowKeyLen]
+		n += rowKeyLen
+	} else {
+		kv.RowKey = nil
+	}
 
 	var colKeyLen = int(binary.BigEndian.Uint16(pkg[n:]))
 	n += 2
 	if n+colKeyLen > pkgLen {
 		return n, ErrPkgLen
 	}
-	kv.ColKey = pkg[n : n+colKeyLen]
-	n += colKeyLen
+	if colKeyLen > 0 {
+		kv.ColKey = pkg[n : n+colKeyLen]
+		n += colKeyLen
+	} else {
+		kv.ColKey = nil
+	}
 
 	if kv.CtrlFlag&CtrlValue != 0 {
 		if n+4 > pkgLen {
@@ -275,8 +283,12 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		if n+valueLen > pkgLen {
 			return n, ErrPkgLen
 		}
-		kv.Value = pkg[n : n+valueLen]
-		n += valueLen
+		if valueLen > 0 {
+			kv.Value = pkg[n : n+valueLen]
+			n += valueLen
+		} else {
+			kv.Value = nil
+		}
 	}
 	if kv.CtrlFlag&CtrlScore != 0 {
 		if n+8 > pkgLen {

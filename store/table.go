@@ -56,6 +56,8 @@ func NewTable(rwMtx *sync.RWMutex, tableDir string) *Table {
 }
 
 func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCtrl) error {
+	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
+
 	var zop = (kv.ColSpace == proto.ColSpaceScore1 ||
 		kv.ColSpace == proto.ColSpaceScore2)
 	var rawColSpace uint8 = proto.ColSpaceDefault
@@ -139,9 +141,7 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCt
 }
 
 func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) error {
-	defer func(kv *proto.KeyValueCtrl) {
-		kv.CtrlFlag &^= (proto.CtrlCas | proto.CtrlValue | proto.CtrlScore)
-	}(kv)
+	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if kv.RowKey == nil {
 		kv.ErrCode = table.EcodeInvRowKey
@@ -178,19 +178,23 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		}
 
 		var oldVal []byte
+		var oldScore int64
 		oldVal, err = tbl.db.Get(nil, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
 			kv.ErrCode = table.EcodeReadFail
 			return err
+		} else if oldVal == nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcodeNotExist
 		} else if oldVal != nil {
-			_, oldScore := ParseRawValue(oldVal)
+			oldVal, oldScore = ParseRawValue(oldVal)
 			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
 			tbl.db.Del(scoreKey, wb)
 		}
 
-		tbl.db.Put(rawKey, GetRawValue(nil, kv.Score), wb)
+		tbl.db.Put(rawKey, GetRawValue(kv.Value, kv.Score), wb)
 
 		var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
@@ -201,6 +205,16 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 			kv.CtrlFlag |= proto.CtrlErrCode
 			kv.ErrCode = table.EcodeWriteFail
 			return err
+		}
+
+		// Reply old value and score
+		if oldVal != nil {
+			kv.Value = oldVal
+			kv.CtrlFlag |= proto.CtrlValue
+		}
+		if oldScore != 0 {
+			kv.Score = oldScore
+			kv.CtrlFlag |= proto.CtrlScore
 		}
 	} else {
 		err = tbl.db.Put(rawKey, GetRawValue(kv.Value, kv.Score), nil)
@@ -230,9 +244,7 @@ func (tbl *Table) setRawKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 }
 
 func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) error {
-	defer func(kv *proto.KeyValueCtrl) {
-		kv.CtrlFlag &^= (proto.CtrlCas | proto.CtrlValue | proto.CtrlScore)
-	}(kv)
+	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	var zop = (kv.ColSpace == proto.ColSpaceScore1 ||
 		kv.ColSpace == proto.ColSpaceScore2)
@@ -249,7 +261,6 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		var cas = lck.GetCas(rawKey)
 		if cas != kv.Cas {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.CtrlFlag &^= (proto.CtrlCas | proto.CtrlValue | proto.CtrlScore)
 			kv.ErrCode = table.EcodeCasNotMatch
 			return nil
 		}
@@ -264,13 +275,16 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		}
 
 		var oldVal []byte
+		var oldScore int64
 		oldVal, err = tbl.db.Get(nil, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
 			kv.ErrCode = table.EcodeReadFail
 			return err
+		} else if oldVal == nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcodeNotExist
 		} else if oldVal != nil {
-			var oldScore int64
 			oldVal, oldScore = ParseRawValue(oldVal)
 
 			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
@@ -280,13 +294,21 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 
 		tbl.db.Del(rawKey, wb)
 
-		kv.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
-
 		err = tbl.db.Commit(wb)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
 			kv.ErrCode = table.EcodeWriteFail
 			return err
+		}
+
+		// Reply old value and score
+		if oldVal != nil {
+			kv.Value = oldVal
+			kv.CtrlFlag |= proto.CtrlValue
+		}
+		if oldScore != 0 {
+			kv.Score = oldScore
+			kv.CtrlFlag |= proto.CtrlScore
 		}
 	} else {
 		err = tbl.db.Del(rawKey, nil)
@@ -295,17 +317,13 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 			kv.ErrCode = table.EcodeWriteFail
 			return err
 		}
-
-		kv.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 	}
 
 	return nil
 }
 
 func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) error {
-	defer func(kv *proto.KeyValueCtrl) {
-		kv.CtrlFlag &^= proto.CtrlCas
-	}(kv)
+	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if kv.RowKey == nil {
 		kv.ErrCode = table.EcodeInvRowKey
@@ -328,7 +346,6 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		var cas = lck.GetCas(rawKey)
 		if cas != kv.Cas {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.CtrlFlag &^= (proto.CtrlCas | proto.CtrlValue | proto.CtrlScore)
 			kv.ErrCode = table.EcodeCasNotMatch
 			return nil
 		}
@@ -373,6 +390,13 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 			kv.RowKey, newScoreColKey(newScore, kv.ColKey))
 		tbl.db.Put(scoreKey, GetRawValue(oldVal, 0), wb)
 
+		err = tbl.db.Commit(wb)
+		if err != nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcodeWriteFail
+			return err
+		}
+
 		kv.Value = oldVal
 		kv.Score = newScore
 		if kv.Value != nil {
@@ -380,13 +404,6 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		}
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
-		}
-
-		err = tbl.db.Commit(wb)
-		if err != nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
-			return err
 		}
 	} else {
 		oldVal, err = tbl.db.Get(nil, rawKey)
@@ -664,9 +681,31 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 	var it = tbl.db.NewIterator(true)
 	defer it.Close()
 
+	var startSeek = (in.Cas == 1)
 	var scanColSpace uint8 = proto.ColSpaceScore1
-	it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
-		in.RowKey, newScoreColKey(in.Score, in.ColKey)))
+	if in.Direction == 0 {
+		if startSeek {
+			// Seek to the first element
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+				in.RowKey, nil))
+		} else {
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+				in.RowKey, newScoreColKey(in.Score, in.ColKey)))
+		}
+	} else {
+		if startSeek {
+			// Seek to the last element
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace+1,
+				in.RowKey, nil))
+		} else {
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+				in.RowKey, newScoreColKey(in.Score, in.ColKey)))
+		}
+		if !it.Valid() {
+			it.SeekToLast()
+		}
+	}
+
 	out.End = 1
 	var first = true
 	var scanNum = int(in.Num)
@@ -682,24 +721,30 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 			}
 		}
 
+		if first {
+			first = false
+		}
+
 		if len(colKey) < 8 {
 			continue //  skip invalid record
 		}
 		var zScore = int64(binary.BigEndian.Uint64(colKey) - zopScoreUp)
 		var zColKey = colKey[8:]
-		if in.Direction == 0 {
-			if zScore < in.Score {
-				continue
-			}
-			if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) <= 0 {
-				continue
-			}
-		} else {
-			if zScore > in.Score {
-				continue
-			}
-			if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) >= 0 {
-				continue
+		if !startSeek {
+			if in.Direction == 0 {
+				if zScore < in.Score {
+					continue
+				}
+				if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) <= 0 {
+					continue
+				}
+			} else {
+				if zScore > in.Score {
+					continue
+				}
+				if zScore == in.Score && bytes.Compare(zColKey, in.ColKey) >= 0 {
+					continue
+				}
 			}
 		}
 
@@ -755,7 +800,28 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 	var it = tbl.db.NewIterator(true)
 	defer it.Close()
 
-	it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey, in.ColKey))
+	var startSeek = (in.Cas == 1)
+	if in.Direction == 0 {
+		if startSeek {
+			// Seek to the first element
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey, nil))
+		} else {
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+				in.RowKey, in.ColKey))
+		}
+	} else {
+		if startSeek {
+			// Seek to the last element
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace+1, in.RowKey, nil))
+		} else {
+			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+				in.RowKey, in.ColKey))
+		}
+		if !it.Valid() {
+			it.SeekToLast()
+		}
+	}
+
 	out.End = 1
 	var first = true
 	var scanNum = int(in.Num)
@@ -771,13 +837,19 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 			}
 		}
 
-		if in.Direction == 0 {
-			if bytes.Compare(colKey, in.ColKey) <= 0 {
-				continue
-			}
-		} else {
-			if bytes.Compare(colKey, in.ColKey) >= 0 {
-				continue
+		if first {
+			first = false
+		}
+
+		if !startSeek {
+			if in.Direction == 0 {
+				if bytes.Compare(colKey, in.ColKey) <= 0 {
+					continue
+				}
+			} else {
+				if bytes.Compare(colKey, in.ColKey) >= 0 {
+					continue
+				}
 			}
 		}
 

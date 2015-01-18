@@ -26,12 +26,13 @@ type Context struct {
 }
 
 type Call struct {
-	Done chan *Call  // Reply channel
-	args interface{} // Request args
-	err  error
-	pkg  []byte
-	seq  uint64
-	cmd  uint8
+	Done  chan *Call  // Reply channel
+	ctx   interface{} // Request context
+	err   error
+	pkg   []byte
+	seq   uint64
+	cmd   uint8
+	ready bool // Ready to invoke Reply?
 }
 
 // Get the underling connection Client of the Context.
@@ -283,10 +284,38 @@ func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 	return r.(*ScanReply), nil
 }
 
+func (c *Context) ScanStart(tableId uint8, rowKey []byte,
+	asc bool, num int) (*ScanReply, error) {
+	call, err := c.GoScanStart(tableId, rowKey, asc, num, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.(*ScanReply), nil
+}
+
 func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int) (*ScanReply, error) {
 	call, err := c.GoZScan(tableId, rowKey, colKey, score, asc, orderByScore,
 		num, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.(*ScanReply), nil
+}
+
+func (c *Context) ZScanStart(tableId uint8, rowKey []byte,
+	asc, orderByScore bool, num int) (*ScanReply, error) {
+	call, err := c.GoZScanStart(tableId, rowKey, asc, orderByScore, num, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +611,8 @@ func (c *Context) GoZmIncr(args *MultiArgs, done chan *Call) (*Call, error) {
 }
 
 func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
-	score int64, asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
+	score int64, start, asc, orderByScore bool, num int,
+	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(proto.CmdScan, done)
 	if call.err != nil {
 		return call, call.err
@@ -607,6 +637,14 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	p.RowKey = rowKey
 	p.ColKey = colKey
 
+	// Start postion
+	if start {
+		// Reuse Cas field. Cas=1 means start position.
+		// It has nothing to do with compare and switch.
+		p.Cas = 1
+		p.CtrlFlag |= proto.CtrlCas
+	}
+
 	// ZScan
 	if zop {
 		if orderByScore {
@@ -629,7 +667,7 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 		return call, err
 	}
 
-	call.args = scanContext{asc, orderByScore, num}
+	call.ctx = scanContext{asc, orderByScore, num}
 	c.cli.sending <- call
 
 	return call, nil
@@ -637,13 +675,26 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 
 func (c *Context) GoScan(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int, done chan *Call) (*Call, error) {
-	return c.goScan(false, tableId, rowKey, colKey, 0, asc, false, num, done)
+	return c.goScan(false, tableId, rowKey, colKey, 0,
+		false, asc, false, num, done)
+}
+
+func (c *Context) GoScanStart(tableId uint8, rowKey []byte,
+	asc bool, num int, done chan *Call) (*Call, error) {
+	return c.goScan(false, tableId, rowKey, nil, 0,
+		true, asc, false, num, done)
 }
 
 func (c *Context) GoZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
-	return c.goScan(true, tableId, rowKey, colKey, score, asc, orderByScore, num,
-		done)
+	return c.goScan(true, tableId, rowKey, colKey, score,
+		false, asc, orderByScore, num, done)
+}
+
+func (c *Context) GoZScanStart(tableId uint8, rowKey []byte,
+	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
+	return c.goScan(true, tableId, rowKey, nil, 0,
+		true, asc, orderByScore, num, done)
 }
 
 func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
@@ -668,7 +719,7 @@ func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
 		return call, err
 	}
 
-	call.args = dumpContext{scope, unitId, rec.DbId, rec.TableId}
+	call.ctx = dumpContext{scope, unitId, rec.DbId, rec.TableId}
 	c.cli.sending <- call
 
 	return call, nil
@@ -677,6 +728,10 @@ func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
 func (call *Call) Reply() (interface{}, error) {
 	if call.err != nil {
 		return nil, call.err
+	}
+
+	if !call.ready {
+		return nil, ErrCallNotReady
 	}
 
 	switch call.cmd {
@@ -717,11 +772,26 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
+		if !isNormalErrorCode(p.ErrCode) {
+			call.err = newErrCode(p.ErrCode)
+			return nil, call.err
+		}
+
+		var allFail = true
 		var r MultiReply
 		r.Reply = make([]OneReply, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
+			if allFail && isNormalErrorCode(p.Kvs[i].ErrCode) {
+				allFail = false
+			}
 			r.Reply[i].ErrCode = p.Kvs[i].ErrCode
 			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
+		}
+
+		// all request failed, select one error code and return
+		if allFail && len(p.Kvs) > 0 {
+			call.err = newErrCode(p.Kvs[0].ErrCode)
+			return nil, call.err
 		}
 		return &r, nil
 
@@ -733,8 +803,13 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
+		if !isNormalErrorCode(p.ErrCode) {
+			call.err = newErrCode(p.ErrCode)
+			return nil, call.err
+		}
+
 		var r ScanReply
-		r.ctx = call.args.(scanContext)
+		r.ctx = call.ctx.(scanContext)
 		r.End = (p.End != 0)
 		r.Reply = make([]OneReply, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
@@ -751,8 +826,13 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
+		if !isNormalErrorCode(p.ErrCode) {
+			call.err = newErrCode(p.ErrCode)
+			return nil, call.err
+		}
+
 		var r DumpReply
-		r.ctx = call.args.(dumpContext)
+		r.ctx = call.ctx.(dumpContext)
 		r.End = (p.End != 0)
 		r.Reply = make([]DumpRecord, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {

@@ -31,11 +31,12 @@ import (
 const Version = "0.1" // GoTable version
 
 var (
-	ErrShutdown    = errors.New("connection is shut down")
-	ErrUnknownCmd  = errors.New("unknown cmd")
-	ErrClosedPool  = errors.New("connection pool is closed")
-	ErrInvalidTag  = errors.New("invalid tag id")
-	ErrNoValidAddr = errors.New("no valid address")
+	ErrShutdown     = errors.New("connection is shut down")
+	ErrUnknownCmd   = errors.New("unknown cmd")
+	ErrCallNotReady = errors.New("call not ready to reply")
+	ErrClosedPool   = errors.New("connection pool is closed")
+	ErrInvalidTag   = errors.New("invalid tag id")
+	ErrNoValidAddr  = errors.New("no valid address")
 )
 
 var (
@@ -219,13 +220,14 @@ func (c *Client) send() {
 }
 
 func (call *Call) done() {
+	call.ready = true
 	select {
 	case call.Done <- call:
 		// ok
 	default:
 		// We don't want to block here.  It is the caller's responsibility to make
 		// sure the channel has enough buffer space. See comment in Go().
-		log.Println("gotable: discarding Call reply due to insufficient Done chan capacity")
+		log.Println("discarding reply due to insufficient Done chan capacity")
 	}
 }
 
