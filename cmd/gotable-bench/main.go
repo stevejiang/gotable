@@ -339,7 +339,7 @@ func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num in
 
 	if *verbose != 0 {
 		for i := 0; i < len(r.Reply); i++ {
-			var one = &r.Reply[i]
+			var one = r.Reply[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
 				one.RowKey, one.ColKey, one.Score, one.Value)
 		}

@@ -239,7 +239,7 @@ func (bin *BinLog) GoWriteBinLog() {
 				ms.NewLogComming()
 			}
 
-			proto.OverwriteSeq(req.Pkg, bin.logSeq)
+			proto.OverWriteSeq(req.Pkg, bin.logSeq)
 			bin.doWrite(req, bin.logSeq)
 
 			lastReq = req

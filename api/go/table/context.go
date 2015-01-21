@@ -40,10 +40,6 @@ func (c *Context) Client() *Client {
 	return c.cli
 }
 
-func (c *Context) Use(dbId uint8) {
-	c.dbId = dbId
-}
-
 func (c *Context) Ping() error {
 	call, err := c.GoPing(nil)
 	if err != nil {
@@ -331,7 +327,7 @@ func (c *Context) scanMore(zop bool, last *ScanReply) (*ScanReply, error) {
 	if last.End || len(last.Reply) == 0 {
 		return nil, ErrScanEnded
 	}
-	var a = last.Reply[len(last.Reply)-1].KeyValue
+	var a = last.Reply[len(last.Reply)-1]
 	var call *Call
 	var err error
 	if zop {
@@ -360,16 +356,26 @@ func (c *Context) ZScanMore(last *ScanReply) (*ScanReply, error) {
 	return c.scanMore(true, last)
 }
 
-func (c *Context) Dump(scope, tableId uint8) (*DumpReply, error) {
-	var dbId = c.dbId
-	// Only scan full DB can escape c.dbId
-	if ScopeFullDB == scope {
-		dbId = 0
-		tableId = 0
+// Dump one Table or current DB.
+// If tableId > 0, only dump the selected table.
+// If tableId == 0, dump current DB(dbId).
+func (c *Context) Dump(tableId uint8) (*DumpReply, error) {
+	if tableId == 0 {
+		return c.DumpPivot(false, 0, 0, nil, nil, 0, 0, 65535)
+	} else {
+		return c.DumpPivot(true, tableId, 0, nil, nil, 0, 0, 65535)
 	}
-	rec := &DumpRecord{dbId, 0, &proto.KeyValue{tableId, nil, nil, nil, 0, 0}}
+}
 
-	call, err := c.goDump(scope, 0, rec, nil)
+// Dump start from the pivot.
+// If oneTable is true, only dump the selected table.
+// If oneTable is false, dump current DB(dbId).
+// The pivot record itself is excluded from the reply.
+func (c *Context) DumpPivot(oneTable bool, tableId, colSpace uint8,
+	rowKey, colKey []byte, score int64,
+	startUnitId, endUnitId uint16) (*DumpReply, error) {
+	call, err := c.GoDump(oneTable, tableId, colSpace, rowKey, colKey,
+		score, startUnitId, endUnitId, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +384,13 @@ func (c *Context) Dump(scope, tableId uint8) (*DumpReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	return r.(*DumpReply), nil
+
+	var t = r.(*DumpReply)
+	if t.End || len(t.Reply) > 0 {
+		return t, nil
+	}
+
+	return c.DumpMore(t)
 }
 
 func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
@@ -386,40 +398,45 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 		return nil, ErrScanEnded
 	}
 
-	var rec *DumpRecord
-	var unitId = last.ctx.unitId
-	if len(last.Reply) == 0 {
-		unitId += 1
-		rec = &DumpRecord{last.ctx.dbId, 0,
-			&proto.KeyValue{last.ctx.tableId, nil, nil, nil, 0, 0}}
-	} else {
-		rec = &last.Reply[len(last.Reply)-1]
+	var t = last
+	for {
+		var rec *DumpRecord
+		var lastUnitId = t.ctx.lastUnitId
+		if len(t.Reply) == 0 {
+			lastUnitId += 1
+			if t.ctx.oneTable {
+				rec = &DumpRecord{0,
+					&proto.KeyValue{t.ctx.tableId, nil, nil, nil, 0}}
+			} else {
+				rec = &DumpRecord{0,
+					&proto.KeyValue{0, nil, nil, nil, 0}}
+			}
+		} else {
+			rec = &t.Reply[len(t.Reply)-1]
+		}
+
+		call, err := c.GoDump(t.ctx.oneTable, rec.TableId, rec.ColSpace,
+			rec.RowKey, rec.ColKey, rec.Score, lastUnitId, t.ctx.endUnitId, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		r, err := (<-call.Done).Reply()
+		if err != nil {
+			return nil, err
+		}
+
+		t = r.(*DumpReply)
+		if t.End || len(t.Reply) > 0 {
+			return t, nil
+		}
 	}
 
-	call, err := c.goDump(last.ctx.scope, unitId, rec, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-
-	var s = r.(*DumpReply)
-	if s.End {
-		return s, nil
-	}
-
-	if len(s.Reply) == 0 {
-		return c.DumpMore(s)
-	} else {
-		return s, nil
-	}
+	return nil, ErrScanEnded
 }
 
 // Get, Set, Del, Incr, ZGet, ZSet, ZDel, ZIncr
-func (c *Context) goOneOp(zop bool, args *OneArgs, cmd uint8,
+func (c *Context) goOneOp(zop bool, args OneArgs, cmd uint8,
 	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(cmd, done)
 	if call.err != nil {
@@ -457,8 +474,8 @@ func (c *Context) goOneOp(zop bool, args *OneArgs, cmd uint8,
 		p.CtrlFlag |= proto.CtrlColSpace
 	}
 
-	var err error
-	call.pkg, _, err = p.Encode(nil)
+	call.pkg = make([]byte, p.Length())
+	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return call, err
@@ -471,55 +488,54 @@ func (c *Context) goOneOp(zop bool, args *OneArgs, cmd uint8,
 }
 
 func (c *Context) GoPing(done chan *Call) (*Call, error) {
-	var oa OneArgs
-	return c.goOneOp(false, &oa, proto.CmdPing, done)
+	return c.goOneOp(false, OneArgs{0, &proto.KeyValue{}}, proto.CmdPing, done)
 }
 
 func (c *Context) GoGet(tableId uint8, rowKey, colKey []byte, cas uint32,
 	done chan *Call) (*Call, error) {
-	var args = NewGetArgs(tableId, rowKey, colKey, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
 	return c.goOneOp(false, args, proto.CmdGet, done)
 }
 
 func (c *Context) GoZGet(tableId uint8, rowKey, colKey []byte, cas uint32,
 	done chan *Call) (*Call, error) {
-	var args = NewGetArgs(tableId, rowKey, colKey, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
 	return c.goOneOp(true, args, proto.CmdGet, done)
 }
 
 func (c *Context) GoSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = NewSetArgs(tableId, rowKey, colKey, value, score, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, value, score}}
 	return c.goOneOp(false, args, proto.CmdSet, done)
 }
 
 func (c *Context) GoZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = NewSetArgs(tableId, rowKey, colKey, value, score, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, value, score}}
 	return c.goOneOp(true, args, proto.CmdSet, done)
 }
 
 func (c *Context) GoDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = NewDelArgs(tableId, rowKey, colKey, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
 	return c.goOneOp(false, args, proto.CmdDel, done)
 }
 
 func (c *Context) GoZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = NewDelArgs(tableId, rowKey, colKey, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
 	return c.goOneOp(true, args, proto.CmdDel, done)
 }
 
 func (c *Context) GoIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = NewIncrArgs(tableId, rowKey, colKey, score, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, score}}
 	return c.goOneOp(false, args, proto.CmdIncr, done)
 }
 
 func (c *Context) GoZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = NewIncrArgs(tableId, rowKey, colKey, score, cas)
+	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, score}}
 	return c.goOneOp(true, args, proto.CmdIncr, done)
 }
 
@@ -566,8 +582,8 @@ func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
 		}
 	}
 
-	var err error
-	call.pkg, _, err = p.Encode(nil)
+	call.pkg = make([]byte, p.Length())
+	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return call, err
@@ -632,18 +648,15 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	} else {
 		p.Direction = 1
 	}
+	if start {
+		p.Start = 1
+	} else {
+		p.Start = 0
+	}
 	p.Num = uint16(num)
 	p.TableId = tableId
 	p.RowKey = rowKey
 	p.ColKey = colKey
-
-	// Start postion
-	if start {
-		// Reuse Cas field. Cas=1 means start position.
-		// It has nothing to do with compare and switch.
-		p.Cas = 1
-		p.CtrlFlag |= proto.CtrlCas
-	}
 
 	// ZScan
 	if zop {
@@ -660,8 +673,8 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 		}
 	}
 
-	var err error
-	call.pkg, _, err = p.Encode(nil)
+	call.pkg = make([]byte, p.Length())
+	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return call, err
@@ -697,7 +710,8 @@ func (c *Context) GoZScanStart(tableId uint8, rowKey []byte,
 		true, asc, orderByScore, num, done)
 }
 
-func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
+func (c *Context) GoDump(oneTable bool, tableId, colSpace uint8,
+	rowKey, colKey []byte, score int64, startUnitId, endUnitId uint16,
 	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(proto.CmdDump, done)
 	if call.err != nil {
@@ -708,18 +722,35 @@ func (c *Context) goDump(scope uint8, unitId uint16, rec *DumpRecord,
 	p.Seq = call.seq
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
-	p.Scope = scope
-	p.UnitId = unitId
-	p.KeyValue = *rec.KeyValue
+	if oneTable {
+		p.OneTable = 1
+	} else {
+		p.OneTable = 0
+	}
+	p.StartUnitId = startUnitId
+	p.EndUnitId = endUnitId
+	if colSpace != 0 {
+		p.ColSpace = colSpace
+		p.CtrlFlag |= proto.CtrlColSpace
+	}
+	p.TableId = tableId
+	p.RowKey = rowKey
+	p.ColKey = colKey
+	if score != 0 {
+		p.Score = score
+		p.CtrlFlag |= proto.CtrlScore
+	}
 
-	var err error
-	call.pkg, _, err = p.Encode(nil)
+	call.pkg = make([]byte, p.Length())
+	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return call, err
 	}
 
-	call.ctx = dumpContext{scope, unitId, rec.DbId, rec.TableId}
+	call.ctx = dumpContext{oneTable, c.dbId, tableId,
+		startUnitId, endUnitId, startUnitId}
+
 	c.cli.sending <- call
 
 	return call, nil
@@ -750,13 +781,7 @@ func (call *Call) Reply() (interface{}, error) {
 			call.err = err
 			return nil, call.err
 		}
-
-		if !isNormalErrorCode(p.ErrCode) {
-			call.err = newErrCode(p.ErrCode)
-			return nil, call.err
-		}
-
-		return &OneReply{p.ErrCode, &p.KeyValue}, nil
+		return &OneReply{p.ErrCode, p.Cas, &p.KeyValue}, nil
 
 	case proto.CmdMIncr:
 		fallthrough
@@ -772,26 +797,11 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
-		if !isNormalErrorCode(p.ErrCode) {
-			call.err = newErrCode(p.ErrCode)
-			return nil, call.err
-		}
-
-		var allFail = true
 		var r MultiReply
 		r.Reply = make([]OneReply, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
-			if allFail && isNormalErrorCode(p.Kvs[i].ErrCode) {
-				allFail = false
-			}
 			r.Reply[i].ErrCode = p.Kvs[i].ErrCode
 			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
-		}
-
-		// all request failed, select one error code and return
-		if allFail && len(p.Kvs) > 0 {
-			call.err = newErrCode(p.Kvs[0].ErrCode)
-			return nil, call.err
 		}
 		return &r, nil
 
@@ -803,40 +813,29 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
-		if !isNormalErrorCode(p.ErrCode) {
-			call.err = newErrCode(p.ErrCode)
-			return nil, call.err
-		}
-
 		var r ScanReply
 		r.ctx = call.ctx.(scanContext)
 		r.End = (p.End != 0)
-		r.Reply = make([]OneReply, len(p.Kvs))
+		r.Reply = make([]*proto.KeyValue, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
-			r.Reply[i].ErrCode = 0
-			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
+			r.Reply[i] = &p.Kvs[i].KeyValue
 		}
 		return &r, nil
 
 	case proto.CmdDump:
-		var p proto.PkgScanResp
+		var p proto.PkgDumpResp
 		_, err := p.Decode(call.pkg)
 		if err != nil {
 			call.err = err
 			return nil, call.err
 		}
 
-		if !isNormalErrorCode(p.ErrCode) {
-			call.err = newErrCode(p.ErrCode)
-			return nil, call.err
-		}
-
 		var r DumpReply
 		r.ctx = call.ctx.(dumpContext)
+		r.ctx.lastUnitId = p.LastUnitId
 		r.End = (p.End != 0)
 		r.Reply = make([]DumpRecord, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
-			r.Reply[i].DbId = p.Kvs[i].DbIdExt
 			r.Reply[i].ColSpace = p.Kvs[i].ColSpace
 			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
 		}

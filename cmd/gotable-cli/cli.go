@@ -49,7 +49,7 @@ func (c *client) use(args []string) error {
 	}
 
 	fmt.Printf("OK, current database is %d\n", dbId)
-	c.c.Use(dbId)
+	c.c = c.c.Client().NewContext(dbId)
 
 	return nil
 }
@@ -84,14 +84,14 @@ func (c *client) get(zop bool, args []string) error {
 	if err != nil {
 		return err
 	}
+	if r.ErrCode != 0 {
+		return fmt.Errorf("unexpected error code %d", r.ErrCode)
+	}
 
-	switch r.ErrCode {
-	case table.EcodeOk:
+	if r.Value == nil {
+		fmt.Println("<nil>")
+	} else {
 		fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
-	case table.EcodeNotExist:
-		fmt.Println("(nil)")
-	default:
-		fmt.Printf("<Unexpected error code %d>\n", r.ErrCode)
 	}
 
 	return nil
@@ -100,7 +100,7 @@ func (c *client) get(zop bool, args []string) error {
 func (c *client) set(zop bool, args []string) error {
 	// set <tableId> <rowKey> <colKey> <value> [score]
 	//zset <tableId> <rowKey> <colKey> <value> [score]
-	if len(args) < 4 && len(args) > 5 {
+	if len(args) < 4 || len(args) > 5 {
 		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
@@ -179,7 +179,7 @@ func (c *client) del(zop bool, args []string) error {
 func (c *client) incr(zop bool, args []string) error {
 	// incr <tableId> <rowKey> <colKey> [score]
 	//zincr <tableId> <rowKey> <colKey> [score]
-	if len(args) < 3 && len(args) > 4 {
+	if len(args) < 3 || len(args) > 4 {
 		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
@@ -213,13 +213,11 @@ func (c *client) incr(zop bool, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	switch r.ErrCode {
-	case table.EcodeOk:
-		fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
-	default:
-		fmt.Printf("<Unexpected error code %d>\n", r.ErrCode)
+	if r.ErrCode != 0 {
+		return fmt.Errorf("unexpected error code %d", r.ErrCode)
 	}
+
+	fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
 	return nil
 }
 
@@ -260,7 +258,7 @@ func (c *client) scan(args []string) error {
 		fmt.Println("no record!")
 	} else {
 		for i := 0; i < len(r.Reply); i++ {
-			var one = &r.Reply[i]
+			var one = r.Reply[i]
 			fmt.Printf("%2d) [%q\t%q]\t[%d\t%q]\n", i,
 				one.RowKey, one.ColKey, one.Score, one.Value)
 		}
@@ -312,7 +310,7 @@ func (c *client) zscan(args []string) error {
 		fmt.Println("no record!")
 	} else {
 		for i := 0; i < len(r.Reply); i++ {
-			var one = &r.Reply[i]
+			var one = r.Reply[i]
 			fmt.Printf("%2d) [%q\t%d\t%q]\t[%q]\n", i,
 				one.RowKey, one.Score, one.ColKey, one.Value)
 		}

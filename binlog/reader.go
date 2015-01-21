@@ -146,7 +146,7 @@ func (r *Reader) init(logSeq uint64) bool {
 				return false
 			}
 
-			err = r.head.DecodeHead(r.bin.memlog[r.curMemPos:])
+			_, err = r.head.Decode(r.bin.memlog[r.curMemPos:])
 			if err != nil {
 				return false
 			}
@@ -271,7 +271,7 @@ func (r *Reader) next() []byte {
 		if r.curMemPos+proto.HeadSize > r.bin.usedLen {
 			return nil
 		}
-		err = r.head.DecodeHead(r.bin.memlog[r.curMemPos:])
+		_, err = r.head.Decode(r.bin.memlog[r.curMemPos:])
 		if err != nil {
 			return nil
 		}

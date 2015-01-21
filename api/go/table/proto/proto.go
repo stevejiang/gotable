@@ -64,7 +64,7 @@ const (
 
 type PkgEncoding interface {
 	Length() int
-	Encode(pkg []byte) ([]byte, int, error)
+	Encode(pkg []byte) (int, error)
 	Decode(pkg []byte) (int, error)
 }
 
@@ -80,9 +80,9 @@ type PkgHead struct {
 	PkgLen uint32
 }
 
-func (head *PkgHead) DecodeHead(pkg []byte) error {
+func (head *PkgHead) Decode(pkg []byte) (int, error) {
 	if len(pkg) < HeadSize {
-		return ErrPkgLen
+		return 0, ErrPkgLen
 	}
 
 	// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
@@ -91,12 +91,12 @@ func (head *PkgHead) DecodeHead(pkg []byte) error {
 	head.Seq = binary.BigEndian.Uint64(pkg[2:])
 	head.PkgLen = binary.BigEndian.Uint32(pkg[10:])
 
-	return nil
+	return HeadSize, nil
 }
 
-func (head *PkgHead) EncodeHead(pkg []byte) error {
+func (head *PkgHead) Encode(pkg []byte) (int, error) {
 	if len(pkg) < HeadSize {
-		return ErrPkgLen
+		return 0, ErrPkgLen
 	}
 
 	// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
@@ -105,14 +105,21 @@ func (head *PkgHead) EncodeHead(pkg []byte) error {
 	binary.BigEndian.PutUint64(pkg[2:], head.Seq)
 	binary.BigEndian.PutUint32(pkg[10:], head.PkgLen)
 
-	return nil
+	return HeadSize, nil
 }
 
-func OverwriteSeq(pkg []byte, seq uint64) error {
+func OverWriteLen(pkg []byte, pkgLen int) error {
 	if len(pkg) < HeadSize {
 		return ErrPkgLen
 	}
+	binary.BigEndian.PutUint32(pkg[10:], uint32(pkgLen))
+	return nil
+}
 
+func OverWriteSeq(pkg []byte, seq uint64) error {
+	if len(pkg) < HeadSize {
+		return ErrPkgLen
+	}
 	binary.BigEndian.PutUint64(pkg[2:], seq)
 	return nil
 }
@@ -140,7 +147,7 @@ func ReadPkg(r *bufio.Reader, headBuf []byte, head *PkgHead,
 			continue
 		}
 
-		err = head.DecodeHead(headBuf)
+		_, err = head.Decode(headBuf)
 		if err != nil {
 			return nil, err
 		}

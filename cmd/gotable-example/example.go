@@ -31,7 +31,7 @@ func main() {
 
 	client, err := table.Dial("tcp", *host)
 	if err != nil {
-		fmt.Printf("Dial fialed: %s\n", err)
+		fmt.Printf("Dial failed: %s\n", err)
 		return
 	}
 	defer client.Close()
@@ -45,23 +45,28 @@ func main() {
 	testCas(ctx)
 	testBinary(ctx)
 	testPing(ctx)
+	testDump(ctx)
 }
 
 func testGet(tc *table.Context) {
 	// set
 	_, err := tc.Set(1, []byte("row1"), []byte("col1"), []byte("v01"), 10, 0)
 	if err != nil {
-		fmt.Printf("Set fialed: %s\n", err)
+		fmt.Printf("Set failed: %s\n", err)
 		return
 	}
 
 	r, err := tc.Get(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
-		fmt.Printf("Get fialed: %s\n", err)
+		fmt.Printf("Get failed: %s\n", err)
+		return
+	}
+	if r.ErrCode != 0 {
+		fmt.Printf("Get failed with unexpected error code: %d\n", r.ErrCode)
 		return
 	}
 
-	if r.ErrCode == table.EcodeNotExist {
+	if r.Value == nil {
 		fmt.Printf("GET result1: Key not exist\n")
 	} else {
 		fmt.Printf("GET result1: %q\t%d\n", r.Value, r.Score)
@@ -70,17 +75,21 @@ func testGet(tc *table.Context) {
 	// delete
 	_, err = tc.Del(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
-		fmt.Printf("Del fialed: %s\n", err)
+		fmt.Printf("Del failed: %s\n", err)
 		return
 	}
 
 	r, err = tc.Get(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
-		fmt.Printf("Get fialed: %s\n", err)
+		fmt.Printf("Get failed: %s\n", err)
+		return
+	}
+	if r.ErrCode != 0 {
+		fmt.Printf("Get failed with unexpected error code: %d\n", r.ErrCode)
 		return
 	}
 
-	if r.ErrCode == table.EcodeNotExist {
+	if r.Value == nil {
 		fmt.Printf("GET result2: Key not exist\n")
 	} else {
 		fmt.Printf("GET result2: %q\t%d\n", r.Value, r.Score)
@@ -89,25 +98,25 @@ func testGet(tc *table.Context) {
 
 func testMGet(tc *table.Context) {
 	var ma table.MultiArgs
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col0"), []byte("v00"), 10, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col1"), []byte("v01"), 9, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col2"), []byte("v02"), 8, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col3"), []byte("v03"), 7, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col4"), []byte("v04"), 6, 0})
+	ma.AddSetArgs(1, []byte("row1"), []byte("col0"), []byte("v00"), 10, 0)
+	ma.AddSetArgs(1, []byte("row1"), []byte("col1"), []byte("v01"), 9, 0)
+	ma.AddSetArgs(1, []byte("row1"), []byte("col2"), []byte("v02"), 8, 0)
+	ma.AddSetArgs(1, []byte("row1"), []byte("col3"), []byte("v03"), 7, 0)
+	ma.AddSetArgs(1, []byte("row1"), []byte("col4"), []byte("v04"), 6, 0)
 	_, err := tc.MSet(&ma)
 	if err != nil {
-		fmt.Printf("Mset fialed: %s\n", err)
+		fmt.Printf("Mset failed: %s\n", err)
 		return
 	}
 
 	ma = table.MultiArgs{}
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col4"), nil, 0, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col2"), nil, 0, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col1"), nil, 0, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("col3"), nil, 0, 0})
+	ma.AddGetArgs(1, []byte("row1"), []byte("col4"), 0)
+	ma.AddGetArgs(1, []byte("row1"), []byte("col2"), 0)
+	ma.AddGetArgs(1, []byte("row1"), []byte("col1"), 0)
+	ma.AddGetArgs(1, []byte("row1"), []byte("col3"), 0)
 	r, err := tc.MGet(&ma)
 	if err != nil {
-		fmt.Printf("Mget fialed: %s\n", err)
+		fmt.Printf("Mget failed: %s\n", err)
 		return
 	}
 
@@ -122,7 +131,7 @@ func testMGet(tc *table.Context) {
 func testScan(tc *table.Context) {
 	r, err := tc.Scan(1, []byte("row1"), []byte("col0"), true, 10)
 	if err != nil {
-		fmt.Printf("Scan fialed: %s\n", err)
+		fmt.Printf("Scan failed: %s\n", err)
 		return
 	}
 
@@ -140,27 +149,27 @@ func testScan(tc *table.Context) {
 }
 
 func testZScan(tc *table.Context) {
-	_, err := tc.ZSet(1, []byte("row1"), []byte("000"), []byte("v00"), 10, 0)
+	_, err := tc.ZSet(1, []byte("row2"), []byte("000"), []byte("v00"), 10, 0)
 	if err != nil {
-		fmt.Printf("Set fialed: %s\n", err)
+		fmt.Printf("Set failed: %s\n", err)
 	}
 
 	var ma table.MultiArgs
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("001"), []byte("v01"), 9, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("002"), []byte("v02"), 6, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("003"), []byte("v03"), 7, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("004"), []byte("v04"), 8, 0})
-	ma.Args = append(ma.Args, table.OneArgs{1, []byte("row1"), []byte("005"), []byte("v05"), -5, 0})
+	ma.AddSetArgs(1, []byte("row2"), []byte("001"), []byte("v01"), 9, 0)
+	ma.AddSetArgs(1, []byte("row2"), []byte("002"), []byte("v02"), 6, 0)
+	ma.AddSetArgs(1, []byte("row2"), []byte("003"), []byte("v03"), 7, 0)
+	ma.AddSetArgs(1, []byte("row2"), []byte("004"), []byte("v04"), 8, 0)
+	ma.AddSetArgs(1, []byte("row2"), []byte("005"), []byte("v05"), -5, 0)
 	_, err = tc.ZmSet(&ma)
 	if err != nil {
-		fmt.Printf("Mset fialed: %s\n", err)
+		fmt.Printf("Mset failed: %s\n", err)
 		return
 	}
 
-	//r, err := tc.ZScan(1, []byte("row1"), nil, 0, true, true, 4)
-	r, err := tc.ZScanStart(1, []byte("row1"), true, true, 4)
+	//r, err := tc.ZScan(1, []byte("row2"), nil, 0, true, true, 4)
+	r, err := tc.ZScanStart(1, []byte("row2"), true, true, 4)
 	if err != nil {
-		fmt.Printf("ZScan fialed: %s\n", err)
+		fmt.Printf("ZScan failed: %s\n", err)
 		return
 	}
 
@@ -181,7 +190,7 @@ func testZScan(tc *table.Context) {
 
 		r, err = tc.ZScanMore(r)
 		if err != nil {
-			fmt.Printf("ZScanMore fialed: %s\n", err)
+			fmt.Printf("ZScanMore failed: %s\n", err)
 			return
 		}
 	}
@@ -192,7 +201,7 @@ func testCas(tc *table.Context) {
 	for i := 0; i < 1; i++ {
 		r, err := tc.Get(1, []byte("row1"), []byte("col1"), 1)
 		if err != nil {
-			fmt.Printf("Get fialed: %s\n", err)
+			fmt.Printf("Get failed: %s\n", err)
 			return
 		}
 
@@ -207,12 +216,12 @@ func testCas(tc *table.Context) {
 
 	_, err := tc.Set(1, []byte("row1"), []byte("col1"), []byte("v20"), 20, cas)
 	if err != nil {
-		fmt.Printf("Set fialed: %s\n", err)
+		fmt.Printf("Set failed: %s\n", err)
 	}
 
 	r, err := tc.Get(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
-		fmt.Printf("Get fialed: %s\n", err)
+		fmt.Printf("Get failed: %s\n", err)
 		return
 	}
 
@@ -226,12 +235,12 @@ func testBinary(tc *table.Context) {
 	binary.BigEndian.PutUint64(value, 6000000000)
 	_, err := tc.Set(1, []byte("row1"), colKey, value, 30, 0)
 	if err != nil {
-		fmt.Printf("Set fialed: %s\n", err)
+		fmt.Printf("Set failed: %s\n", err)
 	}
 
 	r, err := tc.Get(1, []byte("row1"), colKey, 0)
 	if err != nil {
-		fmt.Printf("Get fialed: %s\n", err)
+		fmt.Printf("Get failed: %s\n", err)
 		return
 	}
 
@@ -243,11 +252,40 @@ func testPing(tc *table.Context) {
 	start := time.Now()
 	err := tc.Ping()
 	if err != nil {
-		fmt.Printf("Ping fialed: %s\n", err)
+		fmt.Printf("Ping failed: %s\n", err)
 		return
 	}
 
 	elapsed := time.Since(start)
 
 	fmt.Printf("Ping succeed: %.2f ms\n", float64(elapsed)/1e6)
+}
+
+func testDump(tc *table.Context) {
+	r, err := tc.Dump(0)
+	if err != nil {
+		fmt.Printf("Dump failed: %s\n", err)
+		return
+	}
+
+	fmt.Println("Dump result:")
+	var idx = 0
+	for {
+		for _, rw := range r.Reply {
+			fmt.Printf("%02d) %d\t%q\t%d\t%q\t%d\t%q\n", idx,
+				rw.TableId, rw.RowKey, rw.ColSpace, rw.ColKey, rw.Score, rw.Value)
+			idx++
+		}
+
+		if r.End {
+			break
+		}
+
+		fmt.Println("Dump more:")
+		r, err = tc.DumpMore(r)
+		if err != nil {
+			fmt.Printf("DumpMore failed: %s\n", err)
+			return
+		}
+	}
 }

@@ -19,16 +19,15 @@ import (
 )
 
 const (
-	CtrlDbIdExt  = 0x1
-	CtrlErrCode  = 0x2
-	CtrlCas      = 0x4
-	CtrlColSpace = 0x8
-	CtrlValue    = 0x10
-	CtrlScore    = 0x20
+	CtrlErrCode  = 0x1 // Response Error Code
+	CtrlCas      = 0x2 // Compare And Switch
+	CtrlColSpace = 0x4
+	CtrlValue    = 0x8
+	CtrlScore    = 0x10
 )
 
 const (
-	ColSpaceDefault = 0 // Default space
+	ColSpaceDefault = 0 // Default column space
 	ColSpaceScore1  = 1 // rowKey+score+colKey => value
 	ColSpaceScore2  = 2 // rowKey+colKey => score+value
 )
@@ -39,21 +38,20 @@ type KeyValue struct {
 	ColKey  []byte
 	Value   []byte // default: nil if missing
 	Score   int64  // default: 0 if missing
-	Cas     uint32 // default: 0 if missing
 }
 
-// KeyValueCtrl=cCtrlFlag+[cDbIdExt]+cTableId+[cErrCode]+[dwCas]
-//             +[cColSpace]+cRowKeyLen+sRowKey+wColKeyLen+sColKey
-//             +[dwValueLen+sValue]+[ddwScore]
+// KeyValueCtrl=cCtrlFlag+cTableId+[cErrCode]+[cColSpace]
+//             +cRowKeyLen+sRowKey+wColKeyLen+sColKey
+//             +[dwValueLen+sValue]+[ddwScore]+[dwCas]
 type KeyValueCtrl struct {
 	CtrlFlag uint8
-	DbIdExt  uint8 // default: 0 if missing
 	ErrCode  uint8 // default: 0 if missing
 	ColSpace uint8 // default: 0 if missing
 	KeyValue
+	Cas uint32 // default: 0 if missing
 }
 
-// Get, Set, Del, GetSet, ZGet, ZSet, ZGetSet, Sync
+// Get, Set, Del, GetSet, GetDel, ZGet, ZSet, Sync
 // PKG = HEAD+KeyValueCtrl
 type PkgOneOp struct {
 	PkgHead
@@ -68,64 +66,51 @@ type PkgMultiOp struct {
 	Kvs []KeyValueCtrl
 }
 
-const (
-	ScopeTableId = 0 // Dump TableId
-	ScopeDbId    = 1 // Dump DbId
-	ScopeFullDB  = 2 // Dump Full DB
-)
-
 // Scan, ZScan
-// PKG = HEAD+cDirection+wNum+KeyValueCtrl
+// PKG = PkgOneOp+cDirection+cStart+wNum
 type PkgScanReq struct {
 	Direction uint8 // 0: Ascending  order; 1: Descending  order
+	Start     uint8 // 0: Not start; 1: Start from MIN or MAX key
 	Num       uint16
-	PkgHead
-	KeyValueCtrl
+	PkgOneOp
 }
 
 // Scan, ZScan
-// PKG = HEAD+cErrCode+cDirection+cEnd+wNum+KeyValueCtrl[wNum]
+// PKG = PkgMultiOp+cDirection+cStart+cEnd
 type PkgScanResp struct {
 	Direction uint8
+	Start     uint8
 	End       uint8 // 0: Not end yet; 1: Has scan to end, stop now
-	ErrCode   uint8 // default: 0 if missing
-	PkgHead
-	Kvs []KeyValueCtrl
+	PkgMultiOp
 }
 
 // Dump
-// PKG = HEAD+cScope+wUnitId+KeyValueCtrl
+// PKG = PkgOneOp+cOneTable+wStartUnitId+wEndUnitId
 type PkgDumpReq struct {
-	Scope  uint8  // Only for Dump (0: TableId; 1: DbId; 2: full DB)
-	UnitId uint16 // Dump Unit ID start point
-	PkgHead
-	KeyValueCtrl
+	OneTable    uint8 // 0: Dump current DbId; 1: Dump only the selected TableId
+	StartUnitId uint16
+	EndUnitId   uint16
+	PkgOneOp
 }
 
 // Dump
-// PKG = HEAD+cErrCode+cScope+cEnd+wUnitId+wNum+KeyValueCtrl[wNum]
+// PKG = PkgMultiOp+cOneTable+wStartUnitId+wEndUnitId+wLastUnitId+cEnd
 type PkgDumpResp struct {
-	Scope   uint8
-	End     uint8  // 0: Not end yet; 1: Has dump to end, stop now
-	ErrCode uint8  // default: 0 if missing
-	UnitId  uint16 // Last dump Unit ID
-	PkgHead
-	Kvs []KeyValueCtrl
+	OneTable    uint8
+	StartUnitId uint16
+	EndUnitId   uint16
+	LastUnitId  uint16 // Last dump Unit ID
+	End         uint8  // 0: Not end yet; 1: Has dump to end, stop now
+	PkgMultiOp
 }
 
 func (kv *KeyValueCtrl) Length() int {
-	// KeyValueCtrl=cCtrlFlag+[cDbIdExt]+cTableId+[cErrCode]+[dwCas]
-	//             +[cColSpace]+cRowKeyLen+sRowKey+wColKeyLen+sColKey
-	//             +[dwValueLen+sValue]+[ddwScore]
+	// KeyValueCtrl=cCtrlFlag+cTableId+[cErrCode]+[cColSpace]
+	//             +cRowKeyLen+sRowKey+wColKeyLen+sColKey
+	//             +[dwValueLen+sValue]+[ddwScore]+[dwCas]
 	var n = 2
-	if kv.CtrlFlag&CtrlDbIdExt != 0 {
-		n += 1
-	}
 	if kv.CtrlFlag&CtrlErrCode != 0 {
 		n += 1
-	}
-	if kv.CtrlFlag&CtrlCas != 0 {
-		n += 4
 	}
 	if kv.CtrlFlag&CtrlColSpace != 0 {
 		n += 1
@@ -136,6 +121,9 @@ func (kv *KeyValueCtrl) Length() int {
 	}
 	if kv.CtrlFlag&CtrlScore != 0 {
 		n += 8
+	}
+	if kv.CtrlFlag&CtrlCas != 0 {
+		n += 4
 	}
 	return n
 }
@@ -157,19 +145,11 @@ func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
 	var n int
 	pkg[n] = kv.CtrlFlag
 	n += 1
-	if kv.CtrlFlag&CtrlDbIdExt != 0 {
-		pkg[n] = kv.DbIdExt
-		n += 1
-	}
 	pkg[n] = kv.TableId
 	n += 1
 	if kv.CtrlFlag&CtrlErrCode != 0 {
 		pkg[n] = kv.ErrCode
 		n += 1
-	}
-	if kv.CtrlFlag&CtrlCas != 0 {
-		binary.BigEndian.PutUint32(pkg[n:], kv.Cas)
-		n += 4
 	}
 	if kv.CtrlFlag&CtrlColSpace != 0 {
 		pkg[n] = kv.ColSpace
@@ -196,29 +176,21 @@ func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
 		binary.BigEndian.PutUint64(pkg[n:], uint64(kv.Score))
 		n += 8
 	}
+	if kv.CtrlFlag&CtrlCas != 0 {
+		binary.BigEndian.PutUint32(pkg[n:], kv.Cas)
+		n += 4
+	}
 	return n, nil
 }
 
 func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 	var pkgLen = len(pkg)
-	var n int
-	if n+1 > pkgLen {
+	var n = 0
+	if n+2 > pkgLen {
 		return n, ErrPkgLen
 	}
 	kv.CtrlFlag = pkg[n]
 	n += 1
-
-	if kv.CtrlFlag&CtrlDbIdExt != 0 {
-		if n+1 > pkgLen {
-			return n, ErrPkgLen
-		}
-		kv.DbIdExt = pkg[n]
-		n += 1
-	}
-
-	if n+1 > pkgLen {
-		return n, ErrPkgLen
-	}
 	kv.TableId = pkg[n]
 	n += 1
 
@@ -228,13 +200,8 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		}
 		kv.ErrCode = pkg[n]
 		n += 1
-	}
-	if kv.CtrlFlag&CtrlCas != 0 {
-		if n+4 > pkgLen {
-			return n, ErrPkgLen
-		}
-		kv.Cas = binary.BigEndian.Uint32(pkg[n:])
-		n += 4
+	} else {
+		kv.ErrCode = 0
 	}
 	if kv.CtrlFlag&CtrlColSpace != 0 {
 		if n+1 > pkgLen {
@@ -242,6 +209,8 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		}
 		kv.ColSpace = pkg[n]
 		n += 1
+	} else {
+		kv.ColSpace = 0
 	}
 
 	if n+1 > pkgLen {
@@ -252,24 +221,16 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 	if n+rowKeyLen+2 > pkgLen {
 		return n, ErrPkgLen
 	}
-	if rowKeyLen > 0 {
-		kv.RowKey = pkg[n : n+rowKeyLen]
-		n += rowKeyLen
-	} else {
-		kv.RowKey = nil
-	}
+	kv.RowKey = pkg[n : n+rowKeyLen]
+	n += rowKeyLen
 
 	var colKeyLen = int(binary.BigEndian.Uint16(pkg[n:]))
 	n += 2
 	if n+colKeyLen > pkgLen {
 		return n, ErrPkgLen
 	}
-	if colKeyLen > 0 {
-		kv.ColKey = pkg[n : n+colKeyLen]
-		n += colKeyLen
-	} else {
-		kv.ColKey = nil
-	}
+	kv.ColKey = pkg[n : n+colKeyLen]
+	n += colKeyLen
 
 	if kv.CtrlFlag&CtrlValue != 0 {
 		if n+4 > pkgLen {
@@ -283,12 +244,10 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		if n+valueLen > pkgLen {
 			return n, ErrPkgLen
 		}
-		if valueLen > 0 {
-			kv.Value = pkg[n : n+valueLen]
-			n += valueLen
-		} else {
-			kv.Value = nil
-		}
+		kv.Value = pkg[n : n+valueLen]
+		n += valueLen
+	} else {
+		kv.Value = nil
 	}
 	if kv.CtrlFlag&CtrlScore != 0 {
 		if n+8 > pkgLen {
@@ -296,6 +255,17 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		}
 		kv.Score = int64(binary.BigEndian.Uint64(pkg[n:]))
 		n += 8
+	} else {
+		kv.Score = 0
+	}
+	if kv.CtrlFlag&CtrlCas != 0 {
+		if n+4 > pkgLen {
+			return n, ErrPkgLen
+		}
+		kv.Cas = binary.BigEndian.Uint32(pkg[n:])
+		n += 4
+	} else {
+		kv.Cas = 0
 	}
 	return n, nil
 }
@@ -309,42 +279,29 @@ func (p *PkgOneOp) SetErrCode(errCode uint8) {
 	p.ErrCode = errCode
 }
 
-func (p *PkgOneOp) Encode(pkg []byte) ([]byte, int, error) {
-	var pkgLen = p.Length()
-	if pkg == nil {
-		pkg = make([]byte, pkgLen)
-	}
-
-	var n, m int
-	if len(pkg) < pkgLen {
-		return pkg, n, ErrPkgLen
-	}
-
-	p.PkgLen = uint32(pkgLen)
-	var err = p.EncodeHead(pkg)
-	if err != nil {
-		return pkg, n, err
-	}
-	n += HeadSize
-
-	m, err = p.KeyValueCtrl.Encode(pkg[n:])
-	if err != nil {
-		return pkg, n, err
-	}
-	n += m
-
-	return pkg, n, nil
-}
-
-func (p *PkgOneOp) Decode(pkg []byte) (int, error) {
-	var n, m int
-	var err = p.DecodeHead(pkg)
+func (p *PkgOneOp) Encode(pkg []byte) (int, error) {
+	n, err := p.PkgHead.Encode(pkg)
 	if err != nil {
 		return n, err
 	}
-	n += HeadSize
 
-	m, err = p.KeyValueCtrl.Decode(pkg[n:])
+	m, err := p.KeyValueCtrl.Encode(pkg[n:])
+	if err != nil {
+		return n, err
+	}
+	n += m
+
+	OverWriteLen(pkg, n)
+	return n, nil
+}
+
+func (p *PkgOneOp) Decode(pkg []byte) (int, error) {
+	n, err := p.PkgHead.Decode(pkg)
+	if err != nil {
+		return 0, err
+	}
+
+	m, err := p.KeyValueCtrl.Decode(pkg[n:])
 	if err != nil {
 		return n, err
 	}
@@ -366,55 +323,44 @@ func (p *PkgMultiOp) SetErrCode(errCode uint8) {
 	p.ErrCode = errCode
 }
 
-func (p *PkgMultiOp) Encode(pkg []byte) ([]byte, int, error) {
+func (p *PkgMultiOp) Encode(pkg []byte) (int, error) {
 	var numKvs = len(p.Kvs)
 	if numKvs > MaxUint16 {
-		return nil, 0, ErrKvArrayLen
+		return 0, ErrKvArrayLen
 	}
 
-	var pkgLen = p.Length()
-	if pkg == nil {
-		pkg = make([]byte, pkgLen)
-	}
-
-	var n, m int
-	if len(pkg) < pkgLen {
-		return pkg, n, ErrPkgLen
-	}
-
-	p.PkgLen = uint32(pkgLen)
-	var err = p.EncodeHead(pkg)
+	n, err := p.PkgHead.Encode(pkg)
 	if err != nil {
-		return pkg, n, err
+		return n, err
 	}
-	n += HeadSize
 
+	if n+3 > len(pkg) {
+		return 0, ErrPkgLen
+	}
 	pkg[n] = p.ErrCode
 	n += 1
 	binary.BigEndian.PutUint16(pkg[n:], uint16(numKvs))
 	n += 2
 
 	for i := 0; i < numKvs; i++ {
-		m, err = p.Kvs[i].Encode(pkg[n:])
+		m, err := p.Kvs[i].Encode(pkg[n:])
 		if err != nil {
-			return pkg, n, err
+			return n, err
 		}
 		n += m
 	}
 
-	return pkg, n, nil
+	OverWriteLen(pkg, n)
+	return n, nil
 }
 
 func (p *PkgMultiOp) Decode(pkg []byte) (int, error) {
-	var pkgLen = len(pkg)
-	var n, m int
-	var err = p.DecodeHead(pkg)
+	n, err := p.PkgHead.Decode(pkg)
 	if err != nil {
-		return n, err
+		return 0, err
 	}
-	n += HeadSize
 
-	if n+3 > pkgLen {
+	if n+3 > len(pkg) {
 		return n, ErrPkgLen
 	}
 	p.ErrCode = pkg[n]
@@ -424,7 +370,7 @@ func (p *PkgMultiOp) Decode(pkg []byte) (int, error) {
 
 	p.Kvs = make([]KeyValueCtrl, numKvs)
 	for i := 0; i < numKvs; i++ {
-		m, err = p.Kvs[i].Decode(pkg[n:])
+		m, err := p.Kvs[i].Decode(pkg[n:])
 		if err != nil {
 			return n, err
 		}
@@ -435,311 +381,185 @@ func (p *PkgMultiOp) Decode(pkg []byte) (int, error) {
 }
 
 func (p *PkgScanReq) Length() int {
-	// PKG = HEAD+cDirection+wNum+KeyValueCtrl
-	return HeadSize + 3 + p.KeyValueCtrl.Length()
+	// PKG = PkgOneOp+cDirection+cStart+wNum
+	return p.PkgOneOp.Length() + 4
 }
 
-func (p *PkgScanReq) Encode(pkg []byte) ([]byte, int, error) {
-	var pkgLen = p.Length()
-	if pkg == nil {
-		pkg = make([]byte, pkgLen)
-	}
-
-	var n, m int
-	if len(pkg) < pkgLen {
-		return pkg, n, ErrPkgLen
-	}
-
-	p.PkgLen = uint32(pkgLen)
-	var err = p.EncodeHead(pkg)
+func (p *PkgScanReq) Encode(pkg []byte) (int, error) {
+	n, err := p.PkgOneOp.Encode(pkg)
 	if err != nil {
-		return pkg, n, err
+		return n, err
 	}
-	n += HeadSize
 
+	if n+4 > len(pkg) {
+		return 0, ErrPkgLen
+	}
 	pkg[n] = p.Direction
+	n += 1
+	pkg[n] = p.Start
 	n += 1
 	binary.BigEndian.PutUint16(pkg[n:], p.Num)
 	n += 2
 
-	m, err = p.KeyValueCtrl.Encode(pkg[n:])
-	if err != nil {
-		return pkg, n, err
-	}
-	n += m
-
-	return pkg, n, nil
+	OverWriteLen(pkg, n)
+	return n, nil
 }
 
 func (p *PkgScanReq) Decode(pkg []byte) (int, error) {
-	var pkgLen = len(pkg)
-	var n, m int
-	var err = p.DecodeHead(pkg)
+	n, err := p.PkgOneOp.Decode(pkg)
 	if err != nil {
 		return n, err
 	}
-	n += HeadSize
 
-	if n+3 > pkgLen {
+	if n+4 > len(pkg) {
 		return n, ErrPkgLen
 	}
-
 	p.Direction = pkg[n]
+	n += 1
+	p.Start = pkg[n]
 	n += 1
 	p.Num = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
-
-	m, err = p.KeyValueCtrl.Decode(pkg[n:])
-	if err != nil {
-		return n, err
-	}
-	n += m
 
 	return n, nil
 }
 
 func (p *PkgScanResp) Length() int {
-	// PKG = HEAD+cErrCode+cDirection+cEnd+wNum+KeyValueCtrl[wNum]
-	var n = HeadSize + 5
-	for i := 0; i < len(p.Kvs); i++ {
-		n += p.Kvs[i].Length()
-	}
-	return n
+	// PKG = PkgMultiOp+cDirection+cStart+cEnd
+	return p.PkgMultiOp.Length() + 3
 }
 
-func (p *PkgScanResp) SetErrCode(errCode uint8) {
-	p.ErrCode = errCode
-}
-
-func (p *PkgScanResp) Encode(pkg []byte) ([]byte, int, error) {
-	var numKvs = len(p.Kvs)
-	if numKvs > MaxUint16 {
-		return nil, 0, ErrKvArrayLen
-	}
-
-	var pkgLen = p.Length()
-	if pkg == nil {
-		pkg = make([]byte, pkgLen)
-	}
-
-	var n, m int
-	if len(pkg) < pkgLen {
-		return pkg, n, ErrPkgLen
-	}
-
-	p.PkgLen = uint32(pkgLen)
-	var err = p.EncodeHead(pkg)
-	if err != nil {
-		return pkg, n, err
-	}
-	n += HeadSize
-
-	pkg[n] = p.ErrCode
-	n += 1
-	pkg[n] = p.Direction
-	n += 1
-	pkg[n] = p.End
-	n += 1
-	binary.BigEndian.PutUint16(pkg[n:], uint16(numKvs))
-	n += 2
-
-	for i := 0; i < numKvs; i++ {
-		m, err = p.Kvs[i].Encode(pkg[n:])
-		if err != nil {
-			return pkg, n, err
-		}
-		n += m
-	}
-
-	return pkg, n, nil
-}
-
-func (p *PkgScanResp) Decode(pkg []byte) (int, error) {
-	var pkgLen = len(pkg)
-	var n, m int
-	var err = p.DecodeHead(pkg)
+func (p *PkgScanResp) Encode(pkg []byte) (int, error) {
+	n, err := p.PkgMultiOp.Encode(pkg)
 	if err != nil {
 		return n, err
 	}
-	n += HeadSize
 
-	if n+5 > pkgLen {
+	if n+3 > len(pkg) {
 		return n, ErrPkgLen
 	}
-	p.ErrCode = pkg[n]
+	pkg[n] = p.Direction
 	n += 1
+	pkg[n] = p.Start
+	n += 1
+	pkg[n] = p.End
+	n += 1
+
+	OverWriteLen(pkg, n)
+	return n, nil
+}
+
+func (p *PkgScanResp) Decode(pkg []byte) (int, error) {
+	n, err := p.PkgMultiOp.Decode(pkg)
+	if err != nil {
+		return n, err
+	}
+
+	if n+3 > len(pkg) {
+		return n, ErrPkgLen
+	}
 	p.Direction = pkg[n]
+	n += 1
+	p.Start = pkg[n]
 	n += 1
 	p.End = pkg[n]
 	n += 1
-	var numKvs = int(binary.BigEndian.Uint16(pkg[n:]))
-	n += 2
-
-	p.Kvs = make([]KeyValueCtrl, numKvs)
-	for i := 0; i < numKvs; i++ {
-		m, err = p.Kvs[i].Decode(pkg[n:])
-		if err != nil {
-			return n, err
-		}
-		n += m
-	}
 
 	return n, nil
 }
 
 func (p *PkgDumpReq) Length() int {
-	// PKG = HEAD+cScope+wUnitId+KeyValueCtrl
-	return HeadSize + 3 + p.KeyValueCtrl.Length()
+	// PKG = PkgOneOp+cOneTable+wStartUnitId+wEndUnitId
+	return p.PkgOneOp.Length() + 5
 }
 
-func (p *PkgDumpReq) Encode(pkg []byte) ([]byte, int, error) {
-	var pkgLen = p.Length()
-	if pkg == nil {
-		pkg = make([]byte, pkgLen)
-	}
-
-	var n, m int
-	if len(pkg) < pkgLen {
-		return pkg, n, ErrPkgLen
-	}
-
-	p.PkgLen = uint32(pkgLen)
-	var err = p.EncodeHead(pkg)
+func (p *PkgDumpReq) Encode(pkg []byte) (int, error) {
+	n, err := p.PkgOneOp.Encode(pkg)
 	if err != nil {
-		return pkg, n, err
+		return n, err
 	}
-	n += HeadSize
 
-	pkg[n] = p.Scope
+	if n+5 > len(pkg) {
+		return n, ErrPkgLen
+	}
+	pkg[n] = p.OneTable
 	n += 1
-	binary.BigEndian.PutUint16(pkg[n:], p.UnitId)
+	binary.BigEndian.PutUint16(pkg[n:], p.StartUnitId)
+	n += 2
+	binary.BigEndian.PutUint16(pkg[n:], p.EndUnitId)
 	n += 2
 
-	m, err = p.KeyValueCtrl.Encode(pkg[n:])
-	if err != nil {
-		return pkg, n, err
-	}
-	n += m
-
-	return pkg, n, nil
+	OverWriteLen(pkg, n)
+	return n, nil
 }
 
 func (p *PkgDumpReq) Decode(pkg []byte) (int, error) {
-	var pkgLen = len(pkg)
-	var n, m int
-	var err = p.DecodeHead(pkg)
+	n, err := p.PkgOneOp.Decode(pkg)
 	if err != nil {
 		return n, err
 	}
-	n += HeadSize
 
-	if n+3 > pkgLen {
+	if n+5 > len(pkg) {
 		return n, ErrPkgLen
 	}
-
-	p.Scope = pkg[n]
+	p.OneTable = pkg[n]
 	n += 1
-	p.UnitId = binary.BigEndian.Uint16(pkg[n:])
+	p.StartUnitId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
-
-	m, err = p.KeyValueCtrl.Decode(pkg[n:])
-	if err != nil {
-		return n, err
-	}
-	n += m
+	p.EndUnitId = binary.BigEndian.Uint16(pkg[n:])
+	n += 2
 
 	return n, nil
 }
 
 func (p *PkgDumpResp) Length() int {
-	// PKG = HEAD+cErrCode+cScope+cEnd+wUnitId+wNum+KeyValueCtrl[wNum]
-	var n = HeadSize + 7
-	for i := 0; i < len(p.Kvs); i++ {
-		n += p.Kvs[i].Length()
-	}
-	return n
+	// PKG = PkgMultiOp+cOneTable+wStartUnitId+wEndUnitId+wLastUnitId+cEnd
+	return p.PkgMultiOp.Length() + 8
 }
 
-func (p *PkgDumpResp) SetErrCode(errCode uint8) {
-	p.ErrCode = errCode
-}
-
-func (p *PkgDumpResp) Encode(pkg []byte) ([]byte, int, error) {
-	var numKvs = len(p.Kvs)
-	if numKvs > MaxUint16 {
-		return nil, 0, ErrKvArrayLen
-	}
-
-	var pkgLen = p.Length()
-	if pkg == nil {
-		pkg = make([]byte, pkgLen)
-	}
-
-	var n, m int
-	if len(pkg) < pkgLen {
-		return pkg, n, ErrPkgLen
-	}
-
-	p.PkgLen = uint32(pkgLen)
-	var err = p.EncodeHead(pkg)
-	if err != nil {
-		return pkg, n, err
-	}
-	n += HeadSize
-
-	pkg[n] = p.ErrCode
-	n += 1
-	pkg[n] = p.Scope
-	n += 1
-	pkg[n] = p.End
-	n += 1
-	binary.BigEndian.PutUint16(pkg[n:], p.UnitId)
-	n += 2
-	binary.BigEndian.PutUint16(pkg[n:], uint16(numKvs))
-	n += 2
-
-	for i := 0; i < numKvs; i++ {
-		m, err = p.Kvs[i].Encode(pkg[n:])
-		if err != nil {
-			return pkg, n, err
-		}
-		n += m
-	}
-
-	return pkg, n, nil
-}
-
-func (p *PkgDumpResp) Decode(pkg []byte) (int, error) {
-	var pkgLen = len(pkg)
-	var n, m int
-	var err = p.DecodeHead(pkg)
+func (p *PkgDumpResp) Encode(pkg []byte) (int, error) {
+	n, err := p.PkgMultiOp.Encode(pkg)
 	if err != nil {
 		return n, err
 	}
-	n += HeadSize
 
-	if n+7 > pkgLen {
+	if n+8 > len(pkg) {
 		return n, ErrPkgLen
 	}
-	p.ErrCode = pkg[n]
+	pkg[n] = p.OneTable
 	n += 1
-	p.Scope = pkg[n]
+	binary.BigEndian.PutUint16(pkg[n:], p.StartUnitId)
+	n += 2
+	binary.BigEndian.PutUint16(pkg[n:], p.EndUnitId)
+	n += 2
+	binary.BigEndian.PutUint16(pkg[n:], p.LastUnitId)
+	n += 2
+	pkg[n] = p.End
 	n += 1
+
+	OverWriteLen(pkg, n)
+	return n, nil
+}
+
+func (p *PkgDumpResp) Decode(pkg []byte) (int, error) {
+	n, err := p.PkgMultiOp.Decode(pkg)
+	if err != nil {
+		return n, err
+	}
+
+	if n+8 > len(pkg) {
+		return n, ErrPkgLen
+	}
+	p.OneTable = pkg[n]
+	n += 1
+	p.StartUnitId = binary.BigEndian.Uint16(pkg[n:])
+	n += 2
+	p.EndUnitId = binary.BigEndian.Uint16(pkg[n:])
+	n += 2
+	p.LastUnitId = binary.BigEndian.Uint16(pkg[n:])
+	n += 2
 	p.End = pkg[n]
 	n += 1
-	p.UnitId = binary.BigEndian.Uint16(pkg[n:])
-	n += 2
-	var numKvs = int(binary.BigEndian.Uint16(pkg[n:]))
-	n += 2
-
-	p.Kvs = make([]KeyValueCtrl, numKvs)
-	for i := 0; i < numKvs; i++ {
-		m, err = p.Kvs[i].Decode(pkg[n:])
-		if err != nil {
-			return n, err
-		}
-		n += m
-	}
 
 	return n, nil
 }

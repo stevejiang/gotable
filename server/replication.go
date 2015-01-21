@@ -143,7 +143,8 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 		one.Cmd = proto.CmdSync
 		for it.SeekToFirst(); it.Valid(); it.Next() {
 			if hasRecord {
-				pkg, _, _ := one.Encode(nil)
+				var pkg = make([]byte, one.Length())
+				one.Encode(pkg)
 				ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
 			}
 
@@ -158,13 +159,20 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 			one.Value = value
 			one.CtrlFlag |= (proto.CtrlColSpace | proto.CtrlValue)
 			hasRecord = true
+
+			if ms.cli.IsClosed() {
+				it.Close()
+				log.Println("Master-slaver connection is closed, stop full sync!")
+				return
+			}
 		}
 
 		it.Close()
 
 		if hasRecord {
 			one.Seq = lastSeq
-			pkg, _, _ := one.Encode(nil)
+			var pkg = make([]byte, one.Length())
+			one.Encode(pkg)
 			ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
 		}
 
@@ -206,7 +214,7 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 				}
 
 				var head proto.PkgHead
-				var err = head.DecodeHead(pkg)
+				_, err := head.Decode(pkg)
 				if err != nil {
 					break
 				}

@@ -18,10 +18,14 @@ import (
 	"github.com/stevejiang/gotable/api/go/table/proto"
 )
 
-type OneArgs proto.KeyValue
+type OneArgs struct {
+	Cas uint32
+	*proto.KeyValue
+}
 
 type OneReply struct {
-	ErrCode uint8 // Error code replied
+	ErrCode uint8  // Error Code Replied
+	Cas     uint32 // Only meaningful for GET/ZGET/MGET/ZMGET
 	*proto.KeyValue
 }
 
@@ -33,22 +37,26 @@ type MultiReply struct {
 	Reply []OneReply
 }
 
-func NewGetArgs(tableId uint8, rowKey, colKey []byte, cas uint32) *OneArgs {
-	return &OneArgs{tableId, rowKey, colKey, nil, 0, cas}
+func (a *MultiArgs) AddGetArgs(tableId uint8, rowKey, colKey []byte, cas uint32) {
+	a.Args = append(a.Args,
+		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}})
 }
 
-func NewSetArgs(tableId uint8, rowKey, colKey, value []byte, score int64,
-	cas uint32) *OneArgs {
-	return &OneArgs{tableId, rowKey, colKey, value, score, cas}
+func (a *MultiArgs) AddDelArgs(tableId uint8, rowKey, colKey []byte, cas uint32) {
+	a.Args = append(a.Args,
+		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}})
 }
 
-func NewDelArgs(tableId uint8, rowKey, colKey []byte, cas uint32) *OneArgs {
-	return &OneArgs{tableId, rowKey, colKey, nil, 0, cas}
+func (a *MultiArgs) AddSetArgs(tableId uint8, rowKey, colKey, value []byte,
+	score int64, cas uint32) {
+	a.Args = append(a.Args,
+		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, value, score}})
 }
 
-func NewIncrArgs(tableId uint8, rowKey, colKey []byte, score int64,
-	cas uint32) *OneArgs {
-	return &OneArgs{tableId, rowKey, colKey, nil, score, cas}
+func (a *MultiArgs) AddIncrArgs(tableId uint8, rowKey, colKey []byte,
+	score int64, cas uint32) {
+	a.Args = append(a.Args,
+		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, score}})
 }
 
 type scanContext struct {
@@ -58,29 +66,23 @@ type scanContext struct {
 }
 
 type ScanReply struct {
-	Reply []OneReply
+	Reply []*proto.KeyValue
 	End   bool // false: Not end yet; true: Scan to end, stop now
 
 	ctx scanContext
 }
 
-// Dump Scope
-const (
-	ScopeTableId = iota // Dump only the specified TableId
-	ScopeDbId           // Dump only the specified DbId
-	ScopeFullDB         // Dump the entire database
-)
-
 type dumpContext struct {
-	scope   uint8 // Dump Scope
-	unitId  uint16
-	dbId    uint8
-	tableId uint8
+	oneTable    bool   // Never change during dump
+	dbId        uint8  // Never change during dump
+	tableId     uint8  // Never change during dump
+	startUnitId uint16 // Never change during dump
+	endUnitId   uint16 // Never change during dump
+	lastUnitId  uint16 // The unit id of last dumped record
 }
 
 type DumpRecord struct {
-	DbId     uint8 // DbId of current record
-	ColSpace uint8 // ColSpace of current record
+	ColSpace uint8
 	*proto.KeyValue
 }
 

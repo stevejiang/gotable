@@ -43,7 +43,7 @@ func (cj *Decoder) Decode(pkg []byte, head *proto.PkgHead, v interface{}) error 
 
 	var err error
 	if head != nil {
-		err = head.DecodeHead(pkg)
+		_, err = head.Decode(pkg)
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func (cj *Encoder) Encode(cmd, dbId uint8, seq uint64, v interface{}) ([]byte, e
 	head.PkgLen = uint32(pkgLen)
 
 	var pkg = make([]byte, pkgLen)
-	err = head.EncodeHead(pkg)
+	_, err = head.Encode(pkg)
 	if err != nil {
 		return nil, err
 	}

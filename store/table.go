@@ -77,31 +77,27 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCt
 		kv.Value, err = tbl.db.Get(srOpt, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeReadFail
+			kv.ErrCode = table.EcReadFail
 			return err
 		} else if kv.Value == nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeNotExist
+			// Key not exist
 		} else {
+			// Key exists
+			kv.CtrlFlag |= proto.CtrlValue
 			_, kv.Score = ParseRawValue(kv.Value)
+			if kv.Score != 0 {
+				kv.CtrlFlag |= proto.CtrlScore
+			}
+
 			rawKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
 			kv.Value, err = tbl.db.Get(srOpt, rawKey)
 			if err != nil {
 				kv.CtrlFlag |= proto.CtrlErrCode
-				kv.ErrCode = table.EcodeReadFail
+				kv.ErrCode = table.EcReadFail
 				return err
-			} else if kv.Value == nil {
-				kv.CtrlFlag |= proto.CtrlErrCode
-				kv.ErrCode = table.EcodeNotExist
-			} else {
+			} else if kv.Value != nil {
 				kv.Value, _ = ParseRawValue(kv.Value)
-				if kv.Value != nil {
-					kv.CtrlFlag |= proto.CtrlValue
-				}
-				if kv.Score != 0 {
-					kv.CtrlFlag |= proto.CtrlScore
-				}
 			}
 		}
 	} else {
@@ -110,16 +106,14 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCt
 		kv.Value, err = tbl.db.Get(srOpt, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeReadFail
+			kv.ErrCode = table.EcReadFail
 			return err
 		} else if kv.Value == nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeNotExist
+			// Key not exist
 		} else {
+			// Key exists
+			kv.CtrlFlag |= proto.CtrlValue
 			kv.Value, kv.Score = ParseRawValue(kv.Value)
-			if kv.Value != nil {
-				kv.CtrlFlag |= proto.CtrlValue
-			}
 			if kv.Score != 0 {
 				kv.CtrlFlag |= proto.CtrlScore
 			}
@@ -144,7 +138,7 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if kv.RowKey == nil {
-		kv.ErrCode = table.EcodeInvRowKey
+		kv.ErrCode = table.EcInvRowKey
 		kv.CtrlFlag |= proto.CtrlErrCode
 		return nil
 	}
@@ -163,7 +157,7 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 	if kv.Cas != 0 {
 		var cas = lck.GetCas(rawKey)
 		if cas != kv.Cas {
-			kv.ErrCode = table.EcodeCasNotMatch
+			kv.ErrCode = table.EcCasNotMatch
 			kv.CtrlFlag |= proto.CtrlErrCode
 			return nil
 		}
@@ -182,12 +176,13 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		oldVal, err = tbl.db.Get(nil, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeReadFail
+			kv.ErrCode = table.EcReadFail
 			return err
 		} else if oldVal == nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeNotExist
-		} else if oldVal != nil {
+			// Key not exist
+		} else {
+			// Key exist
+			kv.CtrlFlag |= proto.CtrlValue
 			oldVal, oldScore = ParseRawValue(oldVal)
 			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
@@ -200,27 +195,24 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
 		tbl.db.Put(scoreKey, GetRawValue(kv.Value, 0), wb)
 
+		// Reply old value and score
+		kv.Value = oldVal
+		kv.Score = oldScore
+		if kv.Score != 0 {
+			kv.CtrlFlag |= proto.CtrlScore
+		}
+
 		err = tbl.db.Commit(wb)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
+			kv.ErrCode = table.EcWriteFail
 			return err
-		}
-
-		// Reply old value and score
-		if oldVal != nil {
-			kv.Value = oldVal
-			kv.CtrlFlag |= proto.CtrlValue
-		}
-		if oldScore != 0 {
-			kv.Score = oldScore
-			kv.CtrlFlag |= proto.CtrlScore
 		}
 	} else {
 		err = tbl.db.Put(rawKey, GetRawValue(kv.Value, kv.Score), nil)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
+			kv.ErrCode = table.EcWriteFail
 			return err
 		}
 	}
@@ -234,7 +226,7 @@ func (tbl *Table) setRawKV(dbId uint8, kv *proto.KeyValueCtrl) error {
 	var err = tbl.db.Put(rawKey, kv.Value, nil)
 	if err != nil {
 		kv.CtrlFlag |= proto.CtrlErrCode
-		kv.ErrCode = table.EcodeWriteFail
+		kv.ErrCode = table.EcWriteFail
 		return err
 	}
 
@@ -261,7 +253,7 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		var cas = lck.GetCas(rawKey)
 		if cas != kv.Cas {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeCasNotMatch
+			kv.ErrCode = table.EcCasNotMatch
 			return nil
 		}
 	}
@@ -279,12 +271,13 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		oldVal, err = tbl.db.Get(nil, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeReadFail
+			kv.ErrCode = table.EcReadFail
 			return err
 		} else if oldVal == nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeNotExist
+			// Key not exist
 		} else if oldVal != nil {
+			// Key exists
+			kv.CtrlFlag |= proto.CtrlValue
 			oldVal, oldScore = ParseRawValue(oldVal)
 
 			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
@@ -294,27 +287,24 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 
 		tbl.db.Del(rawKey, wb)
 
+		// Reply old value and score
+		kv.Value = oldVal
+		kv.Score = oldScore
+		if kv.Score != 0 {
+			kv.CtrlFlag |= proto.CtrlScore
+		}
+
 		err = tbl.db.Commit(wb)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
+			kv.ErrCode = table.EcWriteFail
 			return err
-		}
-
-		// Reply old value and score
-		if oldVal != nil {
-			kv.Value = oldVal
-			kv.CtrlFlag |= proto.CtrlValue
-		}
-		if oldScore != 0 {
-			kv.Score = oldScore
-			kv.CtrlFlag |= proto.CtrlScore
 		}
 	} else {
 		err = tbl.db.Del(rawKey, nil)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
+			kv.ErrCode = table.EcWriteFail
 			return err
 		}
 	}
@@ -326,7 +316,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if kv.RowKey == nil {
-		kv.ErrCode = table.EcodeInvRowKey
+		kv.ErrCode = table.EcInvRowKey
 		kv.CtrlFlag |= proto.CtrlErrCode
 		return nil
 	}
@@ -346,7 +336,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		var cas = lck.GetCas(rawKey)
 		if cas != kv.Cas {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeCasNotMatch
+			kv.ErrCode = table.EcCasNotMatch
 			return nil
 		}
 	}
@@ -364,7 +354,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		oldVal, err = tbl.db.Get(nil, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeReadFail
+			kv.ErrCode = table.EcReadFail
 			return err
 		} else if oldVal != nil {
 			_, oldScore := ParseRawValue(oldVal)
@@ -375,7 +365,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 			oldVal, err = tbl.db.Get(nil, scoreKey)
 			if err != nil {
 				kv.CtrlFlag |= proto.CtrlErrCode
-				kv.ErrCode = table.EcodeReadFail
+				kv.ErrCode = table.EcReadFail
 				return err
 			} else if oldVal != nil {
 				oldVal, _ = ParseRawValue(oldVal)
@@ -393,15 +383,13 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		err = tbl.db.Commit(wb)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
+			kv.ErrCode = table.EcWriteFail
 			return err
 		}
 
 		kv.Value = oldVal
 		kv.Score = newScore
-		if kv.Value != nil {
-			kv.CtrlFlag |= proto.CtrlValue
-		}
+		kv.CtrlFlag |= proto.CtrlValue
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
 		}
@@ -409,7 +397,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		oldVal, err = tbl.db.Get(nil, rawKey)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeReadFail
+			kv.ErrCode = table.EcReadFail
 			return err
 		} else if oldVal != nil {
 			var oldScore int64
@@ -420,15 +408,13 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		err = tbl.db.Put(rawKey, GetRawValue(oldVal, newScore), nil)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcodeWriteFail
+			kv.ErrCode = table.EcWriteFail
 			return err
 		}
 
 		kv.Value = oldVal
 		kv.Score = newScore
-		if kv.Value != nil {
-			kv.CtrlFlag |= proto.CtrlValue
-		}
+		kv.CtrlFlag |= proto.CtrlValue
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
 		}
@@ -447,11 +433,11 @@ func (tbl *Table) Get(req *PkgArgs) []byte {
 				log.Printf("getKV failed: %s\n", err)
 			}
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 	}
 
@@ -473,11 +459,11 @@ func (tbl *Table) MGet(req *PkgArgs) []byte {
 				}
 			}
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.Kvs = nil
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.Kvs = nil
 	}
 
@@ -503,10 +489,10 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 		in.Cmd = req.Cmd
 		in.DbId = req.DbId
 		in.Seq = req.Seq
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 	}
 
-	return replyHandle(&in), table.EcodeOk == in.ErrCode
+	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) Set(req *PkgArgs) ([]byte, bool) {
@@ -522,15 +508,15 @@ func (tbl *Table) Set(req *PkgArgs) ([]byte, bool) {
 				log.Printf("setKV failed: %s\n", err)
 			}
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 	}
 
-	return replyHandle(&in), table.EcodeOk == in.ErrCode
+	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) MSet(req *PkgArgs) ([]byte, bool) {
@@ -550,15 +536,15 @@ func (tbl *Table) MSet(req *PkgArgs) ([]byte, bool) {
 			}
 			tbl.rwMtx.RUnlock()
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.Kvs = nil
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.Kvs = nil
 	}
 
-	return replyHandle(&in), table.EcodeOk == in.ErrCode
+	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) Del(req *PkgArgs) ([]byte, bool) {
@@ -574,15 +560,15 @@ func (tbl *Table) Del(req *PkgArgs) ([]byte, bool) {
 				log.Printf("delKV failed: %s\n", err)
 			}
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 	}
 
-	return replyHandle(&in), table.EcodeOk == in.ErrCode
+	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) MDel(req *PkgArgs) ([]byte, bool) {
@@ -602,15 +588,15 @@ func (tbl *Table) MDel(req *PkgArgs) ([]byte, bool) {
 			}
 			tbl.rwMtx.RUnlock()
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.Kvs = nil
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.Kvs = nil
 	}
 
-	return replyHandle(&in), table.EcodeOk == in.ErrCode
+	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) Incr(req *PkgArgs) ([]byte, bool) {
@@ -626,15 +612,15 @@ func (tbl *Table) Incr(req *PkgArgs) ([]byte, bool) {
 				log.Printf("incrKV failed: %s\n", err)
 			}
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
 	}
 
-	return replyHandle(&in), table.EcodeOk == in.ErrCode
+	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) MIncr(req *PkgArgs) ([]byte, bool) {
@@ -654,19 +640,20 @@ func (tbl *Table) MIncr(req *PkgArgs) ([]byte, bool) {
 			}
 			tbl.rwMtx.RUnlock()
 		} else {
-			in.ErrCode = table.EcodeInvDbId
+			in.ErrCode = table.EcInvDbId
 			in.Kvs = nil
 		}
 	} else {
-		in.ErrCode = table.EcodeDecodeFail
+		in.ErrCode = table.EcDecodeFail
 		in.Kvs = nil
 	}
 
-	pkg, _, err := in.Encode(nil)
+	var pkg = make([]byte, in.Length())
+	_, err = in.Encode(pkg)
 	if err != nil {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
-	return pkg, table.EcodeOk == in.ErrCode
+	return pkg, table.EcOk == in.ErrCode
 }
 
 func iterMove(it *Iterator, direction uint8) {
@@ -681,7 +668,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 	var it = tbl.db.NewIterator(true)
 	defer it.Close()
 
-	var startSeek = (in.Cas == 1)
+	var startSeek = (in.Start == 1)
 	var scanColSpace uint8 = proto.ColSpaceScore1
 	if in.Direction == 0 {
 		if startSeek {
@@ -779,13 +766,13 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 	var in proto.PkgScanReq
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
-		return errorHandle(&out, table.EcodeDecodeFail)
+		return errorHandle(&out, table.EcDecodeFail)
 	}
 
 	out.Direction = in.Direction
 
 	if in.DbId == 0 {
-		return errorHandle(&out, table.EcodeInvDbId)
+		return errorHandle(&out, table.EcInvDbId)
 	}
 
 	if in.ColSpace == proto.ColSpaceScore1 {
@@ -800,7 +787,7 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 	var it = tbl.db.NewIterator(true)
 	defer it.Close()
 
-	var startSeek = (in.Cas == 1)
+	var startSeek = (in.Start == 1)
 	if in.Direction == 0 {
 		if startSeek {
 			// Seek to the first element
@@ -877,7 +864,6 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 	return replyHandle(&out)
 }
 
-// TODO: not finished yet, bug!
 func (tbl *Table) Dump(req *PkgArgs) []byte {
 	var out proto.PkgDumpResp
 	out.Cmd = req.Cmd
@@ -887,90 +873,117 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 	var in proto.PkgDumpReq
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
-		return errorHandle(&out, table.EcodeDecodeFail)
+		return errorHandle(&out, table.EcDecodeFail)
 	}
 
-	out.Scope = in.Scope
+	out.OneTable = in.OneTable
+	out.StartUnitId = in.StartUnitId
+	out.EndUnitId = in.EndUnitId
 
-	if in.DbId == 0 && in.Scope != proto.ScopeFullDB {
-		return errorHandle(&out, table.EcodeInvDbId)
-	}
-
-	if in.Scope != proto.ScopeTableId && in.Scope != proto.ScopeDbId &&
-		in.Scope != proto.ScopeFullDB {
-		return errorHandle(&out, table.EcodeInvScope)
+	if in.DbId == 0 {
+		return errorHandle(&out, table.EcInvDbId)
 	}
 
 	var it = tbl.db.NewIterator(false)
 	defer it.Close()
 
-	var scanColSpace = in.ColSpace
-	switch scanColSpace {
-	case proto.ColSpaceDefault:
-		it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey, in.ColKey))
-	case proto.ColSpaceScore1:
-		it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey,
-			newScoreColKey(in.Score, in.ColKey)))
-	case proto.ColSpaceScore2:
-		it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey, in.ColKey))
-	default:
-		return errorHandle(&out, table.EcodeInvColSpace)
-	}
+	if len(in.RowKey) == 0 {
+		it.Seek(GetRawUnitKey(in.StartUnitId, in.DbId, in.TableId))
+	} else {
+		var rawColKey = in.ColKey
+		if in.ColSpace == proto.ColSpaceScore1 {
+			rawColKey = newScoreColKey(in.Score, in.ColKey)
+		}
 
-	if in.ColSpace != 0 || in.RowKey != nil || in.ColKey != nil {
-		it.Next() // skip the first record
-	}
-
-	var scanNum = 1000
-	for i := 0; it.Valid() && i < scanNum; iterMove(it, 0) {
-		unitId, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
-		if proto.ScopeTableId == in.Scope {
-			if dbId != in.DbId || tableId != in.TableId {
-				break
+		it.Seek(GetRawKey(in.DbId, in.TableId, in.ColSpace, in.RowKey, rawColKey))
+		if it.Valid() {
+			_, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
+			if dbId == in.DbId && tableId == in.TableId &&
+				bytes.Compare(rowKey, in.RowKey) == 0 &&
+				colSpace == in.ColSpace &&
+				bytes.Compare(colKey, rawColKey) == 0 {
+				it.Next()
 			}
-		} else if proto.ScopeDbId == in.Scope {
+		}
+	}
+
+	const maxScanNum = 20
+	const maxTryUnitNum = 10
+	var triedUnitNum = 0
+	for it.Valid() && len(out.Kvs) < maxScanNum {
+		unitId, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
+		if unitId < in.StartUnitId || unitId > in.EndUnitId {
+			break
+		}
+
+		var misMatch bool
+		var nextUnitTableId uint8
+		//0: Dump current DbId; 1: Dump only the selected TableId
+		if in.OneTable == 0 {
 			if dbId != in.DbId {
+				misMatch = true
+			}
+		} else {
+			if dbId != in.DbId || tableId != in.TableId {
+				misMatch = true
+				nextUnitTableId = in.TableId
+			}
+		}
+		if misMatch {
+			if triedUnitNum < maxTryUnitNum &&
+				out.LastUnitId+1 <= in.EndUnitId {
+				out.LastUnitId++
+				triedUnitNum++
+				it.Seek(GetRawUnitKey(out.LastUnitId, in.DbId, nextUnitTableId))
+				continue
+			} else {
 				break
 			}
 		}
 
+		if colSpace == proto.ColSpaceScore2 {
+			it.Seek(GetRawKey(dbId, tableId, colSpace+1, rowKey, colKey))
+			continue // No need to dup dump
+		}
+
 		var kv proto.KeyValueCtrl
-		var isColScore = (colSpace == proto.ColSpaceScore1)
-		if !isColScore {
+		if colSpace != proto.ColSpaceScore1 {
 			kv.ColKey = colKey
 			kv.Value, kv.Score = ParseRawValue(it.Value())
 		} else {
 			if len(colKey) < 8 {
-				continue //  skip invalid record
+				it.Next()
+				continue // Skip invalid record
 			}
 			kv.Score = int64(binary.BigEndian.Uint64(colKey) - zopScoreUp)
 			kv.ColKey = colKey[8:]
 			kv.Value, _ = ParseRawValue(it.Value())
 		}
 
-		kv.DbIdExt = dbId
-		kv.TableId = in.TableId
+		kv.TableId = tableId
 		kv.RowKey = rowKey
-		kv.ColSpace = colSpace
-
+		if colSpace != 0 {
+			kv.ColSpace = colSpace
+			kv.CtrlFlag |= proto.CtrlColSpace
+		}
 		if kv.Value != nil {
 			kv.CtrlFlag |= proto.CtrlValue
 		}
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
 		}
-		kv.CtrlFlag |= proto.CtrlDbIdExt
 
 		out.Kvs = append(out.Kvs, kv)
-		out.UnitId = unitId
-		i++
+		out.LastUnitId = unitId
+		it.Next()
 	}
 
-	if len(out.Kvs) < scanNum {
+	if len(out.Kvs) < maxScanNum {
 		out.End = 1
 	}
 
-	pkg, _, err := out.Encode(nil)
+	var pkg = make([]byte, out.Length())
+	_, err = out.Encode(pkg)
 	if err != nil {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
@@ -981,13 +994,23 @@ func (tbl *Table) NewIterator(fillCache bool) *Iterator {
 	return tbl.db.NewIterator(fillCache)
 }
 
+func GetRawUnitKey(unitId uint16, dbId, tableId uint8) []byte {
+	// wUnitId+cDbId+cTableId
+	var rawKey = make([]byte, 4)
+	binary.BigEndian.PutUint16(rawKey, unitId)
+	rawKey[2] = dbId
+	rawKey[3] = tableId
+
+	return rawKey
+}
+
 func GetRawKey(dbId, tableId, colSpace uint8, rowKey, colKey []byte) []byte {
 	var unitId = proto.GetUnitId(dbId, tableId, rowKey)
 
 	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colSpace+sColKey
 	var rowKeyLen = len(rowKey)
 	var rawLen = 6 + rowKeyLen + len(colKey)
-	var rawKey = make([]byte, rawLen, rawLen)
+	var rawKey = make([]byte, rawLen)
 	binary.BigEndian.PutUint16(rawKey, unitId)
 	rawKey[2] = dbId
 	rawKey[3] = tableId
@@ -1085,7 +1108,8 @@ func newScoreColKey(score int64, colKey []byte) []byte {
 
 func errorHandle(out proto.PkgResponse, errCode uint8) []byte {
 	out.SetErrCode(errCode)
-	pkg, _, err := out.Encode(nil)
+	var pkg = make([]byte, out.Length())
+	_, err := out.Encode(pkg)
 	if err != nil {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
@@ -1093,7 +1117,8 @@ func errorHandle(out proto.PkgResponse, errCode uint8) []byte {
 }
 
 func replyHandle(out proto.PkgResponse) []byte {
-	pkg, _, err := out.Encode(nil)
+	var pkg = make([]byte, out.Length())
+	_, err := out.Encode(pkg)
 	if err != nil {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
