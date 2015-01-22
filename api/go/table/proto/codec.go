@@ -29,7 +29,7 @@ const (
 const (
 	ColSpaceDefault = 0 // Default column space
 	ColSpaceScore1  = 1 // rowKey+score+colKey => value
-	ColSpaceScore2  = 2 // rowKey+colKey => score+value
+	ColSpaceScore2  = 2 // rowKey+colKey => value+score
 )
 
 type KeyValue struct {
@@ -52,14 +52,14 @@ type KeyValueCtrl struct {
 }
 
 // Get, Set, Del, GetSet, GetDel, ZGet, ZSet, Sync
-// PKG = HEAD+KeyValueCtrl
+// PKG=HEAD+KeyValueCtrl
 type PkgOneOp struct {
 	PkgHead
 	KeyValueCtrl
 }
 
 // MGet, MSet, MDel, MZGet, MZSet, MZDel
-// PKG = HEAD+cErrCode+wNum+KeyValueCtrl[wNum]
+// PKG=HEAD+cErrCode+wNum+KeyValueCtrl[wNum]
 type PkgMultiOp struct {
 	ErrCode uint8 // default: 0 if missing
 	PkgHead
@@ -67,7 +67,7 @@ type PkgMultiOp struct {
 }
 
 // Scan, ZScan
-// PKG = PkgOneOp+cDirection+cStart+wNum
+// PKG=PkgOneOp+cDirection+cStart+wNum
 type PkgScanReq struct {
 	Direction uint8 // 0: Ascending  order; 1: Descending  order
 	Start     uint8 // 0: Not start; 1: Start from MIN or MAX key
@@ -76,7 +76,7 @@ type PkgScanReq struct {
 }
 
 // Scan, ZScan
-// PKG = PkgMultiOp+cDirection+cStart+cEnd
+// PKG=PkgMultiOp+cDirection+cStart+cEnd
 type PkgScanResp struct {
 	Direction uint8
 	Start     uint8
@@ -85,21 +85,23 @@ type PkgScanResp struct {
 }
 
 // Dump
-// PKG = PkgOneOp+cOneTable+wStartUnitId+wEndUnitId
+// PKG=PkgOneOp+cOneTable+wStartUnitId+wEndUnitId
 type PkgDumpReq struct {
-	OneTable    uint8 // 0: Dump current DbId; 1: Dump only the selected TableId
-	StartUnitId uint16
-	EndUnitId   uint16
+	OneTable    uint8  // 0: Dump current DbId; 1: Dump only the selected TableId
+	StartUnitId uint16 // Dump start unit ID (included)
+	EndUnitId   uint16 // Dump finish unit ID (included)
 	PkgOneOp
 }
 
 // Dump
-// PKG = PkgMultiOp+cOneTable+wStartUnitId+wEndUnitId+wLastUnitId+cEnd
+// PKG=PkgMultiOp+cOneTable+wStartUnitId+wEndUnitId
+//    +wLastUnitId+cLastUnitRec+cEnd
 type PkgDumpResp struct {
 	OneTable    uint8
 	StartUnitId uint16
 	EndUnitId   uint16
-	LastUnitId  uint16 // Last dump Unit ID
+	LastUnitId  uint16 // Last Unit ID tried to dump
+	LastUnitRec uint8  // Is last record in LastUnitId? 0: No; 1: Yes
 	End         uint8  // 0: Not end yet; 1: Has dump to end, stop now
 	PkgMultiOp
 }
@@ -137,9 +139,6 @@ func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
 	}
 	if len(kv.ColKey) > MaxUint16 {
 		return 0, ErrColKeyLen
-	}
-	if len(kv.Value) > MaxValueLen {
-		return 0, ErrValueLen
 	}
 
 	var n int
@@ -238,9 +237,6 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		}
 		var valueLen = int(binary.BigEndian.Uint32(pkg[n:]))
 		n += 4
-		if valueLen > MaxValueLen {
-			return n, ErrValueLen
-		}
 		if n+valueLen > pkgLen {
 			return n, ErrPkgLen
 		}
@@ -513,8 +509,9 @@ func (p *PkgDumpReq) Decode(pkg []byte) (int, error) {
 }
 
 func (p *PkgDumpResp) Length() int {
-	// PKG = PkgMultiOp+cOneTable+wStartUnitId+wEndUnitId+wLastUnitId+cEnd
-	return p.PkgMultiOp.Length() + 8
+	// PKG=PkgMultiOp+cOneTable+wStartUnitId+wEndUnitId
+	//    +wLastUnitId+cLastUnitRec+cEnd
+	return p.PkgMultiOp.Length() + 9
 }
 
 func (p *PkgDumpResp) Encode(pkg []byte) (int, error) {
@@ -523,7 +520,7 @@ func (p *PkgDumpResp) Encode(pkg []byte) (int, error) {
 		return n, err
 	}
 
-	if n+8 > len(pkg) {
+	if n+9 > len(pkg) {
 		return n, ErrPkgLen
 	}
 	pkg[n] = p.OneTable
@@ -534,6 +531,8 @@ func (p *PkgDumpResp) Encode(pkg []byte) (int, error) {
 	n += 2
 	binary.BigEndian.PutUint16(pkg[n:], p.LastUnitId)
 	n += 2
+	pkg[n] = p.LastUnitRec
+	n += 1
 	pkg[n] = p.End
 	n += 1
 
@@ -547,7 +546,7 @@ func (p *PkgDumpResp) Decode(pkg []byte) (int, error) {
 		return n, err
 	}
 
-	if n+8 > len(pkg) {
+	if n+9 > len(pkg) {
 		return n, ErrPkgLen
 	}
 	p.OneTable = pkg[n]
@@ -558,6 +557,8 @@ func (p *PkgDumpResp) Decode(pkg []byte) (int, error) {
 	n += 2
 	p.LastUnitId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
+	p.LastUnitRec = pkg[n]
+	n += 1
 	p.End = pkg[n]
 	n += 1
 

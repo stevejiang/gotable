@@ -22,7 +22,7 @@ import (
 
 const (
 	dbLockUnitNum = 1024
-	rollInterval  = time.Second * 10 // 10 seconds
+	rollInterval  = time.Second * 5 // 5 seconds
 	minCasValue   = uint32(6600)
 	maxCasValue   = uint32(0x80000000)
 )
@@ -44,7 +44,7 @@ func NewTableLock() *TableLock {
 	var tl = new(TableLock)
 	tl.ul = make([]UnitLock, dbLockUnitNum)
 
-	go tl.GoRollDeamon()
+	go tl.goRollDeamon()
 	return tl
 }
 
@@ -53,7 +53,7 @@ func (tl *TableLock) GetLock(key []byte) *UnitLock {
 	return &tl.ul[idx]
 }
 
-func (tl *TableLock) GoRollDeamon() {
+func (tl *TableLock) goRollDeamon() {
 	var tick = time.Tick(rollInterval)
 	for {
 		select {

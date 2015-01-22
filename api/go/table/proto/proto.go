@@ -53,13 +53,14 @@ const (
 	CmdMaster = 0xE0
 )
 
-// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 const (
-	HeadSize    = 14
-	MaxPkgLen   = 1024 * 1024
-	MaxValueLen = 512 * 1024
-	MaxUint8    = 255
-	MaxUint16   = 65535
+	HeadSize     = 14
+	MaxUint8     = 255
+	MaxUint16    = 65535
+	MaxRowKeyLen = 255
+	MaxColKeyLen = 65500
+	MaxValueLen  = 512 * 1024
+	MaxPkgLen    = 1024 * 1024
 )
 
 type PkgEncoding interface {
@@ -73,6 +74,7 @@ type PkgResponse interface {
 	SetErrCode(errCode uint8)
 }
 
+// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 type PkgHead struct {
 	Cmd    uint8
 	DbId   uint8
@@ -85,7 +87,6 @@ func (head *PkgHead) Decode(pkg []byte) (int, error) {
 		return 0, ErrPkgLen
 	}
 
-	// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 	head.Cmd = pkg[0]
 	head.DbId = pkg[1]
 	head.Seq = binary.BigEndian.Uint64(pkg[2:])
@@ -99,7 +100,6 @@ func (head *PkgHead) Encode(pkg []byte) (int, error) {
 		return 0, ErrPkgLen
 	}
 
-	// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 	pkg[0] = head.Cmd
 	pkg[1] = head.DbId
 	binary.BigEndian.PutUint64(pkg[2:], head.Seq)

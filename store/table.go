@@ -20,6 +20,7 @@ import (
 	"github.com/stevejiang/gotable/api/go/table"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"log"
+	"os"
 	"sync"
 )
 
@@ -41,6 +42,8 @@ type Table struct {
 }
 
 func NewTable(rwMtx *sync.RWMutex, tableDir string) *Table {
+	os.MkdirAll(tableDir, os.ModeDir|os.ModePerm)
+
 	tbl := new(Table)
 	tbl.tl = NewTableLock()
 	tbl.rwMtx = rwMtx
@@ -64,64 +67,27 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCt
 	if zop {
 		rawColSpace = proto.ColSpaceScore2
 	}
+	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
 
 	var err error
-	if zop {
-		if srOpt == nil {
-			// Use the same snapshot for multiple reads get consistency data
-			srOpt = tbl.db.NewSnapReadOptions()
-			defer srOpt.Release()
-		}
-		var rawKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore2,
-			kv.RowKey, kv.ColKey)
-		kv.Value, err = tbl.db.Get(srOpt, rawKey)
-		if err != nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcReadFail
-			return err
-		} else if kv.Value == nil {
-			// Key not exist
-		} else {
-			// Key exists
-			kv.CtrlFlag |= proto.CtrlValue
-			_, kv.Score = ParseRawValue(kv.Value)
-			if kv.Score != 0 {
-				kv.CtrlFlag |= proto.CtrlScore
-			}
-
-			rawKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
-				kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
-			kv.Value, err = tbl.db.Get(srOpt, rawKey)
-			if err != nil {
-				kv.CtrlFlag |= proto.CtrlErrCode
-				kv.ErrCode = table.EcReadFail
-				return err
-			} else if kv.Value != nil {
-				kv.Value, _ = ParseRawValue(kv.Value)
-			}
-		}
+	kv.Value, err = tbl.db.Get(srOpt, rawKey)
+	if err != nil {
+		kv.CtrlFlag |= proto.CtrlErrCode
+		kv.ErrCode = table.EcReadFail
+		return err
+	} else if kv.Value == nil {
+		// Key not exist
 	} else {
-		var rawKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceDefault,
-			kv.RowKey, kv.ColKey)
-		kv.Value, err = tbl.db.Get(srOpt, rawKey)
-		if err != nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcReadFail
-			return err
-		} else if kv.Value == nil {
-			// Key not exist
-		} else {
-			// Key exists
-			kv.CtrlFlag |= proto.CtrlValue
-			kv.Value, kv.Score = ParseRawValue(kv.Value)
-			if kv.Score != 0 {
-				kv.CtrlFlag |= proto.CtrlScore
-			}
+		// Key exists, set CtrlValue to make sure replied Value is not nil
+		kv.CtrlFlag |= proto.CtrlValue
+		kv.Value, kv.Score = parseRawValue(kv.Value)
+		if kv.Score != 0 {
+			kv.CtrlFlag |= proto.CtrlScore
 		}
 	}
 
 	if kv.Cas != 0 {
-		var rawKey = GetRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
+		var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
 
 		var lck = tbl.tl.GetLock(rawKey)
 		lck.Lock()
@@ -137,8 +103,18 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, dbId uint8, kv *proto.KeyValueCt
 func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
-	if kv.RowKey == nil {
+	if len(kv.RowKey) == 0 {
 		kv.ErrCode = table.EcInvRowKey
+		kv.CtrlFlag |= proto.CtrlErrCode
+		return nil
+	}
+	if len(kv.ColKey) > proto.MaxColKeyLen {
+		kv.ErrCode = table.EcInvColKey
+		kv.CtrlFlag |= proto.CtrlErrCode
+		return nil
+	}
+	if len(kv.Value) > proto.MaxValueLen {
+		kv.ErrCode = table.EcInvValue
 		kv.CtrlFlag |= proto.CtrlErrCode
 		return nil
 	}
@@ -150,7 +126,7 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		rawColSpace = proto.ColSpaceScore2
 	}
 
-	var rawKey = GetRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
+	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
@@ -181,19 +157,19 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		} else if oldVal == nil {
 			// Key not exist
 		} else {
-			// Key exist
+			// Key exists, set CtrlValue to make sure replied Value is not nil
 			kv.CtrlFlag |= proto.CtrlValue
-			oldVal, oldScore = ParseRawValue(oldVal)
-			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+			oldVal, oldScore = parseRawValue(oldVal)
+			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
 			tbl.db.Del(scoreKey, wb)
 		}
 
-		tbl.db.Put(rawKey, GetRawValue(kv.Value, kv.Score), wb)
+		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
 
-		var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+		var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
-		tbl.db.Put(scoreKey, GetRawValue(kv.Value, 0), wb)
+		tbl.db.Put(scoreKey, getRawValue(kv.Value, 0), wb)
 
 		// Reply old value and score
 		kv.Value = oldVal
@@ -209,7 +185,7 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 			return err
 		}
 	} else {
-		err = tbl.db.Put(rawKey, GetRawValue(kv.Value, kv.Score), nil)
+		err = tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), nil)
 		if err != nil {
 			kv.CtrlFlag |= proto.CtrlErrCode
 			kv.ErrCode = table.EcWriteFail
@@ -221,16 +197,15 @@ func (tbl *Table) setKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 }
 
 func (tbl *Table) setRawKV(dbId uint8, kv *proto.KeyValueCtrl) error {
-	var rawKey = GetRawKey(dbId, kv.TableId, kv.ColSpace, kv.RowKey, kv.ColKey)
+	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
+	var rawKey = getRawKey(dbId, kv.TableId, kv.ColSpace, kv.RowKey, kv.ColKey)
 	var err = tbl.db.Put(rawKey, kv.Value, nil)
 	if err != nil {
 		kv.CtrlFlag |= proto.CtrlErrCode
 		kv.ErrCode = table.EcWriteFail
 		return err
 	}
-
-	kv.CtrlFlag &^= (proto.CtrlCas | proto.CtrlValue | proto.CtrlScore)
 
 	return nil
 }
@@ -245,7 +220,7 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		rawColSpace = proto.ColSpaceScore2
 	}
 
-	var rawKey = GetRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
+	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
@@ -278,9 +253,9 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 		} else if oldVal != nil {
 			// Key exists
 			kv.CtrlFlag |= proto.CtrlValue
-			oldVal, oldScore = ParseRawValue(oldVal)
+			oldVal, oldScore = parseRawValue(oldVal)
 
-			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
 			tbl.db.Del(scoreKey, wb)
 		}
@@ -315,8 +290,13 @@ func (tbl *Table) delKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) erro
 func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
-	if kv.RowKey == nil {
+	if len(kv.RowKey) == 0 {
 		kv.ErrCode = table.EcInvRowKey
+		kv.CtrlFlag |= proto.CtrlErrCode
+		return nil
+	}
+	if len(kv.ColKey) > proto.MaxColKeyLen {
+		kv.ErrCode = table.EcInvColKey
 		kv.CtrlFlag |= proto.CtrlErrCode
 		return nil
 	}
@@ -328,7 +308,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		rawColSpace = proto.ColSpaceScore2
 	}
 
-	var rawKey = GetRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
+	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
@@ -345,6 +325,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 	var err error
 	var newScore = kv.Score
 	var oldVal []byte
+	var oldScore int64
 	if zop {
 		if wb == nil {
 			wb = tbl.db.NewWriteBatch()
@@ -357,41 +338,32 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 			kv.ErrCode = table.EcReadFail
 			return err
 		} else if oldVal != nil {
-			_, oldScore := ParseRawValue(oldVal)
+			oldVal, oldScore = parseRawValue(oldVal)
 			newScore += oldScore
 
-			var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
-			oldVal, err = tbl.db.Get(nil, scoreKey)
-			if err != nil {
-				kv.CtrlFlag |= proto.CtrlErrCode
-				kv.ErrCode = table.EcReadFail
-				return err
-			} else if oldVal != nil {
-				oldVal, _ = ParseRawValue(oldVal)
-			}
-
 			tbl.db.Del(scoreKey, wb)
 		}
 
-		tbl.db.Put(rawKey, GetRawValue(nil, newScore), wb)
+		tbl.db.Put(rawKey, getRawValue(oldVal, newScore), wb)
 
-		var scoreKey = GetRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+		var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 			kv.RowKey, newScoreColKey(newScore, kv.ColKey))
-		tbl.db.Put(scoreKey, GetRawValue(oldVal, 0), wb)
-
-		err = tbl.db.Commit(wb)
-		if err != nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcWriteFail
-			return err
-		}
+		tbl.db.Put(scoreKey, getRawValue(oldVal, 0), wb)
 
 		kv.Value = oldVal
 		kv.Score = newScore
 		kv.CtrlFlag |= proto.CtrlValue
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
+		}
+
+		err = tbl.db.Commit(wb)
+		if err != nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcWriteFail
+			return err
 		}
 	} else {
 		oldVal, err = tbl.db.Get(nil, rawKey)
@@ -400,16 +372,8 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 			kv.ErrCode = table.EcReadFail
 			return err
 		} else if oldVal != nil {
-			var oldScore int64
-			oldVal, oldScore = ParseRawValue(oldVal)
+			oldVal, oldScore = parseRawValue(oldVal)
 			newScore += oldScore
-		}
-
-		err = tbl.db.Put(rawKey, GetRawValue(oldVal, newScore), nil)
-		if err != nil {
-			kv.CtrlFlag |= proto.CtrlErrCode
-			kv.ErrCode = table.EcWriteFail
-			return err
 		}
 
 		kv.Value = oldVal
@@ -417,6 +381,13 @@ func (tbl *Table) incrKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValueCtrl) err
 		kv.CtrlFlag |= proto.CtrlValue
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
+		}
+
+		err = tbl.db.Put(rawKey, getRawValue(oldVal, newScore), nil)
+		if err != nil {
+			kv.CtrlFlag |= proto.CtrlErrCode
+			kv.ErrCode = table.EcWriteFail
+			return err
 		}
 	}
 
@@ -434,11 +405,13 @@ func (tbl *Table) Get(req *PkgArgs) []byte {
 			}
 		} else {
 			in.ErrCode = table.EcInvDbId
-			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+			in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+			in.CtrlFlag |= proto.CtrlErrCode
 		}
 	} else {
 		in.ErrCode = table.EcDecodeFail
-		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in)
@@ -490,6 +463,7 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 		in.DbId = req.DbId
 		in.Seq = req.Seq
 		in.ErrCode = table.EcDecodeFail
+		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -509,11 +483,13 @@ func (tbl *Table) Set(req *PkgArgs) ([]byte, bool) {
 			}
 		} else {
 			in.ErrCode = table.EcInvDbId
-			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+			in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+			in.CtrlFlag |= proto.CtrlErrCode
 		}
 	} else {
 		in.ErrCode = table.EcDecodeFail
-		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -561,11 +537,13 @@ func (tbl *Table) Del(req *PkgArgs) ([]byte, bool) {
 			}
 		} else {
 			in.ErrCode = table.EcInvDbId
-			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+			in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+			in.CtrlFlag |= proto.CtrlErrCode
 		}
 	} else {
 		in.ErrCode = table.EcDecodeFail
-		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -613,11 +591,13 @@ func (tbl *Table) Incr(req *PkgArgs) ([]byte, bool) {
 			}
 		} else {
 			in.ErrCode = table.EcInvDbId
-			in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+			in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+			in.CtrlFlag |= proto.CtrlErrCode
 		}
 	} else {
 		in.ErrCode = table.EcDecodeFail
-		in.CtrlFlag &^= (proto.CtrlValue | proto.CtrlScore)
+		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -673,19 +653,19 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 	if in.Direction == 0 {
 		if startSeek {
 			// Seek to the first element
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace,
 				in.RowKey, nil))
 		} else {
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace,
 				in.RowKey, newScoreColKey(in.Score, in.ColKey)))
 		}
 	} else {
 		if startSeek {
 			// Seek to the last element
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace+1,
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace+1,
 				in.RowKey, nil))
 		} else {
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace,
 				in.RowKey, newScoreColKey(in.Score, in.ColKey)))
 		}
 		if !it.Valid() {
@@ -697,7 +677,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 	var first = true
 	var scanNum = int(in.Num)
 	for i := 0; it.Valid() && i < scanNum+1; iterMove(it, in.Direction) {
-		_, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
+		_, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if dbId != in.DbId || tableId != in.TableId ||
 			colSpace != scanColSpace || bytes.Compare(rowKey, in.RowKey) != 0 {
 			if first {
@@ -740,7 +720,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 			kv.TableId = in.TableId
 			kv.RowKey = in.RowKey
 			kv.ColKey = zColKey
-			kv.Value, _ = ParseRawValue(it.Value())
+			kv.Value, _ = parseRawValue(it.Value())
 			kv.Score = zScore
 			if kv.Value != nil {
 				kv.CtrlFlag |= proto.CtrlValue
@@ -791,17 +771,17 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 	if in.Direction == 0 {
 		if startSeek {
 			// Seek to the first element
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey, nil))
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace, in.RowKey, nil))
 		} else {
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace,
 				in.RowKey, in.ColKey))
 		}
 	} else {
 		if startSeek {
 			// Seek to the last element
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace+1, in.RowKey, nil))
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace+1, in.RowKey, nil))
 		} else {
-			it.Seek(GetRawKey(in.DbId, in.TableId, scanColSpace,
+			it.Seek(getRawKey(in.DbId, in.TableId, scanColSpace,
 				in.RowKey, in.ColKey))
 		}
 		if !it.Valid() {
@@ -813,7 +793,7 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 	var first = true
 	var scanNum = int(in.Num)
 	for i := 0; it.Valid() && i < scanNum+1; iterMove(it, in.Direction) {
-		_, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
+		_, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if dbId != in.DbId || tableId != in.TableId ||
 			colSpace != scanColSpace || bytes.Compare(rowKey, in.RowKey) != 0 {
 			if first {
@@ -845,7 +825,7 @@ func (tbl *Table) Scan(req *PkgArgs) []byte {
 			kv.TableId = in.TableId
 			kv.RowKey = in.RowKey
 			kv.ColKey = colKey
-			kv.Value, kv.Score = ParseRawValue(it.Value())
+			kv.Value, kv.Score = parseRawValue(it.Value())
 			if kv.Value != nil {
 				kv.CtrlFlag |= proto.CtrlValue
 			}
@@ -879,6 +859,8 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 	out.OneTable = in.OneTable
 	out.StartUnitId = in.StartUnitId
 	out.EndUnitId = in.EndUnitId
+	out.LastUnitId = in.StartUnitId
+	out.LastUnitRec = 0
 
 	if in.DbId == 0 {
 		return errorHandle(&out, table.EcInvDbId)
@@ -888,16 +870,16 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 	defer it.Close()
 
 	if len(in.RowKey) == 0 {
-		it.Seek(GetRawUnitKey(in.StartUnitId, in.DbId, in.TableId))
+		it.Seek(getRawUnitKey(in.StartUnitId, in.DbId, in.TableId))
 	} else {
 		var rawColKey = in.ColKey
 		if in.ColSpace == proto.ColSpaceScore1 {
 			rawColKey = newScoreColKey(in.Score, in.ColKey)
 		}
 
-		it.Seek(GetRawKey(in.DbId, in.TableId, in.ColSpace, in.RowKey, rawColKey))
+		it.Seek(getRawKey(in.DbId, in.TableId, in.ColSpace, in.RowKey, rawColKey))
 		if it.Valid() {
-			_, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
+			_, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 			if dbId == in.DbId && tableId == in.TableId &&
 				bytes.Compare(rowKey, in.RowKey) == 0 &&
 				colSpace == in.ColSpace &&
@@ -911,8 +893,9 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 	const maxTryUnitNum = 10
 	var triedUnitNum = 0
 	for it.Valid() && len(out.Kvs) < maxScanNum {
-		unitId, dbId, tableId, colSpace, rowKey, colKey := ParseRawKey(it.Key())
+		unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if unitId < in.StartUnitId || unitId > in.EndUnitId {
+			out.End = 1
 			break
 		}
 
@@ -930,26 +913,34 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 			}
 		}
 		if misMatch {
-			if triedUnitNum < maxTryUnitNum &&
-				out.LastUnitId+1 <= in.EndUnitId {
-				out.LastUnitId++
+			if triedUnitNum >= maxTryUnitNum {
+				break
+			}
+			var nextUnitId = out.LastUnitId + 1
+			if nextUnitId < unitId && unitId <= in.EndUnitId {
+				nextUnitId = unitId
+			}
+			if nextUnitId <= in.EndUnitId {
 				triedUnitNum++
-				it.Seek(GetRawUnitKey(out.LastUnitId, in.DbId, nextUnitTableId))
+				out.LastUnitId = nextUnitId
+				out.LastUnitRec = 0
+				it.Seek(getRawUnitKey(nextUnitId, in.DbId, nextUnitTableId))
 				continue
 			} else {
+				out.End = 1
 				break
 			}
 		}
 
 		if colSpace == proto.ColSpaceScore2 {
-			it.Seek(GetRawKey(dbId, tableId, colSpace+1, rowKey, colKey))
+			it.Seek(getRawKey(dbId, tableId, colSpace+1, rowKey, colKey))
 			continue // No need to dup dump
 		}
 
 		var kv proto.KeyValueCtrl
 		if colSpace != proto.ColSpaceScore1 {
 			kv.ColKey = colKey
-			kv.Value, kv.Score = ParseRawValue(it.Value())
+			kv.Value, kv.Score = parseRawValue(it.Value())
 		} else {
 			if len(colKey) < 8 {
 				it.Next()
@@ -957,7 +948,7 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 			}
 			kv.Score = int64(binary.BigEndian.Uint64(colKey) - zopScoreUp)
 			kv.ColKey = colKey[8:]
-			kv.Value, _ = ParseRawValue(it.Value())
+			kv.Value, _ = parseRawValue(it.Value())
 		}
 
 		kv.TableId = tableId
@@ -975,10 +966,11 @@ func (tbl *Table) Dump(req *PkgArgs) []byte {
 
 		out.Kvs = append(out.Kvs, kv)
 		out.LastUnitId = unitId
+		out.LastUnitRec = 1
 		it.Next()
 	}
 
-	if len(out.Kvs) < maxScanNum {
+	if !it.Valid() {
 		out.End = 1
 	}
 
@@ -994,7 +986,20 @@ func (tbl *Table) NewIterator(fillCache bool) *Iterator {
 	return tbl.db.NewIterator(fillCache)
 }
 
-func GetRawUnitKey(unitId uint16, dbId, tableId uint8) []byte {
+func SetSyncPkg(it *Iterator, p *proto.PkgOneOp) {
+	_, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
+	value := it.Value()
+
+	p.DbId = dbId
+	p.TableId = tableId
+	p.ColSpace = colSpace
+	p.RowKey = rowKey
+	p.ColKey = colKey
+	p.Value = value
+	p.CtrlFlag |= (proto.CtrlColSpace | proto.CtrlValue)
+}
+
+func getRawUnitKey(unitId uint16, dbId, tableId uint8) []byte {
 	// wUnitId+cDbId+cTableId
 	var rawKey = make([]byte, 4)
 	binary.BigEndian.PutUint16(rawKey, unitId)
@@ -1004,7 +1009,7 @@ func GetRawUnitKey(unitId uint16, dbId, tableId uint8) []byte {
 	return rawKey
 }
 
-func GetRawKey(dbId, tableId, colSpace uint8, rowKey, colKey []byte) []byte {
+func getRawKey(dbId, tableId, colSpace uint8, rowKey, colKey []byte) []byte {
 	var unitId = proto.GetUnitId(dbId, tableId, rowKey)
 
 	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colSpace+sColKey
@@ -1022,7 +1027,7 @@ func GetRawKey(dbId, tableId, colSpace uint8, rowKey, colKey []byte) []byte {
 	return rawKey
 }
 
-func ParseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
+func parseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
 	rowKey, colKey []byte) {
 	unitId = binary.BigEndian.Uint16(rawKey)
 	dbId = rawKey[2]
@@ -1035,8 +1040,8 @@ func ParseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
 	return
 }
 
-func ParseRawValue(value []byte) ([]byte, int64) {
-	if value == nil {
+func parseRawValue(value []byte) ([]byte, int64) {
+	if len(value) == 0 {
 		return nil, 0
 	}
 
@@ -1060,7 +1065,7 @@ func ParseRawValue(value []byte) ([]byte, int64) {
 	}
 }
 
-func GetRawValue(value []byte, score int64) []byte {
+func getRawValue(value []byte, score int64) []byte {
 	if score == 0 {
 		var r = make([]byte, len(value)+1)
 		r[0] = 0

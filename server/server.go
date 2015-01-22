@@ -22,7 +22,6 @@ import (
 	"github.com/stevejiang/gotable/store"
 	"log"
 	"net"
-	"os"
 	"runtime"
 	"sync"
 )
@@ -35,13 +34,10 @@ type Server struct {
 }
 
 func NewServer(dbname string) *Server {
-	var binlogDir = fmt.Sprintf("%s/binlog", dbname)
 	var tableDir = fmt.Sprintf("%s/table", dbname)
-	os.MkdirAll(binlogDir, os.ModeDir|os.ModePerm)
-	os.MkdirAll(tableDir, os.ModeDir|os.ModePerm)
+	var binlogDir = fmt.Sprintf("%s/binlog", dbname)
 
 	srv := new(Server)
-
 	srv.tbl = store.NewTable(&srv.rwMtx, tableDir)
 	if srv.tbl == nil {
 		return nil

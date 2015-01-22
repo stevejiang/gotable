@@ -98,6 +98,8 @@ type BinLog struct {
 }
 
 func NewBinLog(dir string) *BinLog {
+	os.MkdirAll(dir, os.ModeDir|os.ModePerm)
+
 	var bin = new(BinLog)
 	bin.dir = dir
 	bin.reqChan = make(chan *Request, 10000)

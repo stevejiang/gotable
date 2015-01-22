@@ -52,12 +52,12 @@ func (slv *slaver) goConnectToMaster() {
 			go cli.GoReadRequest(slv.reqChan)
 			go cli.GoSendResponse()
 
+			var en = ctrl.NewEncoder()
 			var pm ctrl.PkgMaster
 			pm.LastSeq = slv.bin.GetMasterSeq(1) //TODO
 			log.Printf("Connect to master with start log seq %d\n", pm.LastSeq)
 
 			var resp = &Response{proto.CmdMaster, 0, 0, nil}
-			var en = ctrl.NewEncoder()
 			resp.Pkg, err = en.Encode(proto.CmdMaster, 0, 0, &pm)
 			if err != nil {
 				log.Printf("Fatal Encode error: %s\n", err)
@@ -120,11 +120,11 @@ func (ms *master) NewLogComming() {
 	}
 }
 
-func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
+func (ms *master) fullSync(tbl *store.Table, rwMtx *sync.RWMutex) uint64 {
 	var lastSeq uint64
 	if ms.startLogSeq > 0 {
 		lastSeq = ms.startLogSeq
-		log.Printf("Already full asynced, startLogSeq=%d\n", ms.startLogSeq)
+		log.Println("Already full asynced")
 	} else {
 		// Stop write globally
 		rwMtx.Lock()
@@ -137,6 +137,8 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 		var it = tbl.NewIterator(false)
 		rwMtx.Unlock()
 
+		defer it.Close()
+
 		// Full sync
 		var hasRecord = false
 		var one proto.PkgOneOp
@@ -148,26 +150,13 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 				ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
 			}
 
-			_, dbId, tableId, colSpace, rowKey, colKey := store.ParseRawKey(it.Key())
-			value := it.Value()
-
-			one.DbId = dbId
-			one.TableId = tableId
-			one.ColSpace = colSpace
-			one.RowKey = rowKey
-			one.ColKey = colKey
-			one.Value = value
-			one.CtrlFlag |= (proto.CtrlColSpace | proto.CtrlValue)
+			store.SetSyncPkg(it, &one)
 			hasRecord = true
 
 			if ms.cli.IsClosed() {
-				it.Close()
-				log.Println("Master-slaver connection is closed, stop full sync!")
-				return
+				return lastSeq
 			}
 		}
-
-		it.Close()
 
 		if hasRecord {
 			one.Seq = lastSeq
@@ -179,13 +168,23 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 		log.Println("Full async finished")
 	}
 
+	return lastSeq
+}
+
+func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
+	var lastSeq = ms.fullSync(tbl, rwMtx)
+	if ms.cli.IsClosed() {
+		log.Println("Master-slaver connection is closed, stop sync!")
+		return
+	}
+
 	log.Printf("Start incremental sync, lastSeq=%d\n", lastSeq)
 
 	ms.NewLogComming()
 
 	var lastResp *Response
 	var reader *binlog.Reader
-	var tick = time.Tick(2e8)
+	var tick = time.Tick(time.Second)
 	for {
 		select {
 		case _, ok := <-ms.syncChan:
@@ -224,6 +223,15 @@ func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
 			}
 
 		case <-tick:
+			if ms.IsClosed() {
+				if reader != nil {
+					reader.Close()
+				}
+				ms.doClose()
+				log.Printf("Master sync channel closed %p\n", ms)
+				return
+			}
+
 			ms.NewLogComming()
 			if lastResp != nil {
 				//log.Printf("Sync seq=%d\n", lastResp.Seq)

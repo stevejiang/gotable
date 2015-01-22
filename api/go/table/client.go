@@ -43,15 +43,17 @@ var (
 // GoTable Error Code List
 const (
 	EcOk          = 0  // Success
-	EcCasNotMatch = 11 // CAS not match, get new CAS and try again
-	EcTempFail    = 12 // Temporary failed, retry may fix this
-	EcNoPrivilege = 21 // No access privilege
-	EcReadFail    = 22 // Read failed
-	EcWriteFail   = 23 // Write failed
-	EcDecodeFail  = 24 // Decode request PKG failed
-	EcInvDbId     = 25 // Invalid DB ID (cannot be 0)
-	EcInvRowKey   = 26 // Invalid RowKey (cannot be empty)
-	EcInvScanNum  = 27 // Scan number out of range
+	EcCasNotMatch = 1  // CAS not match, get new CAS and try again
+	EcTempFail    = 2  // Temporary failed, retry may fix this
+	EcNoPrivilege = 11 // No access privilege
+	EcReadFail    = 12 // Read failed
+	EcWriteFail   = 13 // Write failed
+	EcDecodeFail  = 14 // Decode request PKG failed
+	EcInvDbId     = 15 // Invalid DB ID (cannot be 0)
+	EcInvRowKey   = 16 // Invalid RowKey (cannot be empty)
+	EcInvColKey   = 17 // Invalid ColKey (length < 65500B)
+	EcInvValue    = 18 // Invalid Value (length < 512KB)
+	EcInvScanNum  = 19 // Scan number out of range
 )
 
 // A Client is a connection to GoTable server.
@@ -69,6 +71,7 @@ type Client struct {
 	shutdown bool // server has told us to stop
 }
 
+// Create a new connection Client to GoTable server.
 func NewClient(conn net.Conn) *Client {
 	var c = new(Client)
 	c.c = conn
@@ -92,6 +95,14 @@ func newPoolClient(network, address string, pool *Pool) *Client {
 	return c
 }
 
+// Dial connects to the address on the named network of GoTable server.
+//
+// Known networks are "tcp", "tcp4" (IPv4-only), "tcp6" (IPv6-only),
+// and "unix".
+// For TCP networks, addresses have the form host:port.
+// For Unix networks, the address must be a file system path.
+//
+// It returns a connection Client to GoTable server.
 func Dial(network, address string) (*Client, error) {
 	conn, err := net.Dial(network, address)
 	if err != nil {
@@ -100,11 +111,13 @@ func Dial(network, address string) (*Client, error) {
 	return NewClient(conn), nil
 }
 
-// Create a new client Context.
+// Create a new client Context with selected dbId.
+// All operations on the Context use the selected dbId.
 func (c *Client) NewContext(dbId uint8) *Context {
 	return &Context{c, dbId}
 }
 
+// Close the connection.
 func (c *Client) Close() error {
 	if c.p == nil {
 		return c.doClose()
@@ -156,6 +169,7 @@ func (c *Client) recv() {
 
 		if call != nil {
 			call.pkg = pkg
+			call.ready = true
 			call.done()
 		}
 	}
@@ -172,6 +186,7 @@ func (c *Client) recv() {
 	}
 	for _, call := range c.pending {
 		call.err = err
+		call.ready = true
 		call.done()
 	}
 	c.mtx.Unlock()
@@ -201,14 +216,15 @@ func (c *Client) send() {
 }
 
 func (call *Call) done() {
-	call.ready = true
-	select {
-	case call.Done <- call:
-		// ok
-	default:
-		// We don't want to block here.  It is the caller's responsibility to make
-		// sure the channel has enough buffer space. See comment in Go().
-		log.Println("discarding reply due to insufficient Done chan capacity")
+	if call.ready {
+		select {
+		case call.Done <- call:
+			// ok
+		default:
+			// We don't want to block here.  It is the caller's responsibility to make
+			// sure the channel has enough buffer space. See comment in Go().
+			log.Println("discarding reply due to insufficient Done chan capacity")
+		}
 	}
 }
 

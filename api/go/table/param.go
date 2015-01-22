@@ -60,6 +60,7 @@ func (a *MultiArgs) AddIncrArgs(tableId uint8, rowKey, colKey []byte,
 }
 
 type scanContext struct {
+	zop          bool
 	asc          bool // true: Ascending  order; false: Descending  order
 	orderByScore bool // true: Score+ColKey; false: ColKey
 	num          int  // Max number of scan reply records
@@ -78,7 +79,8 @@ type dumpContext struct {
 	tableId     uint8  // Never change during dump
 	startUnitId uint16 // Never change during dump
 	endUnitId   uint16 // Never change during dump
-	lastUnitId  uint16 // The unit id of last dumped record
+	lastUnitId  uint16 // The last unit ID tried to dump
+	lastUnitRec uint8  // Is last record in lastUnitId? 0: No; 1: Yes
 }
 
 type DumpRecord struct {

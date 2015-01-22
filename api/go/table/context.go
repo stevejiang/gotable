@@ -53,325 +53,139 @@ func (c *Context) Ping() error {
 func (c *Context) Get(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoGet(tableId, rowKey, colKey, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoZGet(tableId, rowKey, colKey, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoSet(tableId, rowKey, colKey, value, score, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoDel(tableId, rowKey, colKey, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoZDel(tableId, rowKey, colKey, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoIncr(tableId, rowKey, colKey, score, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (*OneReply, error) {
 	call, err := c.GoZIncr(tableId, rowKey, colKey, score, cas, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*OneReply), nil
+	return doOneReply(call, err)
 }
 
 func (c *Context) MGet(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoMGet(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) ZmGet(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoZmGet(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) MSet(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoMSet(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) ZmSet(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoZmSet(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) MDel(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoMDel(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) ZmDel(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoZmDel(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) MIncr(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoMIncr(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) ZmIncr(args *MultiArgs) (*MultiReply, error) {
 	call, err := c.GoZmIncr(args, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	return doMultiReply(call, err)
 }
 
 func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int) (*ScanReply, error) {
 	call, err := c.GoScan(tableId, rowKey, colKey, asc, num, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*ScanReply), nil
+	return doScanReply(call, err)
 }
 
 func (c *Context) ScanStart(tableId uint8, rowKey []byte,
 	asc bool, num int) (*ScanReply, error) {
 	call, err := c.GoScanStart(tableId, rowKey, asc, num, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*ScanReply), nil
+	return doScanReply(call, err)
 }
 
 func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int) (*ScanReply, error) {
 	call, err := c.GoZScan(tableId, rowKey, colKey, score, asc, orderByScore,
 		num, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*ScanReply), nil
+	return doScanReply(call, err)
 }
 
 func (c *Context) ZScanStart(tableId uint8, rowKey []byte,
 	asc, orderByScore bool, num int) (*ScanReply, error) {
 	call, err := c.GoZScanStart(tableId, rowKey, asc, orderByScore, num, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*ScanReply), nil
+	return doScanReply(call, err)
 }
 
-func (c *Context) scanMore(zop bool, last *ScanReply) (*ScanReply, error) {
+// Scan/ZScan more records.
+func (c *Context) ScanMore(last *ScanReply) (*ScanReply, error) {
 	if last.End || len(last.Reply) == 0 {
 		return nil, ErrScanEnded
 	}
-	var a = last.Reply[len(last.Reply)-1]
+	var r = last.Reply[len(last.Reply)-1]
 	var call *Call
 	var err error
-	if zop {
-		call, err = c.GoZScan(a.TableId, a.RowKey, a.ColKey, a.Score,
+	if last.ctx.zop {
+		call, err = c.GoZScan(r.TableId, r.RowKey, r.ColKey, r.Score,
 			last.ctx.asc, last.ctx.orderByScore, last.ctx.num, nil)
 	} else {
-		call, err = c.GoScan(a.TableId, a.RowKey, a.ColKey,
+		call, err = c.GoScan(r.TableId, r.RowKey, r.ColKey,
 			last.ctx.asc, last.ctx.num, nil)
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*ScanReply), nil
+	return doScanReply(call, err)
 }
 
-func (c *Context) ScanMore(last *ScanReply) (*ScanReply, error) {
-	return c.scanMore(false, last)
-}
-
-func (c *Context) ZScanMore(last *ScanReply) (*ScanReply, error) {
-	return c.scanMore(true, last)
-}
-
-// Dump one Table or current DB.
-// If tableId > 0, only dump the selected table.
-// If tableId == 0, dump current DB(dbId).
-func (c *Context) Dump(tableId uint8) (*DumpReply, error) {
-	if tableId == 0 {
-		return c.DumpPivot(false, 0, 0, nil, nil, 0, 0, 65535)
-	} else {
-		return c.DumpPivot(true, tableId, 0, nil, nil, 0, 0, 65535)
-	}
-}
-
-// Dump start from the pivot.
+// Dump start from the pivot record.
 // If oneTable is true, only dump the selected table.
 // If oneTable is false, dump current DB(dbId).
 // The pivot record itself is excluded from the reply.
-func (c *Context) DumpPivot(oneTable bool, tableId, colSpace uint8,
+func (c *Context) Dump(oneTable bool, tableId, colSpace uint8,
 	rowKey, colKey []byte, score int64,
 	startUnitId, endUnitId uint16) (*DumpReply, error) {
 	call, err := c.GoDump(oneTable, tableId, colSpace, rowKey, colKey,
@@ -393,6 +207,17 @@ func (c *Context) DumpPivot(oneTable bool, tableId, colSpace uint8,
 	return c.DumpMore(t)
 }
 
+// Dump the selected Table.
+func (c *Context) DumpTable(tableId uint8) (*DumpReply, error) {
+	return c.Dump(true, tableId, 0, nil, nil, 0, 0, 65535)
+}
+
+// Dump current DB(dbId in Context).
+func (c *Context) DumpDB() (*DumpReply, error) {
+	return c.Dump(false, 0, 0, nil, nil, 0, 0, 65535)
+}
+
+// Dump more records.
 func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 	if last.End {
 		return nil, ErrScanEnded
@@ -402,7 +227,7 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 	for {
 		var rec *DumpRecord
 		var lastUnitId = t.ctx.lastUnitId
-		if len(t.Reply) == 0 {
+		if t.ctx.lastUnitRec == 0 {
 			lastUnitId += 1
 			if t.ctx.oneTable {
 				rec = &DumpRecord{0,
@@ -455,17 +280,13 @@ func (c *Context) goOneOp(zop bool, args OneArgs, cmd uint8,
 		p.Cas = args.Cas
 		p.CtrlFlag |= proto.CtrlCas
 	}
-	if proto.CmdSet == cmd || proto.CmdIncr == cmd {
-		if args.Score != 0 {
-			p.Score = args.Score
-			p.CtrlFlag |= proto.CtrlScore
-		}
+	if args.Score != 0 {
+		p.Score = args.Score
+		p.CtrlFlag |= proto.CtrlScore
 	}
-	if proto.CmdSet == cmd {
-		if args.Value != nil {
-			p.Value = args.Value
-			p.CtrlFlag |= proto.CtrlValue
-		}
+	if len(args.Value) != 0 {
+		p.Value = args.Value
+		p.CtrlFlag |= proto.CtrlValue
 	}
 
 	// ZGet, ZSet, ZDel, ZIncr
@@ -562,17 +383,13 @@ func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
 			p.Kvs[i].Cas = args.Args[i].Cas
 			p.Kvs[i].CtrlFlag |= proto.CtrlCas
 		}
-		if proto.CmdMSet == cmd || proto.CmdIncr == cmd {
-			if args.Args[i].Score != 0 {
-				p.Kvs[i].Score = args.Args[i].Score
-				p.Kvs[i].CtrlFlag |= proto.CtrlScore
-			}
+		if args.Args[i].Score != 0 {
+			p.Kvs[i].Score = args.Args[i].Score
+			p.Kvs[i].CtrlFlag |= proto.CtrlScore
 		}
-		if proto.CmdMSet == cmd {
-			if args.Args[i].Value != nil {
-				p.Kvs[i].Value = args.Args[i].Value
-				p.Kvs[i].CtrlFlag |= proto.CtrlValue
-			}
+		if len(args.Args[i].Value) != 0 {
+			p.Kvs[i].Value = args.Args[i].Value
+			p.Kvs[i].CtrlFlag |= proto.CtrlValue
 		}
 
 		// ZMGet, ZMSet, ZMDel, ZMIncr
@@ -680,7 +497,7 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 		return call, err
 	}
 
-	call.ctx = scanContext{asc, orderByScore, num}
+	call.ctx = scanContext{zop, asc, orderByScore, num}
 	c.cli.sending <- call
 
 	return call, nil
@@ -749,11 +566,47 @@ func (c *Context) GoDump(oneTable bool, tableId, colSpace uint8,
 	}
 
 	call.ctx = dumpContext{oneTable, c.dbId, tableId,
-		startUnitId, endUnitId, startUnitId}
+		startUnitId, endUnitId, startUnitId, 0}
 
 	c.cli.sending <- call
 
 	return call, nil
+}
+
+func doOneReply(call *Call, err error) (*OneReply, error) {
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.(*OneReply), nil
+}
+
+func doMultiReply(call *Call, err error) (*MultiReply, error) {
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.(*MultiReply), nil
+}
+
+func doScanReply(call *Call, err error) (*ScanReply, error) {
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.(*ScanReply), nil
 }
 
 func (call *Call) Reply() (interface{}, error) {
@@ -833,6 +686,7 @@ func (call *Call) Reply() (interface{}, error) {
 		var r DumpReply
 		r.ctx = call.ctx.(dumpContext)
 		r.ctx.lastUnitId = p.LastUnitId
+		r.ctx.lastUnitRec = p.LastUnitRec
 		r.End = (p.End != 0)
 		r.Reply = make([]DumpRecord, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {

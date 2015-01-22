@@ -19,6 +19,9 @@ build: rocksdb-lib go-deps
 
 get: rocksdb-lib go-deps
 	go get ./...
+	
+test: rocksdb-lib go-deps
+	go test -v ./...
 
 clean: rocksdb-clean
 	go clean -i ./...

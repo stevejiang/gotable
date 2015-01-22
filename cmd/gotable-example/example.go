@@ -188,9 +188,9 @@ func testZScan(tc *table.Context) {
 			fmt.Println("ZSCAN has more records:")
 		}
 
-		r, err = tc.ZScanMore(r)
+		r, err = tc.ScanMore(r)
 		if err != nil {
-			fmt.Printf("ZScanMore failed: %s\n", err)
+			fmt.Printf("ScanMore failed: %s\n", err)
 			return
 		}
 	}
@@ -262,7 +262,8 @@ func testPing(tc *table.Context) {
 }
 
 func testDump(tc *table.Context) {
-	r, err := tc.Dump(0)
+	//r, err := tc.DumpDB()
+	r, err := tc.DumpTable(1)
 	if err != nil {
 		fmt.Printf("Dump failed: %s\n", err)
 		return
@@ -281,7 +282,6 @@ func testDump(tc *table.Context) {
 			break
 		}
 
-		fmt.Println("Dump more:")
 		r, err = tc.DumpMore(r)
 		if err != nil {
 			fmt.Printf("DumpMore failed: %s\n", err)
