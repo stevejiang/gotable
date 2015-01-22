@@ -25,7 +25,7 @@ The GoTable binary files are in $GOPATH/bin directory.
 
 ## Requirement
 
-+ Linux or MacOS
++ Linux or MacOS, 64 bit operating system is the best.
 + Go version >= 1.3
 + Gcc version >= 4.8.1
 
@@ -53,11 +53,11 @@ Data sharding is based on rowKey. So you should carefully construct rowKey to av
 
 ### Default column space
 
-In default column space, all colKeys are sorted in ASC order. The APIs GET/SET/DEL/INCR/SCAN take effect in this space. The SCAN API scans all the colKeys in ASC or DESC order for a rowKey.
+In default column space, all colKeys are sorted in ASC order. The APIs GET/SET/DEL/INCR/SCAN take effect in this space. The SCAN API scans records order by colKey in ASC or DESC order for a rowKey.
 
 ### "Z" sorted score column space
 
-In "Z" sorted score column space, all colKeys are sorted in ASC order, and also colKeys are sorted by "score" in ASC order. The APIs ZGET/ZSET/ZDEL/ZINCR/ZSCAN take effect in this space.
+In "Z" sorted score column space, all colKeys are sorted in ASC order, and also colKeys are sorted by "score" in ASC order. The APIs ZGET/ZSET/ZDEL/ZINCR/ZSCAN take effect in this space. The SCAN API can scan records order by colKey, or order by score+colKey.
 
 ## Performance Benchmark
 
