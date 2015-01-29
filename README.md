@@ -5,11 +5,11 @@ GoTable is a high performance NoSQL database powered by [Go](http://golang.org/)
 ## Features
 
 + High performance and easy to scale.
-+ Powerful set of APIs: GET, SET, MGET, MSET, SCAN, INCR, DUMP and "Z" APIs.
++ Powerful set of APIs: GET, SET, DEL, MGET, MSET, MDEL, SCAN, INCR, DUMP and "Z" APIs.
 + Data storage is not limited by RAM and friendly with SSD.
 + Transaction support with CAS (compare and save).
 + Replication.
-+ Auto sharding (TO BE DONE ...)
++ Cluster (To be done ...)
 
 ## Build and Install
 
@@ -27,7 +27,7 @@ The GoTable binary files are in $GOPATH/bin directory.
 
 + Linux or MacOS, 64 bit operating system is the best.
 + Go version >= 1.3
-+ Gcc version >= 4.8.1
++ gcc version >= 4.8.1
 
 ## API Example
 
@@ -48,12 +48,12 @@ GoTable is constructed with up to 255 DBs, each DB is constructed with up to 256
 	--------|---------------|---------------|-----|---------------|---------------|-----|
 	  ...   |              ...                    |              ...                    |
 
-A table can holds unlimited number of rows(rowKey). Each row can have up to millions columns(colKey).
-Data sharding is based on rowKey. So you should carefully construct rowKey to avoid hot spot issue.
+A table can hold unlimited number of rows(rowKey). Each row can have up to millions columns(colKey).
+Data sharding is based on rowKey, records with the same rowKey are stored in the same unit. So you should carefully construct rowKey to avoid hot spot issue.
 
 ### Default column space
 
-In default column space, all colKeys are sorted in ASC order. The APIs GET/SET/DEL/INCR/SCAN take effect in this space. The SCAN API scans records order by colKey in ASC or DESC order for a rowKey.
+In default column space, all colKeys are stored in ASC order. The APIs GET/SET/DEL/INCR/SCAN take effect in this space. The SCAN API scans records order by colKey in ASC or DESC order for a rowKey.
 
 ### "Z" sorted score column space
 
@@ -79,7 +79,7 @@ Benchmark result:
 If you want to see latency distribution, add "-histogram 1" to the command line:
 
 	./gotable-bench -t get -n 1000000 -c 100 -histogram 1
-	
+
 Benchmark latency distribution:
 
 	GET        :  187564.2 op/s   

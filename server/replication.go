@@ -19,6 +19,7 @@ import (
 	"github.com/stevejiang/gotable/binlog"
 	"github.com/stevejiang/gotable/ctrl"
 	"github.com/stevejiang/gotable/store"
+	"github.com/stevejiang/gotable/util"
 	"log"
 	"net"
 	"sync"
@@ -27,33 +28,67 @@ import (
 )
 
 type slaver struct {
-	masterHost string
-	reqChan    *RequestChan
-	bin        *binlog.BinLog
+	mi      ctrl.MasterInfo
+	reqChan *RequestChan
+	bin     *binlog.BinLog
+
+	mtx    sync.Mutex // protects following
+	cli    *Client
+	closed bool
 }
 
-func newSlaver(masterHost string, reqChan *RequestChan, bin *binlog.BinLog) *slaver {
+func newSlaver(mi ctrl.MasterInfo, reqChan *RequestChan, bin *binlog.BinLog) *slaver {
 	var slv = new(slaver)
-	slv.masterHost = masterHost
+	slv.mi = mi
 	slv.reqChan = reqChan
 	slv.bin = bin
 
 	return slv
 }
 
+func (slv *slaver) Close() {
+	slv.mtx.Lock()
+	if !slv.closed {
+		slv.closed = true
+		if slv.cli != nil {
+			slv.cli.Close()
+			slv.cli = nil
+		}
+	}
+	slv.mtx.Unlock()
+}
+
+func (slv *slaver) IsClosed() bool {
+	slv.mtx.Lock()
+	closed := slv.closed
+	slv.mtx.Unlock()
+	return closed
+}
+
 func (slv *slaver) goConnectToMaster() {
-	var cli *Client
 	for {
-		// Connect to master host
-		if c, err := net.Dial("tcp", slv.masterHost); err == nil {
-			cli = NewClient(c)
+		if slv.IsClosed() {
+			return
+		}
+
+		c, err := net.Dial("tcp", slv.mi.Host)
+		if err == nil {
+			cli := NewClient(c, false)
+			slv.mtx.Lock()
+			slv.cli = cli
+			slv.mtx.Unlock()
+			if slv.IsClosed() {
+				return
+			}
+
 			cli.SetClientType(ClientTypeSlaver)
 
-			go cli.GoReadRequest(slv.reqChan)
+			go cli.GoRecvRequest(slv.reqChan)
 			go cli.GoSendResponse()
 
 			var en = ctrl.NewEncoder()
 			var pm ctrl.PkgMaster
+			pm.Urs = slv.mi.Urs
 			pm.LastSeq = slv.bin.GetMasterSeq(1) //TODO
 			log.Printf("Connect to master with start log seq %d\n", pm.LastSeq)
 
@@ -70,27 +105,41 @@ func (slv *slaver) goConnectToMaster() {
 			}
 		} else {
 			log.Printf("Connect to master %s failed, sleep 1 second and try again.\n",
-				slv.masterHost)
+				slv.mi.Host)
 			time.Sleep(time.Second)
 		}
 	}
 }
 
 type master struct {
-	syncChan    chan struct{}
-	cli         *Client
-	closed      uint32
-	startLogSeq uint64
-	bin         *binlog.BinLog
+	syncChan  chan struct{}
+	cli       *Client
+	bin       *binlog.BinLog
+	slaveAddr string
+	lastSeq   uint64
+	urs       []ctrl.UnitRange
+	ubm       *util.BitMap
+
+	// atomic
+	closed uint32
 }
 
-func newMaster(cli *Client, bin *binlog.BinLog, startLogSeq uint64) *master {
+func newMaster(slaveAddr string, lastSeq uint64, urs []ctrl.UnitRange,
+	cli *Client, bin *binlog.BinLog) *master {
 	var ms = new(master)
 	ms.syncChan = make(chan struct{}, 20)
 	ms.cli = cli
-	ms.startLogSeq = startLogSeq
 	ms.bin = bin
-
+	ms.slaveAddr = slaveAddr
+	ms.lastSeq = lastSeq
+	ms.urs = urs
+	ms.ubm = util.NewBitMap(ctrl.TotalUnitNum / 8)
+	for i := 0; i < len(urs); i++ {
+		tr := urs[i]
+		for j := tr.Start; j <= tr.End; j++ {
+			ms.ubm.Set(uint(j))
+		}
+	}
 	ms.cli.SetMaster(ms)
 
 	return ms
@@ -101,6 +150,8 @@ func (ms *master) doClose() {
 
 	ms.cli = nil
 	ms.bin = nil
+	ms.urs = nil
+	ms.ubm = nil
 }
 
 func (ms *master) Close() {
@@ -120,13 +171,14 @@ func (ms *master) NewLogComming() {
 	}
 }
 
-func (ms *master) fullSync(tbl *store.Table, rwMtx *sync.RWMutex) uint64 {
+func (ms *master) fullSync(tbl *store.Table) uint64 {
 	var lastSeq uint64
-	if ms.startLogSeq > 0 {
-		lastSeq = ms.startLogSeq
+	if ms.lastSeq > 0 {
+		lastSeq = ms.lastSeq
 		log.Println("Already full asynced")
 	} else {
 		// Stop write globally
+		rwMtx := tbl.GetRWMutex()
 		rwMtx.Lock()
 		var valid bool
 		for lastSeq, valid = ms.bin.GetLastLogSeq(); !valid; {
@@ -141,6 +193,7 @@ func (ms *master) fullSync(tbl *store.Table, rwMtx *sync.RWMutex) uint64 {
 
 		// Full sync
 		var hasRecord = false
+		var unitId uint16
 		var one proto.PkgOneOp
 		one.Cmd = proto.CmdSync
 		for it.SeekToFirst(); it.Valid(); it.Next() {
@@ -150,8 +203,28 @@ func (ms *master) fullSync(tbl *store.Table, rwMtx *sync.RWMutex) uint64 {
 				ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
 			}
 
-			store.SetSyncPkg(it, &one)
-			hasRecord = true
+			hasRecord = false
+			unitId = store.SetSyncPkg(it, &one)
+			if ms.ubm.Get(uint(unitId)) {
+				hasRecord = true
+			} else {
+				var tu = unitId + 1
+				for ; tu < ctrl.TotalUnitNum; tu++ {
+					if ms.ubm.Get(uint(tu)) {
+						store.SeekToUnit(it, tu, 0, 0)
+						if it.Valid() {
+							unitId = store.SetSyncPkg(it, &one)
+							if ms.ubm.Get(uint(unitId)) {
+								hasRecord = true
+							}
+						}
+						break
+					}
+				}
+				if tu >= ctrl.TotalUnitNum {
+					break
+				}
+			}
 
 			if ms.cli.IsClosed() {
 				return lastSeq
@@ -171,8 +244,8 @@ func (ms *master) fullSync(tbl *store.Table, rwMtx *sync.RWMutex) uint64 {
 	return lastSeq
 }
 
-func (ms *master) goAsync(tbl *store.Table, rwMtx *sync.RWMutex) {
-	var lastSeq = ms.fullSync(tbl, rwMtx)
+func (ms *master) goAsync(tbl *store.Table) {
+	var lastSeq = ms.fullSync(tbl)
 	if ms.cli.IsClosed() {
 		log.Println("Master-slaver connection is closed, stop sync!")
 		return

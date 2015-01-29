@@ -62,7 +62,7 @@ func TestTableSet(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg})
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, true)
 	if !ok {
 		t.Fatalf("Table Set failed")
 	}
@@ -149,7 +149,7 @@ func TestTableSetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg})
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, true)
 	if ok {
 		t.Fatalf("Table Set should fail")
 	}
@@ -182,7 +182,7 @@ func TestTableGetCas(t *testing.T) {
 	in.TableId = 2
 	in.RowKey = []byte("row1")
 	in.ColKey = []byte("col1")
-	in.Cas = 1
+	in.Cas = 2
 	in.CtrlFlag |= proto.CtrlCas
 
 	var pkg = make([]byte, in.Length())
@@ -225,7 +225,7 @@ func TestTableGetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1})
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, true)
 	if !ok {
 		t.Fatalf("Table Set failed")
 	}
@@ -241,7 +241,7 @@ func TestTableGetCas(t *testing.T) {
 	}
 
 	// Set again
-	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1})
+	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, true)
 	if ok {
 		t.Fatalf("Table Set should fail since cas is cleared")
 	}

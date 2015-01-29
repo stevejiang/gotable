@@ -80,7 +80,7 @@ type dumpContext struct {
 	startUnitId uint16 // Never change during dump
 	endUnitId   uint16 // Never change during dump
 	lastUnitId  uint16 // The last unit ID tried to dump
-	lastUnitRec uint8  // Is last record in lastUnitId? 0: No; 1: Yes
+	lastUnitRec bool   // Is last record in lastUnitId? false: No; true: Yes
 }
 
 type DumpRecord struct {

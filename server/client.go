@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/store"
+	"github.com/stevejiang/gotable/util"
 	"log"
 	"net"
 	"sync"
@@ -38,33 +39,36 @@ type Request struct {
 type Response store.PkgArgs
 
 type RequestChan struct {
-	ReadReqChan  chan *Request
 	WriteReqChan chan *Request
+	ReadReqChan  chan *Request
 	SyncReqChan  chan *Request
 	DumpReqChan  chan *Request
 	CtrlReqChan  chan *Request
 }
 
 type Client struct {
-	c        net.Conn
-	r        *bufio.Reader
-	respChan chan *Response
+	c           net.Conn
+	r           *bufio.Reader
+	respChan    chan *Response
+	authEnabled bool
 
 	// atomic
 	closed  uint32
 	cliType uint32
 
 	// protects following
-	mtx      sync.Mutex
+	mtx      sync.RWMutex
+	authBM   *util.BitMap
 	ms       *master
 	shutdown bool
 }
 
-func NewClient(conn net.Conn) *Client {
+func NewClient(conn net.Conn, authEnabled bool) *Client {
 	var c = new(Client)
 	c.c = conn
 	c.r = bufio.NewReader(conn)
 	c.respChan = make(chan *Response, 64)
+	c.authEnabled = authEnabled
 	atomic.StoreUint32(&c.cliType, ClientTypeNormal)
 	return c
 }
@@ -113,13 +117,53 @@ func (c *Client) ClientType() uint32 {
 	return atomic.LoadUint32(&c.cliType)
 }
 
-func (c *Client) SetMaster(ms *master) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-	c.ms = ms
+// Check whether dbId is authencated.
+// If dbId is 0, it means admin privilege.
+func (c *Client) IsAuth(dbId uint8) bool {
+	if c == nil || !c.authEnabled {
+		return true
+	}
+
+	c.mtx.RLock()
+
+	if c.authBM == nil {
+		c.mtx.RUnlock()
+		return false
+	}
+
+	if c.authBM.Get(0) {
+		c.mtx.RUnlock()
+		return true
+	}
+
+	if dbId != 0 && c.authBM.Get(uint(dbId)) {
+		c.mtx.RUnlock()
+		return true
+	}
+
+	c.mtx.RUnlock()
+	return false
 }
 
-func (c *Client) GoReadRequest(ch *RequestChan) {
+func (c *Client) SetAuth(dbId uint8) {
+	if c != nil && c.authEnabled {
+		c.mtx.Lock()
+		if c.authBM == nil {
+			c.authBM = util.NewBitMap(256 / 8)
+		}
+
+		c.authBM.Set(uint(dbId))
+		c.mtx.Unlock()
+	}
+}
+
+func (c *Client) SetMaster(ms *master) {
+	c.mtx.Lock()
+	c.ms = ms
+	c.mtx.Unlock()
+}
+
+func (c *Client) GoRecvRequest(ch *RequestChan) {
 	var headBuf = make([]byte, proto.HeadSize)
 	var head proto.PkgHead
 	for {
@@ -136,6 +180,8 @@ func (c *Client) GoReadRequest(ch *RequestChan) {
 		var req = Request{c, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
 
 		switch head.Cmd {
+		case proto.CmdAuth:
+			fallthrough
 		case proto.CmdPing:
 			fallthrough
 		case proto.CmdScan:
@@ -167,6 +213,8 @@ func (c *Client) GoReadRequest(ch *RequestChan) {
 		case proto.CmdDump:
 			ch.DumpReqChan <- &req
 		case proto.CmdMaster:
+			fallthrough
+		case proto.CmdSlaveOf:
 			ch.CtrlReqChan <- &req
 		default:
 			log.Printf("Invalid cmd %x\n", head.Cmd)

@@ -17,11 +17,14 @@ package main
 import (
 	"fmt"
 	"github.com/stevejiang/gotable/api/go/table"
+	"github.com/stevejiang/gotable/ctrl"
 	"strconv"
+	"strings"
 )
 
 type client struct {
-	c *table.Context
+	c    *table.Context
+	dbId uint8
 }
 
 func newClient() *client {
@@ -32,9 +35,41 @@ func newClient() *client {
 		return nil
 	}
 
-	c.c = cli.NewContext(1)
+	c.dbId = 1
+	c.c = cli.NewContext(c.dbId)
 
 	return c
+}
+
+func (c *client) auth(args []string) error {
+	//auth <dbId> <password>
+	if len(args) != 2 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
+	}
+
+	dbId, err := getDatabaseId(args[0])
+	if err != nil {
+		return err
+	}
+
+	password, err := extractString(args[1])
+	if err != nil {
+		return err
+	}
+
+	ctx := c.c.Client().NewContext(dbId)
+	err = ctx.Auth(password)
+	if err != nil {
+		return err
+	}
+
+	if dbId != 0 && dbId != c.dbId {
+		c.c = ctx
+		c.dbId = dbId
+	}
+
+	fmt.Println("OK")
+	return nil
 }
 
 func (c *client) use(args []string) error {
@@ -48,9 +83,63 @@ func (c *client) use(args []string) error {
 		return err
 	}
 
-	fmt.Printf("OK, current database is %d\n", dbId)
+	c.dbId = dbId
 	c.c = c.c.Client().NewContext(dbId)
 
+	fmt.Println("OK")
+	return nil
+}
+
+func (c *client) slaveOf(args []string) error {
+	//slaveof ["host [start-end]*"]*
+	//Examples:
+	//slaveof "127.0.0.1:6688"
+	//slaveof "127.0.0.1:6688 0-8191"
+	//slaveof "127.0.0.1:6688 0-1203 4096-8191" "127.0.0.1:6689 1024-4095"
+	var err error
+	var mis []ctrl.MasterInfo
+	for i := 0; i < len(args); i++ {
+		var oneHost string
+		oneHost, err = extractString(args[i])
+		if err != nil {
+			return err
+		}
+		tokens := strings.Split(oneHost, " ")
+		if len(tokens) == 0 {
+			return fmt.Errorf("empty host")
+		}
+		idx := strings.Index(tokens[0], ":")
+		if idx <= 0 || idx >= len(tokens[0])-1 {
+			return fmt.Errorf("invalid host %s", tokens[0])
+		}
+
+		var mi ctrl.MasterInfo
+		mi.Host = tokens[0]
+		for j := 1; j < len(tokens); j++ {
+			ur := strings.Split(tokens[j], "-")
+			if len(ur) != 2 {
+				return fmt.Errorf("invalid unit range %s", tokens[j])
+			}
+			start, err := strconv.Atoi(ur[0])
+			if err != nil || start < 0 || start >= ctrl.TotalUnitNum {
+				return fmt.Errorf("invalid unit range %s", tokens[j])
+			}
+			end, err := strconv.Atoi(ur[1])
+			if err != nil || end < 0 || end >= ctrl.TotalUnitNum {
+				return fmt.Errorf("invalid unit range %s", tokens[j])
+			}
+			mi.Urs = append(mi.Urs, ctrl.UnitRange{uint16(start), uint16(end)})
+		}
+
+		mis = append(mis, mi)
+	}
+
+	err = c.c.SlaveOf(mis)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("OK")
 	return nil
 }
 
@@ -66,11 +155,11 @@ func (c *client) get(zop bool, args []string) error {
 		return err
 	}
 
-	rowKey, err := extractKey(args[1])
+	rowKey, err := extractString(args[1])
 	if err != nil {
 		return err
 	}
-	colKey, err := extractKey(args[2])
+	colKey, err := extractString(args[2])
 	if err != nil {
 		return err
 	}
@@ -85,7 +174,7 @@ func (c *client) get(zop bool, args []string) error {
 		return err
 	}
 	if r.ErrCode != 0 {
-		return fmt.Errorf("unexpected error code %d", r.ErrCode)
+		return fmt.Errorf(errCodeMsg(r.ErrCode))
 	}
 
 	if r.Value == nil {
@@ -109,15 +198,15 @@ func (c *client) set(zop bool, args []string) error {
 		return err
 	}
 
-	rowKey, err := extractKey(args[1])
+	rowKey, err := extractString(args[1])
 	if err != nil {
 		return err
 	}
-	colKey, err := extractKey(args[2])
+	colKey, err := extractString(args[2])
 	if err != nil {
 		return err
 	}
-	value, err := extractKey(args[3])
+	value, err := extractString(args[3])
 	if err != nil {
 		return err
 	}
@@ -129,13 +218,17 @@ func (c *client) set(zop bool, args []string) error {
 		}
 	}
 
+	var r *table.OneReply
 	if zop {
-		_, err = c.c.ZSet(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
+		r, err = c.c.ZSet(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
 	} else {
-		_, err = c.c.Set(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
+		r, err = c.c.Set(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
 	}
 	if err != nil {
 		return err
+	}
+	if r.ErrCode != 0 {
+		return fmt.Errorf(errCodeMsg(r.ErrCode))
 	}
 
 	fmt.Println("OK")
@@ -154,11 +247,11 @@ func (c *client) del(zop bool, args []string) error {
 		return err
 	}
 
-	rowKey, err := extractKey(args[1])
+	rowKey, err := extractString(args[1])
 	if err != nil {
 		return err
 	}
-	colKey, err := extractKey(args[2])
+	colKey, err := extractString(args[2])
 	if err != nil {
 		return err
 	}
@@ -188,11 +281,11 @@ func (c *client) incr(zop bool, args []string) error {
 		return err
 	}
 
-	rowKey, err := extractKey(args[1])
+	rowKey, err := extractString(args[1])
 	if err != nil {
 		return err
 	}
-	colKey, err := extractKey(args[2])
+	colKey, err := extractString(args[2])
 	if err != nil {
 		return err
 	}
@@ -214,7 +307,7 @@ func (c *client) incr(zop bool, args []string) error {
 		return err
 	}
 	if r.ErrCode != 0 {
-		return fmt.Errorf("unexpected error code %d", r.ErrCode)
+		return fmt.Errorf("error code %d", r.ErrCode)
 	}
 
 	fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
@@ -232,11 +325,11 @@ func (c *client) scan(args []string) error {
 		return err
 	}
 
-	rowKey, err := extractKey(args[1])
+	rowKey, err := extractString(args[1])
 	if err != nil {
 		return err
 	}
-	colKey, err := extractKey(args[2])
+	colKey, err := extractString(args[2])
 	if err != nil {
 		return err
 	}
@@ -255,7 +348,7 @@ func (c *client) scan(args []string) error {
 	}
 
 	if len(r.Reply) == 0 {
-		fmt.Println("no record!")
+		fmt.Println("No record!")
 	} else {
 		for i := 0; i < len(r.Reply); i++ {
 			var one = r.Reply[i]
@@ -278,7 +371,7 @@ func (c *client) zscan(args []string) error {
 		return err
 	}
 
-	rowKey, err := extractKey(args[1])
+	rowKey, err := extractString(args[1])
 	if err != nil {
 		return err
 	}
@@ -287,7 +380,7 @@ func (c *client) zscan(args []string) error {
 	if err != nil {
 		return err
 	}
-	colKey, err := extractKey(args[3])
+	colKey, err := extractString(args[3])
 	if err != nil {
 		return err
 	}
@@ -307,7 +400,7 @@ func (c *client) zscan(args []string) error {
 	}
 
 	if len(r.Reply) == 0 {
-		fmt.Println("no record!")
+		fmt.Println("No record!")
 	} else {
 		for i := 0; i < len(r.Reply); i++ {
 			var one = r.Reply[i]
@@ -319,14 +412,25 @@ func (c *client) zscan(args []string) error {
 	return nil
 }
 
+func errCodeMsg(errCode uint8) string {
+	switch errCode {
+	case table.EcCasNotMatch:
+		return "cas not match"
+	case table.EcNoPrivilege:
+		return "no access privilege"
+	default:
+		return fmt.Sprintf("error code %d", errCode)
+	}
+}
+
 func getTableId(arg string) (uint8, error) {
 	tableId, err := strconv.Atoi(arg)
 	if err != nil {
 		return 0, fmt.Errorf("<tableId> %s is not a number", arg)
 	}
 
-	if tableId < 0 || tableId > 200 {
-		return 0, fmt.Errorf("<tableId> %s is out of range (0 ~ 200)", arg)
+	if tableId < 0 || tableId > 255 {
+		return 0, fmt.Errorf("<tableId> %s is out of range [0 ~ 255]", arg)
 	}
 
 	return uint8(tableId), nil
@@ -338,25 +442,45 @@ func getDatabaseId(arg string) (uint8, error) {
 		return 0, fmt.Errorf("<databaseId> %s is not a number", arg)
 	}
 
-	if dbId < 0 || dbId > 200 {
-		return 0, fmt.Errorf("<databaseId> %s is out of range (0 ~ 200)", arg)
+	if dbId == 0 {
+		return 0, fmt.Errorf("database 0 is reserved for internal use only")
+	}
+
+	if dbId < 0 || dbId > 255 {
+		return 0, fmt.Errorf("<databaseId> %s is out of range [1 ~ 255]", arg)
 	}
 
 	return uint8(dbId), nil
 }
 
-func extractKey(arg string) (string, error) {
+func extractString(arg string) (string, error) {
 	if arg[0] == '\'' || arg[0] == '"' {
 		if len(arg) < 2 {
-			return "", fmt.Errorf("Invalid key (%s)", arg)
+			return "", fmt.Errorf("invalid string (%s)", arg)
 		}
 
 		if arg[0] != arg[len(arg)-1] {
-			return "", fmt.Errorf("Invalid key (%s)", arg)
+			return "", fmt.Errorf("invalid string (%s)", arg)
 		}
 
 		return arg[1 : len(arg)-1], nil
 	}
 
 	return arg, nil
+}
+
+func extractQuote(arg string) (string, error) {
+	if arg[0] != '\'' && arg[0] != '"' {
+		return "", fmt.Errorf("not start with quote (%s)", arg)
+	}
+
+	if len(arg) < 2 {
+		return "", fmt.Errorf("invalid string (%s)", arg)
+	}
+
+	if arg[0] != arg[len(arg)-1] {
+		return "", fmt.Errorf("invalid string (%s)", arg)
+	}
+
+	return arg[1 : len(arg)-1], nil
 }

@@ -37,4 +37,5 @@ rocksdb-lib:
 	fi
 
 go-deps:
+	go get github.com/BurntSushi/toml
 	go get github.com/GeertJohan/go.linenoise

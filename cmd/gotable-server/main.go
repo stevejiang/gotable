@@ -15,9 +15,9 @@
 package main
 
 import (
-	"flag"
-	"fmt"
+	"github.com/stevejiang/gotable/config"
 	"github.com/stevejiang/gotable/server"
+	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -27,25 +27,27 @@ import (
 	"syscall"
 )
 
-var (
-	host        = flag.String("h", ":6688", "Server host address ip:port")
-	dbname      = flag.String("db", "db", "Database directory name")
-	masterhost  = flag.String("m", "", "Master server host address ip:port")
-	maxProcs    = flag.Int("cpu", runtime.NumCPU(), "Go Max Procs")
-	profileport = flag.Int("profileport", 0, "profile port, such as 8080")
-	memprofile  = flag.String("memprofile", "", "write memory profile to this file")
-)
-
 func main() {
-	flag.Parse()
-
-	if *maxProcs > 0 {
-		runtime.GOMAXPROCS(*maxProcs)
+	var configFile string
+	if len(os.Args) > 1 {
+		configFile = os.Args[1]
 	}
 
-	if *profileport > 0 {
+	conf, err := config.Load(configFile)
+	if err != nil {
+		log.Fatalf("Failed to load config: %s", err)
+	}
+
+	var maxProcs = conf.Db.MaxCpuNum
+	if maxProcs == 0 {
+		maxProcs = runtime.NumCPU()
+	}
+	runtime.GOMAXPROCS(maxProcs)
+
+	if len(conf.Profile.Host) > 0 {
+		log.Printf("Start profile on http://%s/debug/pprof\n", conf.Profile.Host)
 		go func() {
-			http.ListenAndServe(fmt.Sprintf(":%d", *profileport), nil)
+			http.ListenAndServe(conf.Profile.Host, nil)
 		}()
 	}
 
@@ -54,12 +56,12 @@ func main() {
 		signal.Notify(c, syscall.SIGUSR1)
 
 		var s = <-c
-		fmt.Println("Got signal:", s)
+		log.Println("Get signal:", s)
 
-		if *memprofile != "" {
-			f, err := os.Create(*memprofile)
+		if conf.Profile.Memory != "" {
+			f, err := os.Create(conf.Profile.Memory)
 			if err != nil {
-				fmt.Println("create file failed: ", err)
+				log.Println("create memory profile file failed:", err)
 				return
 			}
 
@@ -70,5 +72,5 @@ func main() {
 		os.Exit(0)
 	}()
 
-	server.Run(*dbname, *host, *masterhost)
+	server.Run(conf)
 }

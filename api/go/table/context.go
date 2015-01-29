@@ -15,11 +15,14 @@
 package table
 
 import (
+	"errors"
 	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/ctrl"
+	"strconv"
 )
 
 // Connection Context to GoTable server.
-// It's NOT safe to use in multiple goroutines.
+// It's safe to use in multiple goroutines.
 type Context struct {
 	cli  *Client
 	dbId uint8
@@ -38,6 +41,29 @@ type Call struct {
 // Get the underling connection Client of the Context.
 func (c *Context) Client() *Client {
 	return c.cli
+}
+
+func (c *Context) Auth(password string) error {
+	if c.cli.isAuthorized(c.dbId) {
+		return nil
+	}
+
+	var args = OneArgs{0, &proto.KeyValue{0, []byte(password), nil, nil, 0}}
+	call, err := c.goOneOp(false, args, proto.CmdAuth, nil)
+	if err != nil {
+		return err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return err
+	}
+
+	t := r.(*OneReply)
+	if t.ErrCode != 0 {
+		return ErrAuthFailed
+	}
+	return nil
 }
 
 func (c *Context) Ping() error {
@@ -188,7 +214,7 @@ func (c *Context) ScanMore(last *ScanReply) (*ScanReply, error) {
 func (c *Context) Dump(oneTable bool, tableId, colSpace uint8,
 	rowKey, colKey []byte, score int64,
 	startUnitId, endUnitId uint16) (*DumpReply, error) {
-	call, err := c.GoDump(oneTable, tableId, colSpace, rowKey, colKey,
+	call, err := c.goDump(oneTable, tableId, colSpace, rowKey, colKey,
 		score, startUnitId, endUnitId, nil)
 	if err != nil {
 		return nil, err
@@ -227,7 +253,9 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 	for {
 		var rec *DumpRecord
 		var lastUnitId = t.ctx.lastUnitId
-		if t.ctx.lastUnitRec == 0 {
+		if t.ctx.lastUnitRec {
+			rec = &t.Reply[len(t.Reply)-1]
+		} else {
 			lastUnitId += 1
 			if t.ctx.oneTable {
 				rec = &DumpRecord{0,
@@ -236,11 +264,9 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 				rec = &DumpRecord{0,
 					&proto.KeyValue{0, nil, nil, nil, 0}}
 			}
-		} else {
-			rec = &t.Reply[len(t.Reply)-1]
 		}
 
-		call, err := c.GoDump(t.ctx.oneTable, rec.TableId, rec.ColSpace,
+		call, err := c.goDump(t.ctx.oneTable, rec.TableId, rec.ColSpace,
 			rec.RowKey, rec.ColKey, rec.Score, lastUnitId, t.ctx.endUnitId, nil)
 		if err != nil {
 			return nil, err
@@ -461,14 +487,10 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 	if asc {
-		p.Direction = 0
-	} else {
-		p.Direction = 1
+		p.Flags |= proto.FlagAscending
 	}
 	if start {
-		p.Start = 1
-	} else {
-		p.Start = 0
+		p.Flags |= proto.FlagStart
 	}
 	p.Num = uint16(num)
 	p.TableId = tableId
@@ -527,7 +549,7 @@ func (c *Context) GoZScanStart(tableId uint8, rowKey []byte,
 		true, asc, orderByScore, num, done)
 }
 
-func (c *Context) GoDump(oneTable bool, tableId, colSpace uint8,
+func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	rowKey, colKey []byte, score int64, startUnitId, endUnitId uint16,
 	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(proto.CmdDump, done)
@@ -540,9 +562,7 @@ func (c *Context) GoDump(oneTable bool, tableId, colSpace uint8,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 	if oneTable {
-		p.OneTable = 1
-	} else {
-		p.OneTable = 0
+		p.Flags |= proto.FlagOneTable
 	}
 	p.StartUnitId = startUnitId
 	p.EndUnitId = endUnitId
@@ -566,11 +586,43 @@ func (c *Context) GoDump(oneTable bool, tableId, colSpace uint8,
 	}
 
 	call.ctx = dumpContext{oneTable, c.dbId, tableId,
-		startUnitId, endUnitId, startUnitId, 0}
+		startUnitId, endUnitId, startUnitId, false}
 
 	c.cli.sending <- call
 
 	return call, nil
+}
+
+// Internal control command.
+// SlaveOf can change the replication settings of a slave on the fly.
+func (c *Context) SlaveOf(mis []ctrl.MasterInfo) error {
+	call := c.cli.newCall(proto.CmdSlaveOf, nil)
+	if call.err != nil {
+		return call.err
+	}
+
+	var p ctrl.PkgSlaveOf
+	p.Mis = mis
+
+	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	if err != nil {
+		c.cli.errCall(call, err)
+		return err
+	}
+
+	call.pkg = pkg
+	c.cli.sending <- call
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return err
+	}
+
+	t := r.(*ctrl.PkgSlaveOf)
+	if t.ErrMsg != "" {
+		return errors.New(t.ErrMsg)
+	}
+	return nil
 }
 
 func doOneReply(call *Call, err error) (*OneReply, error) {
@@ -619,6 +671,8 @@ func (call *Call) Reply() (interface{}, error) {
 	}
 
 	switch call.cmd {
+	case proto.CmdAuth:
+		fallthrough
 	case proto.CmdPing:
 		fallthrough
 	case proto.CmdIncr:
@@ -650,6 +704,10 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
+		if p.ErrCode != 0 {
+			return nil, errors.New("error code " + strconv.Itoa(int(p.ErrCode)))
+		}
+
 		var r MultiReply
 		r.Reply = make([]OneReply, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
@@ -666,9 +724,13 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
+		if p.ErrCode != 0 {
+			return nil, errors.New("error code " + strconv.Itoa(int(p.ErrCode)))
+		}
+
 		var r ScanReply
 		r.ctx = call.ctx.(scanContext)
-		r.End = (p.End != 0)
+		r.End = (p.Flags&proto.FlagEnd != 0)
 		r.Reply = make([]*proto.KeyValue, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
 			r.Reply[i] = &p.Kvs[i].KeyValue
@@ -683,17 +745,30 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
+		if p.ErrCode != 0 {
+			return nil, errors.New("error code " + strconv.Itoa(int(p.ErrCode)))
+		}
+
 		var r DumpReply
 		r.ctx = call.ctx.(dumpContext)
 		r.ctx.lastUnitId = p.LastUnitId
-		r.ctx.lastUnitRec = p.LastUnitRec
-		r.End = (p.End != 0)
+		r.ctx.lastUnitRec = (p.Flags&proto.FlagLastUnitRec != 0)
+		r.End = (p.Flags&proto.FlagEnd != 0)
 		r.Reply = make([]DumpRecord, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
 			r.Reply[i].ColSpace = p.Kvs[i].ColSpace
 			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
 		}
 		return &r, nil
+
+	case proto.CmdSlaveOf:
+		var p ctrl.PkgSlaveOf
+		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
+		if err != nil {
+			call.err = err
+			return nil, call.err
+		}
+		return &p, nil
 	}
 
 	return nil, ErrUnknownCmd

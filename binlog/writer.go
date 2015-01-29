@@ -72,6 +72,8 @@ type Request struct {
 
 type BinLog struct {
 	dir     string
+	memSize int
+	keepNum int
 	reqChan chan *Request
 
 	binFile *os.File
@@ -97,20 +99,26 @@ type BinLog struct {
 	rseqs []*readerSeq // Most recent reader seq
 }
 
-func NewBinLog(dir string) *BinLog {
-	os.MkdirAll(dir, os.ModeDir|os.ModePerm)
+func NewBinLog(dir string, memSize, keepNum int) *BinLog {
+	err := os.MkdirAll(dir, os.ModeDir|os.ModePerm)
+	if err != nil {
+		log.Printf("Invalid binlog directory (%s): %s\n", dir, err)
+		return nil
+	}
 
 	var bin = new(BinLog)
 	bin.dir = dir
+
 	bin.reqChan = make(chan *Request, 10000)
 
 	bin.msChanged = true
 	bin.logSeq = 1000000 // start from here
 	bin.memlog = make([]byte, memBinLogSize)
 
-	err := bin.init()
+	err = bin.init()
 	if err != nil {
-		log.Fatalf("init binlog failed: %s\n", err)
+		log.Printf("Init binlog failed: %s\n", err)
+		return nil
 	}
 
 	log.Printf("Last binlog: fileIdx %d, logSeq %d\n", bin.fileIdx, bin.logSeq)

@@ -44,7 +44,7 @@ func main() {
 	fmt.Println("Welcome to GoTable.")
 	writeHelp()
 	for {
-		line, err := linenoise.Line("prompt> ")
+		line, err := linenoise.Line(fmt.Sprintf("gotable@%d> ", cli.dbId))
 		if err != nil {
 			if err == linenoise.KillSignalError {
 				quit()
@@ -58,12 +58,12 @@ func main() {
 			continue
 		}
 
+		linenoise.AddHistory(line)
+
 		if len(fields) == 0 {
 			writeUnrecognized()
 			continue
 		}
-
-		linenoise.AddHistory(line)
 
 		var cmd = strings.ToLower(fields[0])
 		switch cmd {
@@ -89,8 +89,12 @@ func main() {
 			checkError(cli.scan(fields[1:]))
 		case "zscan":
 			checkError(cli.zscan(fields[1:]))
+		case "auth":
+			checkError(cli.auth(fields[1:]))
 		case "use":
 			checkError(cli.use(fields[1:]))
+		case "slaveof":
+			checkError(cli.slaveOf(fields[1:]))
 
 		case "?":
 			fallthrough
@@ -117,28 +121,30 @@ func quit() {
 }
 
 func writeHelp() {
-	fmt.Println(" help                    print this message")
-	fmt.Println("  use <databaseId>       use database (0 ~ 200)")
+	fmt.Println(" help                      print this message")
+	fmt.Println(" auth <dbId> <password>    authorize access to database")
+	fmt.Println("  use <dbId>               use database (1 ~ 255)")
 	fmt.Println("  set <tableId> <rowKey> <colKey> <value> [score]")
-	fmt.Println("                         set key/value for table in selected database")
+	fmt.Println("                           set key/value for table in selected database")
 	fmt.Println("  get <tableId> <rowKey> <colKey>")
-	fmt.Println("                         get key/value for table in selected database")
+	fmt.Println("                           get key/value for table in selected database")
 	fmt.Println("  del <tableId> <rowKey> <colKey>")
-	fmt.Println("                         del key for table in selected database")
+	fmt.Println("                           del key for table in selected database")
 	fmt.Println(" incr <tableId> <rowKey> <colKey> [score]")
-	fmt.Println("                         incr key score for table in selected database")
+	fmt.Println("                           incr key score for table in selected database")
 	fmt.Println(" zset <tableId> <rowKey> <colKey> <value> [score]")
-	fmt.Println("                         zset key/value for table in selected database")
+	fmt.Println("                           zset key/value for table in selected database")
 	fmt.Println(" zget <tableId> <rowKey> <colKey>")
-	fmt.Println("                       zget key/value for table in selected database")
+	fmt.Println("                           zget key/value for table in selected database")
 	fmt.Println(" zdel <tableId> <rowKey> <colKey>")
-	fmt.Println("                         zdel key for table in selected database")
+	fmt.Println("                           zdel key for table in selected database")
 	fmt.Println("zincr <tableId> <rowKey> <colKey> [score]")
-	fmt.Println("                         zincr key score for table in selected database")
+	fmt.Println("                           zincr key score for table in selected database")
 	fmt.Println(" scan <tableId> <rowKey> <colKey> [num]")
 	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> [num]")
-	fmt.Println("clear                    clear the screen")
-	fmt.Println(" quit                    exit")
+	fmt.Println("slaveof [masterHost]       be slave of master host ip:port")
+	fmt.Println("clear                      clear the screen")
+	fmt.Println(" quit                      exit")
 	fmt.Println("")
 	fmt.Println("Use the arrow up and down keys to walk through history.")
 	fmt.Println("")

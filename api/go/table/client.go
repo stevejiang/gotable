@@ -20,6 +20,7 @@ import (
 	"bufio"
 	"errors"
 	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/util"
 	"io"
 	"log"
 	"net"
@@ -31,6 +32,7 @@ const Version = "0.1" // GoTable version
 var (
 	ErrShutdown     = errors.New("connection is shut down")
 	ErrUnknownCmd   = errors.New("unknown cmd")
+	ErrAuthFailed   = errors.New("authorize failed")
 	ErrCallNotReady = errors.New("call not ready to reply")
 	ErrInvScanNum   = errors.New("invalid scan request num")
 	ErrScanEnded    = errors.New("already scan/dump to end")
@@ -46,14 +48,15 @@ const (
 	EcCasNotMatch = 1  // CAS not match, get new CAS and try again
 	EcTempFail    = 2  // Temporary failed, retry may fix this
 	EcNoPrivilege = 11 // No access privilege
-	EcReadFail    = 12 // Read failed
-	EcWriteFail   = 13 // Write failed
-	EcDecodeFail  = 14 // Decode request PKG failed
-	EcInvDbId     = 15 // Invalid DB ID (cannot be 0)
-	EcInvRowKey   = 16 // Invalid RowKey (cannot be empty)
-	EcInvColKey   = 17 // Invalid ColKey (length < 65500B)
-	EcInvValue    = 18 // Invalid Value (length < 512KB)
-	EcInvScanNum  = 19 // Scan number out of range
+	EcWriteSlaver = 12 // Can NOT write slaver directly
+	EcReadFail    = 13 // Read failed
+	EcWriteFail   = 14 // Write failed
+	EcDecodeFail  = 15 // Decode request PKG failed
+	EcInvDbId     = 16 // Invalid DB ID (cannot be 0)
+	EcInvRowKey   = 17 // Invalid RowKey (cannot be empty)
+	EcInvColKey   = 18 // Invalid ColKey (length < 65500B)
+	EcInvValue    = 19 // Invalid Value (length < 512KB)
+	EcInvScanNum  = 20 // Scan number out of range
 )
 
 // A Client is a connection to GoTable server.
@@ -65,6 +68,7 @@ type Client struct {
 	sending chan *Call
 
 	mtx      sync.Mutex // protects following
+	authBM   *util.BitMap
 	seq      uint64
 	pending  map[uint64]*Call
 	closing  bool // user has called Close
@@ -146,6 +150,36 @@ func (c *Client) doClose() error {
 	return err
 }
 
+// Test whether already athorized.
+func (c *Client) isAuthorized(dbId uint8) bool {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	if c.authBM == nil {
+		return false
+	}
+
+	if c.authBM.Get(0) {
+		return true
+	}
+
+	return dbId != 0 && c.authBM.Get(uint(dbId))
+}
+
+// Cache authorize result. When authorizing again, return directly.
+func (c *Client) cachAuth(pkg []byte) {
+	var one proto.PkgOneOp
+	_, err := one.Decode(pkg)
+	if err == nil && one.ErrCode == 0 {
+		c.mtx.Lock()
+		if c.authBM == nil {
+			c.authBM = util.NewBitMap(256 / 8)
+		}
+		c.authBM.Set(uint(one.DbId))
+		c.mtx.Unlock()
+	}
+}
+
 func (c *Client) recv() {
 	var headBuf = make([]byte, proto.HeadSize)
 	var head proto.PkgHead
@@ -166,6 +200,10 @@ func (c *Client) recv() {
 			delete(c.pending, head.Seq)
 		}
 		c.mtx.Unlock()
+
+		if proto.CmdAuth == head.Cmd {
+			c.cachAuth(pkg)
+		}
 
 		if call != nil {
 			call.pkg = pkg

@@ -31,6 +31,9 @@ var (
 )
 
 const (
+	// Front CTRL
+	CmdAuth = 0x9
+
 	// Front Read
 	CmdPing = 0x10
 	CmdGet  = 0x11
@@ -50,7 +53,8 @@ const (
 	CmdSync = 0xB0
 
 	// Inner CTRL
-	CmdMaster = 0xE0
+	CmdMaster  = 0xD0
+	CmdSlaveOf = 0xD1
 )
 
 const (
@@ -108,20 +112,12 @@ func (head *PkgHead) Encode(pkg []byte) (int, error) {
 	return HeadSize, nil
 }
 
-func OverWriteLen(pkg []byte, pkgLen int) error {
-	if len(pkg) < HeadSize {
-		return ErrPkgLen
-	}
+func OverWriteLen(pkg []byte, pkgLen int) {
 	binary.BigEndian.PutUint32(pkg[10:], uint32(pkgLen))
-	return nil
 }
 
-func OverWriteSeq(pkg []byte, seq uint64) error {
-	if len(pkg) < HeadSize {
-		return ErrPkgLen
-	}
+func OverWriteSeq(pkg []byte, seq uint64) {
 	binary.BigEndian.PutUint64(pkg[2:], seq)
-	return nil
 }
 
 func ReadPkg(r *bufio.Reader, headBuf []byte, head *PkgHead,

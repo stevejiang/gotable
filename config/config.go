@@ -15,81 +15,61 @@
 package config
 
 import (
-	"sync"
+	"github.com/BurntSushi/toml"
+	"log"
 )
 
-type MasterList struct {
-	mtx sync.Mutex
-	m1  map[string]uint16
-	m2  map[uint16]string
+type Config struct {
+	Db      database `toml:"database"`
+	Bin     binlog   `toml:"binlog"`
+	Auth    auth
+	Profile profile
 }
 
-func (m *MasterList) Add(mAddr string) uint16 {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if id, ok := m.m1[mAddr]; ok {
-		return id
+type database struct {
+	Data      string
+	Host      string
+	MaxCpuNum int `toml:"max_cpu_num"`
+}
+
+type binlog struct {
+	MemSize int `toml:"memory_size"`
+	KeepNum int `toml:"keep_num"`
+}
+
+type auth struct {
+	AdminPwd string `toml:"admin_password"`
+}
+
+type profile struct {
+	Memory string
+	Host   string
+}
+
+func Load(fileName string) (*Config, error) {
+	var conf Config
+	var err error
+	if len(fileName) == 0 {
+		log.Println("Use default configuration")
+		_, err = toml.Decode(defaultConfig, &conf)
+	} else {
+		log.Printf("Use configuration file %s\n", fileName)
+		_, err = toml.DecodeFile(fileName, &conf)
 	}
 
-	var i uint16
-	for i = 1; i <= 65535; i++ {
-		if mAddr, ok := m.m2[i]; !ok {
-			m.m1[mAddr] = i
-			m.m2[i] = mAddr
-			return i
-		}
+	if err != nil {
+		return nil, err
 	}
-
-	return 0
+	return &conf, nil
 }
 
-func (m *MasterList) Get(mAddr string) uint16 {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if id, ok := m.m1[mAddr]; ok {
-		return id
-	}
+var defaultConfig = `
+[database]
+host = "0.0.0.0:6688"
+data = "data"
 
-	return 0
-}
+[binlog]
+memory_size = 8
+keep_num = 5
 
-func (m *MasterList) GetId(id uint16) string {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if mAddr, ok := m.m2[id]; ok {
-		return mAddr
-	}
-
-	return ""
-}
-
-func (m *MasterList) Del(mAddr string) uint16 {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if id, ok := m.m1[mAddr]; ok {
-		delete(m.m1, mAddr)
-		delete(m.m2, id)
-		return id
-	}
-
-	return 0
-}
-
-func (m *MasterList) DelId(id uint16) string {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-	if mAddr, ok := m.m2[id]; ok {
-		delete(m.m1, mAddr)
-		delete(m.m2, id)
-		return mAddr
-	}
-
-	return ""
-}
-
-func (m *MasterList) Save() error {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
-	return nil
-}
+`
