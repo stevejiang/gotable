@@ -25,7 +25,7 @@ download_rocksdb() {
     fi
 
     make -C $ROCKSDB static_lib
-	if [ "$?" != "0" ]; then
+    if [ "$?" != "0" ]; then
         echo "build rocksdb failed!"
         exit 2
     fi
@@ -143,7 +143,7 @@ if [ "$1" = "-build_rocksdb" ]; then
     fi
 
     download_rocksdb
-	go get ./store/...
+    go get ./store/...
 else
     write_build_flags_to_file $1
 fi
