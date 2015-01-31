@@ -100,9 +100,16 @@ func (c *client) slaveOf(args []string) error {
 	var mis []ctrl.MasterInfo
 	for i := 0; i < len(args); i++ {
 		var oneHost string
-		oneHost, err = extractString(args[i])
+		oneHost, err = extractQuote(args[i])
 		if err != nil {
-			return err
+			if len(args) == 1 {
+				oneHost, err = extractString(args[i])
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
 		}
 		tokens := strings.Split(oneHost, " ")
 		if len(tokens) == 0 {
@@ -110,6 +117,9 @@ func (c *client) slaveOf(args []string) error {
 		}
 		idx := strings.Index(tokens[0], ":")
 		if idx <= 0 || idx >= len(tokens[0])-1 {
+			return fmt.Errorf("invalid host %s", tokens[0])
+		}
+		if strings.Contains(tokens[0], " \t\r\n") {
 			return fmt.Errorf("invalid host %s", tokens[0])
 		}
 

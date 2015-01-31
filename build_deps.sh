@@ -9,43 +9,33 @@ ROCKSDB_VER=rocksdb-3.8
 ROCKSDB_URL=$DEPS_ULR/$ROCKSDB_VER.tar.gz
 ROCKSDB=$DEPS_DIR/$ROCKSDB_VER
 
-if [ ! -d "$DEPS_DIR" ]; then
-	mkdir -p $DEPS_DIR
-fi
+download_rocksdb() {
+    rm -rf $ROCKSDB
+    tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR 2>/dev/null
+    if [ "$?" != "0" ]; then
+        curl -L $ROCKSDB_URL -o $ROCKSDB.tar.gz
+        if [ "$?" != "0" ]; then
+            wget --no-check-certificate $ROCKSDB_URL -O $ROCKSDB.tar.gz
+        fi
+        tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR
+    fi
+    if [ "$?" != "0" ]; then
+        echo "download rocksdb failed!"
+        exit 1
+    fi
 
-if [ "$1" = "-dl" ]; then
-	# Download rocksdb
-	rm -rf $ROCKSDB
-	tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR 2>/dev/null
+    make -C $ROCKSDB static_lib
 	if [ "$?" != "0" ]; then
-		curl -L $ROCKSDB_URL -o $ROCKSDB.tar.gz
-		if [ "$?" != "0" ]; then
-			wget --no-check-certificate $ROCKSDB_URL -O $ROCKSDB.tar.gz
-		fi
-		tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR
-	fi
-	if [ "$?" != "0" ]; then
-		echo "Download rocksdb failed!"
-		exit 1
-	fi
-	exit 0
-fi
+        echo "build rocksdb failed!"
+        exit 2
+    fi
+}
 
 
 # Generate build flags
 CROSS_COMPILE=
 COMMON_FLAGS=
 PLATFORM_LDFLAGS=
-
-OUTPUT=$1
-if test -z "$OUTPUT"; then
-  echo "usage: $0 <output-filename>" >&2
-  exit 1
-fi
-
-# Delete existing output, if it exists
-rm -f "$OUTPUT"
-touch "$OUTPUT"
 
 if test -z "$CC"; then
    CC=cc
@@ -54,7 +44,6 @@ fi
 if test -z "$CXX"; then
     CXX=g++
 fi
-
 
 if [ "$CROSS_COMPILE" = "true" ]; then
     # Cross-compiling; do not try any compilation tests.
@@ -122,8 +111,39 @@ EOF
     fi
 fi
 
+write_build_flags_to_file() {
+    OUTPUT=$1
+    if test -z "$OUTPUT"; then
+      echo "usage: $0 <output-filename>" >&2
+      exit 1
+    fi
 
-echo "PLATFORM_LDFLAGS=$PLATFORM_LDFLAGS" >> $OUTPUT
-echo "COMMON_FLAGS=$COMMON_FLAGS" >> $OUTPUT
-echo "DEPS_DIR=$DEPS_DIR" >> $OUTPUT
-echo "ROCKSDB=$ROCKSDB" >> $OUTPUT
+    # Delete existing output, if it exists
+    rm -f "$OUTPUT"
+    touch "$OUTPUT"
+
+    echo "DEPS_DIR=$DEPS_DIR" >> $OUTPUT
+    echo "ROCKSDB=$ROCKSDB" >> $OUTPUT
+    echo "PLATFORM_LDFLAGS=$PLATFORM_LDFLAGS" >> $OUTPUT
+    echo "COMMON_FLAGS=$COMMON_FLAGS" >> $OUTPUT
+}
+
+export CGO_CFLAGS="$CGO_CFLAGS -g -O2 -DNDEBUG -I$ROCKSDB/include"
+export CGO_LDFLAGS="$CGO_LDFLAGS -L$ROCKSDB -lrocksdb $PLATFORM_LDFLAGS"
+
+if [ ! -d "$DEPS_DIR" ]; then
+    mkdir -p $DEPS_DIR
+fi
+
+if [ "$1" = "-build_rocksdb" ]; then
+    # Test whether rocksdb is installed correctly
+    go get ./store/...  2>/dev/null
+    if [ "$?" = 0 ]; then
+        exit 0
+    fi
+
+    download_rocksdb
+	go get ./store/...
+else
+    write_build_flags_to_file $1
+fi

@@ -28,14 +28,21 @@ import (
 	"sync"
 )
 
+const (
+	slaverInitMode = iota + 1
+	slaverCleanMode
+	slaverReadyMode
+)
+
 type Server struct {
 	tbl     *store.Table
 	bin     *binlog.BinLog
 	mc      *config.MasterConfig
 	reqChan *RequestChan
 
-	rwMtx sync.RWMutex // protects following
-	sls   []*slaver
+	rwMtx     sync.RWMutex // protects following
+	slaveMode int
+	sls       []*slaver
 }
 
 func NewServer(conf *config.Config) *Server {
@@ -72,7 +79,7 @@ func NewServer(conf *config.Config) *Server {
 
 func (srv *Server) isMaster() bool {
 	srv.rwMtx.RLock()
-	isMaster := (len(srv.sls) == 0)
+	isMaster := (srv.slaveMode == 0)
 	srv.rwMtx.RUnlock()
 
 	return isMaster
@@ -433,8 +440,21 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 			return
 		}
 
-		//TODO: clear old data
-		srv.connectToMaster(ps.Mis)
+		srv.rwMtx.Lock()
+		sls := srv.sls
+		srv.sls = nil
+		if len(ps.Mis) == 0 {
+			srv.slaveMode = 0
+		} else {
+			srv.slaveMode = slaverInitMode
+		}
+		srv.rwMtx.Unlock()
+
+		for i := 0; i < len(sls); i++ {
+			sls[i].Close()
+		}
+
+		go srv.connectToMaster(ps.Mis)
 
 		srv.replySlaveOf(en, req, "") // Success
 
@@ -447,16 +467,11 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 }
 
 func (srv *Server) connectToMaster(mis []ctrl.MasterInfo) {
-	srv.rwMtx.Lock()
-	sls := srv.sls
-	srv.sls = nil
-	srv.rwMtx.Unlock()
+	// Remove old data
+	//TODO
 
-	for i := 0; i < len(sls); i++ {
-		sls[i].Close()
-	}
-
-	sls = nil
+	// Connect to master
+	var sls []*slaver
 	for i := 0; i < len(mis); i++ {
 		var slv = newSlaver(mis[i], srv.reqChan, srv.bin)
 		go slv.goConnectToMaster()

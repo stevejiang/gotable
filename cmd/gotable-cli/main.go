@@ -142,7 +142,7 @@ func writeHelp() {
 	fmt.Println("                           zincr key score for table in selected database")
 	fmt.Println(" scan <tableId> <rowKey> <colKey> [num]")
 	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> [num]")
-	fmt.Println("slaveof [masterHost]       be slave of master host ip:port")
+	fmt.Println("slaveof [host]             be slave of master host ip:port")
 	fmt.Println("clear                      clear the screen")
 	fmt.Println(" quit                      exit")
 	fmt.Println("")
