@@ -253,17 +253,14 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 	for {
 		var rec *DumpRecord
 		var lastUnitId = t.ctx.lastUnitId
-		if t.ctx.lastUnitRec {
-			rec = &t.Reply[len(t.Reply)-1]
-		} else {
+		if t.ctx.unitStart {
 			lastUnitId += 1
+			rec = &DumpRecord{0, &proto.KeyValue{0, nil, nil, nil, 0}}
 			if t.ctx.oneTable {
-				rec = &DumpRecord{0,
-					&proto.KeyValue{t.ctx.tableId, nil, nil, nil, 0}}
-			} else {
-				rec = &DumpRecord{0,
-					&proto.KeyValue{0, nil, nil, nil, 0}}
+				rec.TableId = t.ctx.tableId
 			}
+		} else {
+			rec = &t.Reply[len(t.Reply)-1]
 		}
 
 		call, err := c.goDump(t.ctx.oneTable, rec.TableId, rec.ColSpace,
@@ -302,23 +299,13 @@ func (c *Context) goOneOp(zop bool, args OneArgs, cmd uint8,
 	p.RowKey = args.RowKey
 	p.ColKey = args.ColKey
 
-	if args.Cas != 0 {
-		p.Cas = args.Cas
-		p.CtrlFlag |= proto.CtrlCas
-	}
-	if args.Score != 0 {
-		p.Score = args.Score
-		p.CtrlFlag |= proto.CtrlScore
-	}
-	if len(args.Value) != 0 {
-		p.Value = args.Value
-		p.CtrlFlag |= proto.CtrlValue
-	}
+	p.SetCas(args.Cas)
+	p.SetScore(args.Score)
+	p.SetValue(args.Value)
 
 	// ZGet, ZSet, ZDel, ZIncr
 	if zop {
-		p.ColSpace = proto.ColSpaceScore1
-		p.CtrlFlag |= proto.CtrlColSpace
+		p.PkgFlag |= proto.FlagZop
 	}
 
 	call.pkg = make([]byte, p.Length())
@@ -399,30 +386,20 @@ func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 
+	// ZMGet, ZMSet, ZMDel, ZMIncr
+	if zop {
+		p.PkgFlag |= proto.FlagZop
+	}
+
 	p.Kvs = make([]proto.KeyValueCtrl, len(args.Args))
 	for i := 0; i < len(args.Args); i++ {
 		p.Kvs[i].TableId = args.Args[i].TableId
 		p.Kvs[i].RowKey = args.Args[i].RowKey
 		p.Kvs[i].ColKey = args.Args[i].ColKey
 
-		if args.Args[i].Cas != 0 {
-			p.Kvs[i].Cas = args.Args[i].Cas
-			p.Kvs[i].CtrlFlag |= proto.CtrlCas
-		}
-		if args.Args[i].Score != 0 {
-			p.Kvs[i].Score = args.Args[i].Score
-			p.Kvs[i].CtrlFlag |= proto.CtrlScore
-		}
-		if len(args.Args[i].Value) != 0 {
-			p.Kvs[i].Value = args.Args[i].Value
-			p.Kvs[i].CtrlFlag |= proto.CtrlValue
-		}
-
-		// ZMGet, ZMSet, ZMDel, ZMIncr
-		if zop {
-			p.Kvs[i].ColSpace = proto.ColSpaceScore1
-			p.Kvs[i].CtrlFlag |= proto.CtrlColSpace
-		}
+		p.Kvs[i].SetCas(args.Args[i].Cas)
+		p.Kvs[i].SetScore(args.Args[i].Score)
+		p.Kvs[i].SetValue(args.Args[i].Value)
 	}
 
 	call.pkg = make([]byte, p.Length())
@@ -487,10 +464,10 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 	if asc {
-		p.Flags |= proto.FlagAscending
+		p.PkgFlag |= proto.FlagAscending
 	}
 	if start {
-		p.Flags |= proto.FlagStart
+		p.PkgFlag |= proto.FlagStart
 	}
 	p.Num = uint16(num)
 	p.TableId = tableId
@@ -499,16 +476,12 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 
 	// ZScan
 	if zop {
+		p.PkgFlag |= proto.FlagZop
+		p.SetScore(score)
 		if orderByScore {
-			p.ColSpace = proto.ColSpaceScore1
+			p.SetColSpace(proto.ColSpaceScore1)
 		} else {
-			p.ColSpace = proto.ColSpaceScore2
-		}
-		p.CtrlFlag |= proto.CtrlColSpace
-
-		if score != 0 {
-			p.Score = score
-			p.CtrlFlag |= proto.CtrlScore
+			p.SetColSpace(proto.ColSpaceScore2)
 		}
 	}
 
@@ -562,21 +535,15 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 	if oneTable {
-		p.Flags |= proto.FlagOneTable
+		p.PkgFlag |= proto.FlagOneTable
 	}
 	p.StartUnitId = startUnitId
 	p.EndUnitId = endUnitId
-	if colSpace != 0 {
-		p.ColSpace = colSpace
-		p.CtrlFlag |= proto.CtrlColSpace
-	}
 	p.TableId = tableId
 	p.RowKey = rowKey
 	p.ColKey = colKey
-	if score != 0 {
-		p.Score = score
-		p.CtrlFlag |= proto.CtrlScore
-	}
+	p.SetColSpace(colSpace)
+	p.SetScore(score)
 
 	call.pkg = make([]byte, p.Length())
 	_, err := p.Encode(call.pkg)
@@ -730,7 +697,7 @@ func (call *Call) Reply() (interface{}, error) {
 
 		var r ScanReply
 		r.ctx = call.ctx.(scanContext)
-		r.End = (p.Flags&proto.FlagEnd != 0)
+		r.End = (p.PkgFlag&proto.FlagEnd != 0)
 		r.Reply = make([]*proto.KeyValue, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
 			r.Reply[i] = &p.Kvs[i].KeyValue
@@ -752,8 +719,8 @@ func (call *Call) Reply() (interface{}, error) {
 		var r DumpReply
 		r.ctx = call.ctx.(dumpContext)
 		r.ctx.lastUnitId = p.LastUnitId
-		r.ctx.lastUnitRec = (p.Flags&proto.FlagLastUnitRec != 0)
-		r.End = (p.Flags&proto.FlagEnd != 0)
+		r.ctx.unitStart = (p.PkgFlag&proto.FlagUnitStart != 0)
+		r.End = (p.PkgFlag&proto.FlagEnd != 0)
 		r.Reply = make([]DumpRecord, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
 			r.Reply[i].ColSpace = p.Kvs[i].ColSpace

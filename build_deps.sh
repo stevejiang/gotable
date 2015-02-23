@@ -137,9 +137,13 @@ fi
 
 if [ "$1" = "-build_rocksdb" ]; then
     # Test whether rocksdb is installed correctly
-    go get ./store/...  2>/dev/null
+	$CXX $CGO_CFLAGS -x c++ - $CGO_LDFLAGS -lpthread -o /dev/null  <<EOF
+      #include <rocksdb/c.h>
+      int main() {rocksdb_options_create();}
+EOF
     if [ "$?" = 0 ]; then
-        exit 0
+        go get ./store/...
+        exit $?
     fi
 
     download_rocksdb

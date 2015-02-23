@@ -1,6 +1,6 @@
 # GoTable
 
-GoTable is a high performance NoSQL database powered by [Go](http://golang.org/) and [RocksDB](http://rocksdb.org/). It's inspired by BigTable/HBase and Redis/LedisDB.
+GoTable is a high performance NoSQL database powered by [Go](http://golang.org/) and [RocksDB](http://rocksdb.org/). It's inspired by BigTable and Redis.
 
 ## Features
 
