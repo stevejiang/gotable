@@ -24,14 +24,25 @@ import (
 )
 
 var testTbl *Table
-var testRwMtx sync.RWMutex
 var testTblOnce sync.Once
+var testAuth MockAuth
+
+type MockAuth struct {
+}
+
+func (ma MockAuth) IsAuth(dbId uint8) bool {
+	return true
+}
+
+func (ma MockAuth) SetAuth(dbId uint8) {
+
+}
 
 func getTestTable() *Table {
 	f := func() {
 		tblDir := "/tmp/test_gotable/table"
 		os.RemoveAll(tblDir)
-		testTbl = NewTable(&testRwMtx, tblDir)
+		testTbl = NewTable(tblDir)
 	}
 
 	testTblOnce.Do(f)
@@ -62,7 +73,7 @@ func TestTableSet(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, true)
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth, false)
 	if !ok {
 		t.Fatalf("Table Set failed")
 	}
@@ -102,7 +113,7 @@ func TestTableGet(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg})
+	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth)
 
 	var out proto.PkgOneOp
 	_, err = out.Decode(pkg)
@@ -149,7 +160,7 @@ func TestTableSetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, true)
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth, false)
 	if ok {
 		t.Fatalf("Table Set should fail")
 	}
@@ -191,7 +202,7 @@ func TestTableGetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg})
+	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth)
 
 	var out proto.PkgOneOp
 	_, err = out.Decode(pkg)
@@ -225,7 +236,8 @@ func TestTableGetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, true)
+	var ok bool
+	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, testAuth, false)
 	if !ok {
 		t.Fatalf("Table Set failed")
 	}
@@ -241,7 +253,7 @@ func TestTableGetCas(t *testing.T) {
 	}
 
 	// Set again
-	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, true)
+	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, testAuth, false)
 	if ok {
 		t.Fatalf("Table Set should fail since cas is cleared")
 	}
@@ -257,7 +269,7 @@ func TestTableGetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg})
+	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth)
 
 	out = proto.PkgOneOp{}
 	_, err = out.Decode(pkg)

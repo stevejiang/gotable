@@ -123,7 +123,7 @@ func quit() {
 func writeHelp() {
 	fmt.Println(" help                      print this message")
 	fmt.Println(" auth <dbId> <password>    authorize access to database")
-	fmt.Println("  use <dbId>               use database (1 ~ 255)")
+	fmt.Println("  use <dbId>               use database [0 ~ 254]")
 	fmt.Println("  set <tableId> <rowKey> <colKey> <value> [score]")
 	fmt.Println("                           set key/value for table in selected database")
 	fmt.Println("  get <tableId> <rowKey> <colKey>")
@@ -141,7 +141,9 @@ func writeHelp() {
 	fmt.Println("zincr <tableId> <rowKey> <colKey> [score]")
 	fmt.Println("                           zincr key score for table in selected database")
 	fmt.Println(" scan <tableId> <rowKey> <colKey> [num]")
+	fmt.Println("                           scan columns of rowKey in ASC order")
 	fmt.Println("zscan <tableId> <rowKey> <score> <colKey> [num]")
+	fmt.Println("                           zscan columns of rowKey in ASC order by score")
 	fmt.Println("slaveof [host]             be slave of master host ip:port")
 	fmt.Println("clear                      clear the screen")
 	fmt.Println(" quit                      exit")

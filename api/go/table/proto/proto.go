@@ -58,6 +58,7 @@ const (
 )
 
 const (
+	AdminDbId    = 255
 	HeadSize     = 14
 	MaxUint8     = 255
 	MaxUint16    = 65535

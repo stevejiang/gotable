@@ -95,10 +95,10 @@ func (tbl *Table) Auth(req *PkgArgs, au Authorize) []byte {
 	var authDB uint8
 
 	var already bool
-	if au.IsAuth(0) {
-		authDB = 0
+	if au.IsAuth(proto.AdminDbId) {
+		authDB = proto.AdminDbId
 		already = true
-	} else if in.DbId != 0 && au.IsAuth(in.DbId) {
+	} else if in.DbId != proto.AdminDbId && au.IsAuth(in.DbId) {
 		authDB = in.DbId
 		already = true
 	}
@@ -110,8 +110,8 @@ func (tbl *Table) Auth(req *PkgArgs, au Authorize) []byte {
 
 	tbl.mtx.Lock()
 	// Admin password
-	if tbl.authPwd == nil || tbl.authPwd[0] == password {
-		authDB = 0
+	if tbl.authPwd == nil || tbl.authPwd[proto.AdminDbId] == password {
+		authDB = proto.AdminDbId
 	} else {
 		// Selected DB password
 		if len(password) > 0 && tbl.authPwd[in.DbId] == password {
@@ -440,7 +440,7 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				zop := (in.PkgFlag&proto.FlagZop != 0)
 				err = tbl.getKV(nil, zop, in.DbId, &in.KeyValueCtrl)
@@ -469,7 +469,7 @@ func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				var srOpt = tbl.db.NewSnapReadOptions()
 				defer srOpt.Release()
@@ -527,7 +527,7 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				zop := (in.PkgFlag&proto.FlagZop != 0)
 				tbl.rwMtx.RLock()
@@ -559,7 +559,7 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				var wb = tbl.db.NewWriteBatch()
 				defer wb.Close()
@@ -594,7 +594,7 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				zop := (in.PkgFlag&proto.FlagZop != 0)
 				tbl.rwMtx.RLock()
@@ -626,7 +626,7 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				var wb = tbl.db.NewWriteBatch()
 				defer wb.Close()
@@ -661,7 +661,7 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				zop := (in.PkgFlag&proto.FlagZop != 0)
 				tbl.rwMtx.RLock()
@@ -693,7 +693,7 @@ func (tbl *Table) MIncr(req *PkgArgs, au Authorize, replication bool) ([]byte, b
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
-		if in.DbId != 0 {
+		if in.DbId != proto.AdminDbId {
 			if au.IsAuth(in.DbId) {
 				var wb = tbl.db.NewWriteBatch()
 				defer wb.Close()
@@ -840,7 +840,7 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 
 	out.PkgFlag = in.PkgFlag
 
-	if in.DbId == 0 {
+	if in.DbId == proto.AdminDbId {
 		return errorHandle(&out, table.EcInvDbId)
 	}
 
@@ -956,7 +956,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	out.PkgFlag = in.PkgFlag
 	out.PkgFlag &^= (proto.FlagUnitStart | proto.FlagEnd)
 
-	if in.DbId == 0 {
+	if in.DbId == proto.AdminDbId {
 		return errorHandle(&out, table.EcInvDbId)
 	}
 

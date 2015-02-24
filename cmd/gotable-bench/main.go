@@ -108,7 +108,7 @@ func benchmark(cliPool *table.Pool, name string,
 			defer g.Done()
 
 			client, _ := cliPool.Get(1)
-			ctx := client.NewContext(1)
+			ctx := client.NewContext(0)
 
 			hist := &hists[id]
 			hist.Clear()

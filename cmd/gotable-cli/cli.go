@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"github.com/stevejiang/gotable/api/go/table"
+	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/ctrl"
 	"strconv"
 	"strings"
@@ -35,7 +36,7 @@ func newClient() *client {
 		return nil
 	}
 
-	c.dbId = 1
+	c.dbId = 0
 	c.c = cli.NewContext(c.dbId)
 
 	return c
@@ -449,15 +450,16 @@ func getTableId(arg string) (uint8, error) {
 func getDatabaseId(arg string) (uint8, error) {
 	dbId, err := strconv.Atoi(arg)
 	if err != nil {
-		return 0, fmt.Errorf("<databaseId> %s is not a number", arg)
+		return 0, fmt.Errorf("<dbId> %s is not a number", arg)
 	}
 
-	if dbId == 0 {
-		return 0, fmt.Errorf("database 0 is reserved for internal use only")
+	if dbId == proto.AdminDbId {
+		return 0, fmt.Errorf("<dbId> %d is reserved for internal use only",
+			proto.AdminDbId)
 	}
 
 	if dbId < 0 || dbId > 255 {
-		return 0, fmt.Errorf("<databaseId> %s is out of range [1 ~ 255]", arg)
+		return 0, fmt.Errorf("<dbId> %s is out of range [0 ~ 255]", arg)
 	}
 
 	return uint8(dbId), nil

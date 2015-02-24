@@ -150,7 +150,7 @@ func (c *Client) doClose() error {
 	return err
 }
 
-// Test whether already athorized.
+// Test whether already authorized.
 func (c *Client) isAuthorized(dbId uint8) bool {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -159,11 +159,11 @@ func (c *Client) isAuthorized(dbId uint8) bool {
 		return false
 	}
 
-	if c.authBM.Get(0) {
+	if c.authBM.Get(proto.AdminDbId) {
 		return true
 	}
 
-	return dbId != 0 && c.authBM.Get(uint(dbId))
+	return dbId != proto.AdminDbId && c.authBM.Get(uint(dbId))
 }
 
 // Cache authorize result. When authorizing again, return directly.

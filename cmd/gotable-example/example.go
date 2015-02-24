@@ -36,7 +36,7 @@ func main() {
 	}
 	defer client.Close()
 
-	ctx := client.NewContext(1)
+	ctx := client.NewContext(0)
 
 	testGet(ctx)
 	testMGet(ctx)

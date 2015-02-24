@@ -78,115 +78,96 @@ func (c *Context) Ping() error {
 
 func (c *Context) Get(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoGet(tableId, rowKey, colKey, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoGet(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoZGet(tableId, rowKey, colKey, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoZGet(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoSet(tableId, rowKey, colKey, value, score, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
 func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
 func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoDel(tableId, rowKey, colKey, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoDel(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoZDel(tableId, rowKey, colKey, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoZDel(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoIncr(tableId, rowKey, colKey, score, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
 func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (*OneReply, error) {
-	call, err := c.GoZIncr(tableId, rowKey, colKey, score, cas, nil)
-	return doOneReply(call, err)
+	return doOneReply(c.GoZIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
 func (c *Context) MGet(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoMGet(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoMGet(args, nil))
 }
 
 func (c *Context) ZmGet(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoZmGet(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoZmGet(args, nil))
 }
 
 func (c *Context) MSet(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoMSet(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoMSet(args, nil))
 }
 
 func (c *Context) ZmSet(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoZmSet(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoZmSet(args, nil))
 }
 
 func (c *Context) MDel(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoMDel(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoMDel(args, nil))
 }
 
 func (c *Context) ZmDel(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoZmDel(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoZmDel(args, nil))
 }
 
 func (c *Context) MIncr(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoMIncr(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoMIncr(args, nil))
 }
 
 func (c *Context) ZmIncr(args *MultiArgs) (*MultiReply, error) {
-	call, err := c.GoZmIncr(args, nil)
-	return doMultiReply(call, err)
+	return doMultiReply(c.GoZmIncr(args, nil))
 }
 
 func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int) (*ScanReply, error) {
-	call, err := c.GoScan(tableId, rowKey, colKey, asc, num, nil)
-	return doScanReply(call, err)
+	return doScanReply(c.GoScan(tableId, rowKey, colKey, asc, num, nil))
 }
 
 func (c *Context) ScanStart(tableId uint8, rowKey []byte,
 	asc bool, num int) (*ScanReply, error) {
-	call, err := c.GoScanStart(tableId, rowKey, asc, num, nil)
-	return doScanReply(call, err)
+	return doScanReply(c.GoScanStart(tableId, rowKey, asc, num, nil))
 }
 
 func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int) (*ScanReply, error) {
-	call, err := c.GoZScan(tableId, rowKey, colKey, score, asc, orderByScore,
-		num, nil)
-	return doScanReply(call, err)
+	return doScanReply(c.GoZScan(tableId, rowKey, colKey, score,
+		asc, orderByScore, num, nil))
 }
 
 func (c *Context) ZScanStart(tableId uint8, rowKey []byte,
 	asc, orderByScore bool, num int) (*ScanReply, error) {
-	call, err := c.GoZScanStart(tableId, rowKey, asc, orderByScore, num, nil)
-	return doScanReply(call, err)
+	return doScanReply(c.GoZScanStart(tableId, rowKey,
+		asc, orderByScore, num, nil))
 }
 
 // Scan/ZScan more records.
@@ -255,7 +236,7 @@ func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
 		var lastUnitId = t.ctx.lastUnitId
 		if t.ctx.unitStart {
 			lastUnitId += 1
-			rec = &DumpRecord{0, &proto.KeyValue{0, nil, nil, nil, 0}}
+			rec = &DumpRecord{0, &proto.KeyValue{}}
 			if t.ctx.oneTable {
 				rec.TableId = t.ctx.tableId
 			}

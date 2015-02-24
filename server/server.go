@@ -637,7 +637,7 @@ func Run(conf *config.Config) {
 	var authEnabled bool
 	if conf.Auth.AdminPwd != "" {
 		authEnabled = true
-		srv.tbl.SetPassword(0, conf.Auth.AdminPwd)
+		srv.tbl.SetPassword(proto.AdminDbId, conf.Auth.AdminPwd)
 	}
 
 	for {

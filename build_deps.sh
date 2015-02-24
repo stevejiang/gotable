@@ -148,6 +148,8 @@ EOF
 
     download_rocksdb
     go get ./store/...
+elif [ "$1" = "-run_test" ]; then
+    go test -v --ldflags '-extldflags "-static-libstdc++"' ./...
 else
     write_build_flags_to_file $1
 fi
