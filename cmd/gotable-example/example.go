@@ -61,12 +61,12 @@ func testGet(tc *table.Context) {
 		fmt.Printf("Get failed: %s\n", err)
 		return
 	}
-	if r.ErrCode != 0 {
+	if r.ErrCode < 0 {
 		fmt.Printf("Get failed with unexpected error code: %d\n", r.ErrCode)
 		return
 	}
 
-	if r.Value == nil {
+	if r.ErrCode > 0 {
 		fmt.Printf("GET result1: Key not exist\n")
 	} else {
 		fmt.Printf("GET result1: %q\t%d\n", r.Value, r.Score)
@@ -84,12 +84,12 @@ func testGet(tc *table.Context) {
 		fmt.Printf("Get failed: %s\n", err)
 		return
 	}
-	if r.ErrCode != 0 {
+	if r.ErrCode < 0 {
 		fmt.Printf("Get failed with unexpected error code: %d\n", r.ErrCode)
 		return
 	}
 
-	if r.Value == nil {
+	if r.ErrCode > 0 {
 		fmt.Printf("GET result2: Key not exist\n")
 	} else {
 		fmt.Printf("GET result2: %q\t%d\n", r.Value, r.Score)

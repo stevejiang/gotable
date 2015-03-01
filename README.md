@@ -38,7 +38,8 @@ The GoTable binary files are in $GOPATH/bin directory.
 
 ## API Example
 
-+ [Official Example](https://github.com/stevejiang/gotable/blob/master/cmd/gotable-example/example.go)
++ [Official Go Example](https://github.com/stevejiang/gotable/blob/master/cmd/gotable-example/example.go)
++ [Official C++ Example](https://github.com/stevejiang/gotable/blob/master/api/c++/example.cc)
 
 ## Data Model
 

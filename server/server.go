@@ -110,7 +110,7 @@ func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
 	}
 }
 
-func (srv *Server) replyOneOp(req *Request, errCode uint8) {
+func (srv *Server) replyOneOp(req *Request, errCode int8) {
 	var out proto.PkgOneOp
 	out.Cmd = req.Cmd
 	out.DbId = req.DbId
@@ -131,7 +131,7 @@ func (srv *Server) replyOneOp(req *Request, errCode uint8) {
 	srv.sendResp(false, true, req, &resp)
 }
 
-func (srv *Server) replyMultiOp(req *Request, errCode uint8) {
+func (srv *Server) replyMultiOp(req *Request, errCode int8) {
 	var out proto.PkgMultiOp
 	out.Cmd = req.Cmd
 	out.DbId = req.DbId

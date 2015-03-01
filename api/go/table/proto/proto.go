@@ -63,7 +63,6 @@ const (
 	MaxUint8     = 255
 	MaxUint16    = 65535
 	MaxRowKeyLen = 255
-	MaxColKeyLen = 65500
 	MaxValueLen  = 512 * 1024
 	MaxPkgLen    = 1024 * 1024
 )
@@ -76,7 +75,7 @@ type PkgEncoding interface {
 
 type PkgResponse interface {
 	PkgEncoding
-	SetErrCode(errCode uint8)
+	SetErrCode(errCode int8)
 }
 
 // cCmd+cDbId+ddwSeq+dwPkgLen+sBody

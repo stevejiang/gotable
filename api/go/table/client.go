@@ -44,19 +44,19 @@ var (
 
 // GoTable Error Code List
 const (
-	EcOk          = 0  // Success
-	EcCasNotMatch = 1  // CAS not match, get new CAS and try again
-	EcTempFail    = 2  // Temporary failed, retry may fix this
-	EcNoPrivilege = 11 // No access privilege
-	EcWriteSlaver = 12 // Can NOT write slaver directly
-	EcReadFail    = 13 // Read failed
-	EcWriteFail   = 14 // Write failed
-	EcDecodeFail  = 15 // Decode request PKG failed
-	EcInvDbId     = 16 // Invalid DB ID (cannot be 0)
-	EcInvRowKey   = 17 // Invalid RowKey (cannot be empty)
-	EcInvColKey   = 18 // Invalid ColKey (length < 65500B)
-	EcInvValue    = 19 // Invalid Value (length < 512KB)
-	EcInvScanNum  = 20 // Scan number out of range
+	EcNotExist    = 1   // Key NOT exist
+	EcOk          = 0   // Success
+	EcCasNotMatch = -50 // CAS not match, get new CAS and try again
+	EcTempFail    = -51 // Temporary failed, retry may fix this
+	EcNoPrivilege = -60 // No access privilege
+	EcWriteSlaver = -62 // Can NOT write slaver directly
+	EcReadFail    = -63 // Read failed
+	EcWriteFail   = -64 // Write failed
+	EcDecodeFail  = -65 // Decode request PKG failed
+	EcInvDbId     = -66 // Invalid DB ID (cannot be 0)
+	EcInvRowKey   = -67 // Invalid RowKey (cannot be empty)
+	EcInvValue    = -68 // Invalid Value (length < 512KB)
+	EcInvScanNum  = -69 // Scan request number out of range
 )
 
 // A Client is a connection to GoTable server.

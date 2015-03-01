@@ -423,7 +423,7 @@ func (c *client) zscan(args []string) error {
 	return nil
 }
 
-func errCodeMsg(errCode uint8) string {
+func errCodeMsg(errCode int8) string {
 	switch errCode {
 	case table.EcCasNotMatch:
 		return "cas not match"

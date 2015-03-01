@@ -24,7 +24,7 @@ type OneArgs struct {
 }
 
 type OneReply struct {
-	ErrCode uint8  // Error Code Replied
+	ErrCode int8   // Error Code Replied
 	Cas     uint32 // Only meaningful for GET/ZGET/MGET/ZMGET
 	*proto.KeyValue
 }

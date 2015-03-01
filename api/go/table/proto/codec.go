@@ -46,13 +46,13 @@ type KeyValue struct {
 //             +[dwValueLen+sValue]+[ddwScore]+[dwCas]
 type KeyValueCtrl struct {
 	CtrlFlag uint8
-	ErrCode  uint8 // default: 0 if missing
+	ErrCode  int8  // default: 0 if missing
 	ColSpace uint8 // default: 0 if missing
 	KeyValue
 	Cas uint32 // default: 0 if missing
 }
 
-func (kv *KeyValueCtrl) SetErrCode(errCode uint8) {
+func (kv *KeyValueCtrl) SetErrCode(errCode int8) {
 	kv.ErrCode = errCode
 	if errCode != 0 {
 		kv.CtrlFlag |= CtrlErrCode
@@ -119,7 +119,7 @@ type PkgOneOp struct {
 // PKG=HEAD+cPkgFlag+cErrCode+wNum+KeyValueCtrl[wNum]
 type PkgMultiOp struct {
 	PkgFlag uint8
-	ErrCode uint8 // default: 0 if missing
+	ErrCode int8
 	PkgHead
 	Kvs []KeyValueCtrl
 }
@@ -194,7 +194,7 @@ func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
 	pkg[n] = kv.TableId
 	n += 1
 	if kv.CtrlFlag&CtrlErrCode != 0 {
-		pkg[n] = kv.ErrCode
+		pkg[n] = uint8(kv.ErrCode)
 		n += 1
 	}
 	if kv.CtrlFlag&CtrlColSpace != 0 {
@@ -244,7 +244,7 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 		if n+1 > pkgLen {
 			return n, ErrPkgLen
 		}
-		kv.ErrCode = pkg[n]
+		kv.ErrCode = int8(pkg[n])
 		n += 1
 	} else {
 		kv.ErrCode = 0
@@ -370,7 +370,7 @@ func (p *PkgMultiOp) Length() int {
 	return n
 }
 
-func (p *PkgMultiOp) SetErrCode(errCode uint8) {
+func (p *PkgMultiOp) SetErrCode(errCode int8) {
 	p.ErrCode = errCode
 }
 
@@ -390,7 +390,7 @@ func (p *PkgMultiOp) Encode(pkg []byte) (int, error) {
 	}
 	pkg[n] = p.PkgFlag
 	n += 1
-	pkg[n] = p.ErrCode
+	pkg[n] = uint8(p.ErrCode)
 	n += 1
 	binary.BigEndian.PutUint16(pkg[n:], uint16(numKvs))
 	n += 2
@@ -418,7 +418,7 @@ func (p *PkgMultiOp) Decode(pkg []byte) (int, error) {
 	}
 	p.PkgFlag = pkg[n]
 	n += 1
-	p.ErrCode = pkg[n]
+	p.ErrCode = int8(pkg[n])
 	n += 1
 	var numKvs = int(binary.BigEndian.Uint16(pkg[n:]))
 	n += 2

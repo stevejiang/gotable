@@ -148,6 +148,7 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
 		return err
 	} else if kv.Value == nil {
 		// Key not exist
+		kv.SetErrCode(table.EcNotExist)
 	} else {
 		// Key exists, set CtrlValue to make sure replied Value is not nil
 		kv.CtrlFlag |= proto.CtrlValue
@@ -162,9 +163,8 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
 
 		var lck = tbl.tl.GetLock(rawKey)
 		lck.Lock()
-		defer lck.Unlock()
-
 		kv.SetCas(lck.NewCas(rawKey))
+		lck.Unlock()
 	}
 
 	return nil
@@ -176,10 +176,6 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 
 	if len(kv.RowKey) == 0 {
 		kv.SetErrCode(table.EcInvRowKey)
-		return nil
-	}
-	if len(kv.ColKey) > proto.MaxColKeyLen {
-		kv.SetErrCode(table.EcInvColKey)
 		return nil
 	}
 	if len(kv.Value) > proto.MaxValueLen {
@@ -257,14 +253,37 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 	return nil
 }
 
-func (tbl *Table) setRawKV(dbId uint8, kv *proto.KeyValueCtrl) error {
+func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValueCtrl) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
-	var rawKey = getRawKey(dbId, kv.TableId, kv.ColSpace, kv.RowKey, kv.ColKey)
-	var err = tbl.db.Put(rawKey, kv.Value, nil)
-	if err != nil {
-		kv.SetErrCode(table.EcWriteFail)
-		return err
+	var rawColSpace uint8 = proto.ColSpaceDefault
+	if zop {
+		rawColSpace = proto.ColSpaceScore2
+	}
+
+	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
+
+	if zop {
+		var wb = tbl.db.NewWriteBatch()
+		defer wb.Close()
+
+		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
+
+		var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
+		tbl.db.Put(scoreKey, getRawValue(kv.Value, 0), wb)
+
+		var err = tbl.db.Commit(wb)
+		if err != nil {
+			kv.SetErrCode(table.EcWriteFail)
+			return err
+		}
+	} else {
+		var err = tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), nil)
+		if err != nil {
+			kv.SetErrCode(table.EcWriteFail)
+			return err
+		}
 	}
 
 	return nil
@@ -347,10 +366,6 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 
 	if len(kv.RowKey) == 0 {
 		kv.SetErrCode(table.EcInvRowKey)
-		return nil
-	}
-	if len(kv.ColKey) > proto.MaxColKeyLen {
-		kv.SetErrCode(table.EcInvColKey)
 		return nil
 	}
 
@@ -439,25 +454,23 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				err = tbl.getKV(nil, zop, in.DbId, &in.KeyValueCtrl)
-				if err != nil {
-					log.Printf("getKV failed: %s\n", err)
-				}
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		err = tbl.getKV(nil, zop, in.DbId, &in.KeyValueCtrl)
+		if err != nil {
+			log.Printf("getKV failed: %s\n", err)
+		}
+	} else {
 		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
 		in.CtrlFlag |= proto.CtrlErrCode
 	}
@@ -468,30 +481,28 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				var srOpt = tbl.db.NewSnapReadOptions()
-				defer srOpt.Release()
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				for i := 0; i < len(in.Kvs); i++ {
-					err = tbl.getKV(srOpt, zop, in.DbId, &in.Kvs[i])
-					if err != nil {
-						log.Printf("getKV failed: %s\n", err)
-						break
-					}
-				}
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		var srOpt = tbl.db.NewSnapReadOptions()
+		defer srOpt.Release()
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		for i := 0; i < len(in.Kvs); i++ {
+			err = tbl.getKV(srOpt, zop, in.DbId, &in.Kvs[i])
+			if err != nil {
+				log.Printf("getKV failed: %s\n", err)
+				break
+			}
+		}
+	} else {
 		in.Kvs = nil
 	}
 
@@ -503,8 +514,9 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 	_, err := in.Decode(req.Pkg)
 	if err == nil {
 		// Sync full DB, including DB 0
+		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.setRawKV(in.DbId, &in.KeyValueCtrl)
+		err = tbl.setSyncKV(zop, in.DbId, &in.KeyValueCtrl)
 		tbl.rwMtx.RUnlock()
 
 		if err == nil {
@@ -526,28 +538,26 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				tbl.rwMtx.RLock()
-				err = tbl.setKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
-				tbl.rwMtx.RUnlock()
-
-				if err != nil {
-					log.Printf("setKV failed: %s\n", err)
-				}
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		tbl.rwMtx.RLock()
+		err = tbl.setKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
+		tbl.rwMtx.RUnlock()
+
+		if err != nil {
+			log.Printf("setKV failed: %s\n", err)
+		}
+	} else {
 		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
 		in.CtrlFlag |= proto.CtrlErrCode
 	}
@@ -558,32 +568,30 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 func (tbl *Table) MSet(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				var wb = tbl.db.NewWriteBatch()
-				defer wb.Close()
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				tbl.rwMtx.RLock()
-				for i := 0; i < len(in.Kvs); i++ {
-					err = tbl.setKV(wb, zop, in.DbId, &in.Kvs[i], replication)
-					if err != nil {
-						log.Printf("setKV failed: %s\n", err)
-						break
-					}
-				}
-				tbl.rwMtx.RUnlock()
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		var wb = tbl.db.NewWriteBatch()
+		defer wb.Close()
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		tbl.rwMtx.RLock()
+		for i := 0; i < len(in.Kvs); i++ {
+			err = tbl.setKV(wb, zop, in.DbId, &in.Kvs[i], replication)
+			if err != nil {
+				log.Printf("setKV failed: %s\n", err)
+				break
+			}
+		}
+		tbl.rwMtx.RUnlock()
+	} else {
 		in.Kvs = nil
 	}
 
@@ -593,28 +601,26 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				tbl.rwMtx.RLock()
-				err = tbl.delKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
-				tbl.rwMtx.RUnlock()
-
-				if err != nil {
-					log.Printf("delKV failed: %s\n", err)
-				}
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		tbl.rwMtx.RLock()
+		err = tbl.delKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
+		tbl.rwMtx.RUnlock()
+
+		if err != nil {
+			log.Printf("delKV failed: %s\n", err)
+		}
+	} else {
 		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
 		in.CtrlFlag |= proto.CtrlErrCode
 	}
@@ -625,32 +631,30 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 func (tbl *Table) MDel(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				var wb = tbl.db.NewWriteBatch()
-				defer wb.Close()
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				tbl.rwMtx.RLock()
-				for i := 0; i < len(in.Kvs); i++ {
-					err = tbl.delKV(wb, zop, in.DbId, &in.Kvs[i], replication)
-					if err != nil {
-						log.Printf("delKV failed: %s\n", err)
-						break
-					}
-				}
-				tbl.rwMtx.RUnlock()
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		var wb = tbl.db.NewWriteBatch()
+		defer wb.Close()
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		tbl.rwMtx.RLock()
+		for i := 0; i < len(in.Kvs); i++ {
+			err = tbl.delKV(wb, zop, in.DbId, &in.Kvs[i], replication)
+			if err != nil {
+				log.Printf("delKV failed: %s\n", err)
+				break
+			}
+		}
+		tbl.rwMtx.RUnlock()
+	} else {
 		in.Kvs = nil
 	}
 
@@ -660,28 +664,26 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				tbl.rwMtx.RLock()
-				err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
-				tbl.rwMtx.RUnlock()
-
-				if err != nil {
-					log.Printf("incrKV failed: %s\n", err)
-				}
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		tbl.rwMtx.RLock()
+		err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
+		tbl.rwMtx.RUnlock()
+
+		if err != nil {
+			log.Printf("incrKV failed: %s\n", err)
+		}
+	} else {
 		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
 		in.CtrlFlag |= proto.CtrlErrCode
 	}
@@ -692,32 +694,30 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 func (tbl *Table) MIncr(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		if in.DbId != proto.AdminDbId {
-			if au.IsAuth(in.DbId) {
-				var wb = tbl.db.NewWriteBatch()
-				defer wb.Close()
-				zop := (in.PkgFlag&proto.FlagZop != 0)
-				tbl.rwMtx.RLock()
-				for i := 0; i < len(in.Kvs); i++ {
-					err = tbl.incrKV(wb, zop, in.DbId, &in.Kvs[i], replication)
-					if err != nil {
-						log.Printf("incrKV failed: %s\n", err)
-						break
-					}
-				}
-				tbl.rwMtx.RUnlock()
-			} else {
-				in.ErrCode = table.EcNoPrivilege
-			}
-		} else {
-			in.ErrCode = table.EcInvDbId
-		}
-	} else {
+	if err != nil {
 		in.ErrCode = table.EcDecodeFail
 	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
 
-	if in.ErrCode != 0 {
+	if in.ErrCode == 0 {
+		var wb = tbl.db.NewWriteBatch()
+		defer wb.Close()
+		zop := (in.PkgFlag&proto.FlagZop != 0)
+		tbl.rwMtx.RLock()
+		for i := 0; i < len(in.Kvs); i++ {
+			err = tbl.incrKV(wb, zop, in.DbId, &in.Kvs[i], replication)
+			if err != nil {
+				log.Printf("incrKV failed: %s\n", err)
+				break
+			}
+		}
+		tbl.rwMtx.RUnlock()
+	} else {
 		in.Kvs = nil
 	}
 
@@ -784,8 +784,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 		if len(colKey) < 8 {
 			continue //  skip invalid record
 		}
-		var zScore = int64(binary.BigEndian.Uint64(colKey) - zopScoreUp)
-		var zColKey = colKey[8:]
+		zColKey, zScore := parseZColKey(colKey)
 		if !startSeek {
 			if scanAsc {
 				if zScore < in.Score {
@@ -1032,7 +1031,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		}
 
 		if colSpace == proto.ColSpaceScore2 {
-			it.Seek(getRawKey(dbId, tableId, colSpace+1, rowKey, colKey))
+			it.Seek(getRawKey(dbId, tableId, colSpace+1, rowKey, nil))
 			continue // No need to dup dump
 		}
 
@@ -1082,19 +1081,37 @@ func (tbl *Table) NewIterator(fillCache bool) *Iterator {
 	return tbl.db.NewIterator(fillCache)
 }
 
-func SetSyncPkg(it *Iterator, p *proto.PkgOneOp) uint16 {
+func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgOneOp) (uint16, bool) {
+	p.PkgFlag &^= 0xFF
+	p.CtrlFlag &^= 0xFF
+
 	unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
-	value := it.Value()
+
+	switch colSpace {
+	case proto.ColSpaceDefault:
+		value, score := parseRawValue(it.Value())
+		p.SetValue(value)
+		p.SetScore(score)
+	case proto.ColSpaceScore1:
+		it.Seek(getRawKey(dbId, tableId, colSpace+1, rowKey, nil))
+		if !it.Valid() {
+			return unitId, false
+		}
+		return SeekAndCopySyncPkg(it, p)
+	case proto.ColSpaceScore2:
+		value, score := parseRawValue(it.Value())
+		p.SetValue(value)
+		p.SetScore(score)
+		p.PkgFlag |= proto.FlagZop
+	}
 
 	p.DbId = dbId
 	p.TableId = tableId
-	p.ColSpace = colSpace
+	p.SetColSpace(colSpace)
 	p.RowKey = rowKey
 	p.ColKey = colKey
-	p.Value = value
-	p.CtrlFlag |= (proto.CtrlColSpace | proto.CtrlValue)
 
-	return unitId
+	return unitId, true
 }
 
 func SeekToUnit(it *Iterator, unitId uint16, dbId, tableId uint8) {
@@ -1140,6 +1157,15 @@ func parseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
 	colSpace = rawKey[colTypePos]
 	colKey = rawKey[(colTypePos + 1):]
 	return
+}
+
+func parseZColKey(colKey []byte) ([]byte, int64) {
+	if len(colKey) < 8 {
+		return nil, 0
+	}
+
+	var score = int64(binary.BigEndian.Uint64(colKey) - zopScoreUp)
+	return colKey[8:], score
 }
 
 func parseRawValue(value []byte) ([]byte, int64) {
@@ -1213,7 +1239,7 @@ func newScoreColKey(score int64, colKey []byte) []byte {
 	return col
 }
 
-func errorHandle(out proto.PkgResponse, errCode uint8) []byte {
+func errorHandle(out proto.PkgResponse, errCode int8) []byte {
 	out.SetErrCode(errCode)
 	var pkg = make([]byte, out.Length())
 	_, err := out.Encode(pkg)

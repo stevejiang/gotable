@@ -193,7 +193,6 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 
 		// Full sync
 		var hasRecord = false
-		var unitId uint16
 		var one proto.PkgOneOp
 		one.Cmd = proto.CmdSync
 		for it.SeekToFirst(); it.Valid(); it.Next() {
@@ -204,16 +203,22 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 			}
 
 			hasRecord = false
-			unitId = store.SetSyncPkg(it, &one)
+			unitId, ok := store.SeekAndCopySyncPkg(it, &one)
+			if !ok {
+				break
+			}
 			if ms.ubm.Get(uint(unitId)) {
 				hasRecord = true
 			} else {
-				var tu = unitId + 1
-				for ; tu < ctrl.TotalUnitNum; tu++ {
-					if ms.ubm.Get(uint(tu)) {
-						store.SeekToUnit(it, tu, 0, 0)
+				var u = unitId + 1
+				for ; u < ctrl.TotalUnitNum; u++ {
+					if ms.ubm.Get(uint(u)) {
+						store.SeekToUnit(it, u, 0, 0)
 						if it.Valid() {
-							unitId = store.SetSyncPkg(it, &one)
+							unitId, ok = store.SeekAndCopySyncPkg(it, &one)
+							if !ok {
+								break
+							}
 							if ms.ubm.Get(uint(unitId)) {
 								hasRecord = true
 							}
@@ -221,7 +226,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 						break
 					}
 				}
-				if tu >= ctrl.TotalUnitNum {
+				if u >= ctrl.TotalUnitNum || !it.Valid() {
 					break
 				}
 			}
