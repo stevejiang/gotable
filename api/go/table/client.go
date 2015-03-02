@@ -19,11 +19,13 @@ package table
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/util"
 	"io"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 )
 
@@ -31,15 +33,27 @@ const Version = "0.1" // GoTable version
 
 var (
 	ErrShutdown     = errors.New("connection is shut down")
-	ErrUnknownCmd   = errors.New("unknown cmd")
-	ErrAuthFailed   = errors.New("authorize failed")
 	ErrCallNotReady = errors.New("call not ready to reply")
-	ErrInvScanNum   = errors.New("invalid scan request num")
-	ErrScanEnded    = errors.New("already scan/dump to end")
+	ErrClosedPool   = errors.New("connection pool is closed")
+	ErrInvalidTag   = errors.New("invalid tag id")
+	ErrNoValidAddr  = errors.New("no valid address")
+)
 
-	ErrClosedPool  = errors.New("connection pool is closed")
-	ErrInvalidTag  = errors.New("invalid tag id")
-	ErrNoValidAddr = errors.New("no valid address")
+var (
+	ErrCasNotMatch = initErr(EcCasNotMatch, "cas not match")
+	ErrTempFail    = initErr(EcTempFail, "temporary failed")
+	ErrUnknownCmd  = initErr(EcUnknownCmd, "unknown cmd")
+	ErrAuthFailed  = initErr(EcAuthFailed, "authorize failed")
+	ErrNoPrivilege = initErr(EcNoPrivilege, "no access privilege")
+	ErrWriteSlaver = initErr(EcWriteSlaver, "can not write slaver directly")
+	ErrReadFail    = initErr(EcReadFail, "read failed")
+	ErrWriteFail   = initErr(EcWriteFail, "write failed")
+	ErrDecodeFail  = initErr(EcDecodeFail, "decode request pkg failed")
+	ErrInvDbId     = initErr(EcInvDbId, "can not use admin db")
+	ErrInvRowKey   = initErr(EcInvRowKey, "row key length out of range")
+	ErrInvValue    = initErr(EcInvValue, "value length out of range")
+	ErrInvScanNum  = initErr(EcInvScanNum, "scan request number out of range")
+	ErrScanEnded   = initErr(EcScanEnded, "already scan/dump to end")
 )
 
 // GoTable Error Code List
@@ -48,16 +62,34 @@ const (
 	EcOk          = 0   // Success
 	EcCasNotMatch = -50 // CAS not match, get new CAS and try again
 	EcTempFail    = -51 // Temporary failed, retry may fix this
-	EcNoPrivilege = -60 // No access privilege
-	EcWriteSlaver = -62 // Can NOT write slaver directly
-	EcReadFail    = -63 // Read failed
-	EcWriteFail   = -64 // Write failed
-	EcDecodeFail  = -65 // Decode request PKG failed
-	EcInvDbId     = -66 // Invalid DB ID (cannot be 0)
-	EcInvRowKey   = -67 // Invalid RowKey (cannot be empty)
-	EcInvValue    = -68 // Invalid Value (length < 512KB)
-	EcInvScanNum  = -69 // Scan request number out of range
+	EcUnknownCmd  = -60 // Unknown cmd
+	EcAuthFailed  = -61 // Authorize failed
+	EcNoPrivilege = -62 // No access privilege
+	EcWriteSlaver = -63 // Can NOT write slaver directly
+	EcReadFail    = -64 // Read failed
+	EcWriteFail   = -65 // Write failed
+	EcDecodeFail  = -66 // Decode request PKG failed
+	EcInvDbId     = -67 // Invalid DB ID (cannot be 255)
+	EcInvRowKey   = -68 // RowKey length should be [1 ~ 255]
+	EcInvValue    = -69 // Value length should be [0 ~ 512KB]
+	EcInvScanNum  = -70 // Scan request number out of range
+	EcScanEnded   = -71 // Already scan/dump to end
 )
+
+var tableErrors = make([]error, 256)
+
+func initErr(code int8, msg string) error {
+	tableErrors[int(code)+128] = fmt.Errorf("%s (%d)", msg, code)
+	return tableErrors[int(code)+128]
+}
+
+func getErr(code int8) error {
+	if tableErrors[int(code)+128] != nil {
+		return tableErrors[int(code)+128]
+	} else {
+		return errors.New("error code " + strconv.Itoa(int(code)))
+	}
+}
 
 // A Client is a connection to GoTable server.
 // It's safe to use in multiple goroutines.

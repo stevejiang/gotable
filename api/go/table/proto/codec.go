@@ -33,26 +33,22 @@ const (
 	ColSpaceScore2  = 2 // rowKey+colKey => value+score
 )
 
+// KeyValue=cCtrlFlag+cTableId+[cErrCode]+[cColSpace]
+//         +cRowKeyLen+sRowKey+wColKeyLen+sColKey
+//         +[dwValueLen+sValue]+[ddwScore]+[dwCas]
 type KeyValue struct {
-	TableId uint8
-	RowKey  []byte
-	ColKey  []byte
-	Value   []byte // default: nil if missing
-	Score   int64  // default: 0 if missing
-}
-
-// KeyValueCtrl=cCtrlFlag+cTableId+[cErrCode]+[cColSpace]
-//             +cRowKeyLen+sRowKey+wColKeyLen+sColKey
-//             +[dwValueLen+sValue]+[ddwScore]+[dwCas]
-type KeyValueCtrl struct {
 	CtrlFlag uint8
 	ErrCode  int8  // default: 0 if missing
 	ColSpace uint8 // default: 0 if missing
-	KeyValue
-	Cas uint32 // default: 0 if missing
+	TableId  uint8
+	RowKey   []byte
+	ColKey   []byte
+	Value    []byte // default: nil if missing
+	Score    int64  // default: 0 if missing
+	Cas      uint32 // default: 0 if missing
 }
 
-func (kv *KeyValueCtrl) SetErrCode(errCode int8) {
+func (kv *KeyValue) SetErrCode(errCode int8) {
 	kv.ErrCode = errCode
 	if errCode != 0 {
 		kv.CtrlFlag |= CtrlErrCode
@@ -61,7 +57,7 @@ func (kv *KeyValueCtrl) SetErrCode(errCode int8) {
 	}
 }
 
-func (kv *KeyValueCtrl) SetColSpace(colSpace uint8) {
+func (kv *KeyValue) SetColSpace(colSpace uint8) {
 	kv.ColSpace = colSpace
 	if colSpace != 0 {
 		kv.CtrlFlag |= CtrlColSpace
@@ -70,7 +66,7 @@ func (kv *KeyValueCtrl) SetColSpace(colSpace uint8) {
 	}
 }
 
-func (kv *KeyValueCtrl) SetCas(cas uint32) {
+func (kv *KeyValue) SetCas(cas uint32) {
 	kv.Cas = cas
 	if cas != 0 {
 		kv.CtrlFlag |= CtrlCas
@@ -79,7 +75,7 @@ func (kv *KeyValueCtrl) SetCas(cas uint32) {
 	}
 }
 
-func (kv *KeyValueCtrl) SetScore(score int64) {
+func (kv *KeyValue) SetScore(score int64) {
 	kv.Score = score
 	if score != 0 {
 		kv.CtrlFlag |= CtrlScore
@@ -88,7 +84,7 @@ func (kv *KeyValueCtrl) SetScore(score int64) {
 	}
 }
 
-func (kv *KeyValueCtrl) SetValue(value []byte) {
+func (kv *KeyValue) SetValue(value []byte) {
 	kv.Value = value
 	if len(value) != 0 {
 		kv.CtrlFlag |= CtrlValue
@@ -108,20 +104,20 @@ const (
 )
 
 // Get, Set, Del, GetSet, GetDel, ZGet, ZSet, Sync
-// PKG=HEAD+cPkgFlag+KeyValueCtrl
+// PKG=HEAD+cPkgFlag+KeyValue
 type PkgOneOp struct {
 	PkgHead
 	PkgFlag uint8
-	KeyValueCtrl
+	KeyValue
 }
 
 // MGet, MSet, MDel, MZGet, MZSet, MZDel
-// PKG=HEAD+cPkgFlag+cErrCode+wNum+KeyValueCtrl[wNum]
+// PKG=HEAD+cPkgFlag+cErrCode+wNum+KeyValue[wNum]
 type PkgMultiOp struct {
 	PkgFlag uint8
 	ErrCode int8
 	PkgHead
-	Kvs []KeyValueCtrl
+	Kvs []KeyValue
 }
 
 // Scan, ZScan
@@ -153,10 +149,10 @@ type PkgDumpResp struct {
 	PkgMultiOp
 }
 
-func (kv *KeyValueCtrl) Length() int {
-	// KeyValueCtrl=cCtrlFlag+cTableId+[cErrCode]+[cColSpace]
-	//             +cRowKeyLen+sRowKey+wColKeyLen+sColKey
-	//             +[dwValueLen+sValue]+[ddwScore]+[dwCas]
+func (kv *KeyValue) Length() int {
+	// KeyValue=cCtrlFlag+cTableId+[cErrCode]+[cColSpace]
+	//         +cRowKeyLen+sRowKey+wColKeyLen+sColKey
+	//         +[dwValueLen+sValue]+[ddwScore]+[dwCas]
 	var n = 2
 	if kv.CtrlFlag&CtrlErrCode != 0 {
 		n += 1
@@ -177,7 +173,7 @@ func (kv *KeyValueCtrl) Length() int {
 	return n
 }
 
-func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
+func (kv *KeyValue) Encode(pkg []byte) (int, error) {
 	if len(pkg) < kv.Length() {
 		return 0, ErrPkgLen
 	}
@@ -229,7 +225,7 @@ func (kv *KeyValueCtrl) Encode(pkg []byte) (int, error) {
 	return n, nil
 }
 
-func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
+func (kv *KeyValue) Decode(pkg []byte) (int, error) {
 	var pkgLen = len(pkg)
 	var n = 0
 	if n+2 > pkgLen {
@@ -314,8 +310,8 @@ func (kv *KeyValueCtrl) Decode(pkg []byte) (int, error) {
 }
 
 func (p *PkgOneOp) Length() int {
-	// PKG = HEAD+cPkgFlag+KeyValueCtrl
-	return HeadSize + 1 + p.KeyValueCtrl.Length()
+	// PKG = HEAD+cPkgFlag+KeyValue
+	return HeadSize + 1 + p.KeyValue.Length()
 }
 
 func (p *PkgOneOp) Encode(pkg []byte) (int, error) {
@@ -330,7 +326,7 @@ func (p *PkgOneOp) Encode(pkg []byte) (int, error) {
 	pkg[n] = p.PkgFlag
 	n += 1
 
-	m, err := p.KeyValueCtrl.Encode(pkg[n:])
+	m, err := p.KeyValue.Encode(pkg[n:])
 	if err != nil {
 		return n, err
 	}
@@ -352,7 +348,7 @@ func (p *PkgOneOp) Decode(pkg []byte) (int, error) {
 	p.PkgFlag = pkg[n]
 	n += 1
 
-	m, err := p.KeyValueCtrl.Decode(pkg[n:])
+	m, err := p.KeyValue.Decode(pkg[n:])
 	if err != nil {
 		return n, err
 	}
@@ -362,7 +358,7 @@ func (p *PkgOneOp) Decode(pkg []byte) (int, error) {
 }
 
 func (p *PkgMultiOp) Length() int {
-	// PKG = HEAD+cPkgFlag+cErrCode+wNum+KeyValueCtrl[wNum]
+	// PKG = HEAD+cPkgFlag+cErrCode+wNum+KeyValue[wNum]
 	var n = HeadSize + 4
 	for i := 0; i < len(p.Kvs); i++ {
 		n += p.Kvs[i].Length()
@@ -423,7 +419,7 @@ func (p *PkgMultiOp) Decode(pkg []byte) (int, error) {
 	var numKvs = int(binary.BigEndian.Uint16(pkg[n:]))
 	n += 2
 
-	p.Kvs = make([]KeyValueCtrl, numKvs)
+	p.Kvs = make([]KeyValue, numKvs)
 	for i := 0; i < numKvs; i++ {
 		m, err := p.Kvs[i].Decode(pkg[n:])
 		if err != nil {

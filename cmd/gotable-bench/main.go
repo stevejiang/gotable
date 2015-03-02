@@ -272,9 +272,9 @@ func benchZScan(cliPool *table.Pool) {
 func set(c *table.Context, zop bool, rowKey, colKey, value []byte, score int64) {
 	var err error
 	if zop {
-		_, err = c.ZSet(0, rowKey, colKey, value, score, 0)
+		err = c.ZSet(0, rowKey, colKey, value, score, 0)
 	} else {
-		_, err = c.Set(0, rowKey, colKey, value, score, 0)
+		err = c.Set(0, rowKey, colKey, value, score, 0)
 	}
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
@@ -288,11 +288,12 @@ func set(c *table.Context, zop bool, rowKey, colKey, value []byte, score int64) 
 
 func get(c *table.Context, zop bool, rowKey, colKey []byte) {
 	var err error
-	var r *table.OneReply
+	var value []byte
+	var score int64
 	if zop {
-		r, err = c.ZGet(0, rowKey, colKey, 0)
+		value, score, _, err = c.ZGet(0, rowKey, colKey, 0)
 	} else {
-		r, err = c.Get(0, rowKey, colKey, 0)
+		value, score, _, err = c.Get(0, rowKey, colKey, 0)
 	}
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
@@ -301,17 +302,17 @@ func get(c *table.Context, zop bool, rowKey, colKey []byte) {
 
 	if *verbose != 0 {
 		fmt.Printf("rowKey: %2s, colKey: %s, value: %s, score:%d\n",
-			string(rowKey), string(colKey), string(r.Value), r.Score)
+			string(rowKey), string(colKey), string(value), score)
 	}
 }
 
 func incr(c *table.Context, zop bool, rowKey, colKey []byte, score int64) {
 	var err error
-	var r *table.OneReply
+	var value []byte
 	if zop {
-		r, err = c.ZIncr(0, rowKey, colKey, score, 0)
+		value, score, err = c.ZIncr(0, rowKey, colKey, score, 0)
 	} else {
-		r, err = c.Incr(0, rowKey, colKey, score, 0)
+		value, score, err = c.Incr(0, rowKey, colKey, score, 0)
 	}
 	if err != nil {
 		fmt.Printf("Incr failed: %s\n", err)
@@ -320,13 +321,13 @@ func incr(c *table.Context, zop bool, rowKey, colKey []byte, score int64) {
 
 	if *verbose != 0 {
 		fmt.Printf("rowKey: %2s, colKey: %s, value: %s, score:%d\n",
-			string(rowKey), string(colKey), string(r.Value), r.Score)
+			string(rowKey), string(colKey), string(value), score)
 	}
 }
 
 func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num int) {
 	var err error
-	var r *table.ScanReply
+	var r table.ScanReply
 	if zop {
 		r, err = c.ZScan(0, rowKey, colKey, score, true, true, num)
 	} else {
@@ -338,8 +339,8 @@ func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num in
 	}
 
 	if *verbose != 0 {
-		for i := 0; i < len(r.Reply); i++ {
-			var one = r.Reply[i]
+		for i := 0; i < len(r.Kvs); i++ {
+			var one = r.Kvs[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
 				one.RowKey, one.ColKey, one.Score, one.Value)
 		}

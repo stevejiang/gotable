@@ -175,23 +175,21 @@ func (c *client) get(zop bool, args []string) error {
 		return err
 	}
 
-	var r *table.OneReply
+	var value []byte
+	var score int64
 	if zop {
-		r, err = c.c.ZGet(tableId, []byte(rowKey), []byte(colKey), 0)
+		value, score, _, err = c.c.ZGet(tableId, []byte(rowKey), []byte(colKey), 0)
 	} else {
-		r, err = c.c.Get(tableId, []byte(rowKey), []byte(colKey), 0)
+		value, score, _, err = c.c.Get(tableId, []byte(rowKey), []byte(colKey), 0)
 	}
 	if err != nil {
 		return err
 	}
-	if r.ErrCode != 0 {
-		return fmt.Errorf(errCodeMsg(r.ErrCode))
-	}
 
-	if r.Value == nil {
+	if value == nil {
 		fmt.Println("<nil>")
 	} else {
-		fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
+		fmt.Printf("[%d\t%q]\n", score, value)
 	}
 
 	return nil
@@ -229,17 +227,13 @@ func (c *client) set(zop bool, args []string) error {
 		}
 	}
 
-	var r *table.OneReply
 	if zop {
-		r, err = c.c.ZSet(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
+		err = c.c.ZSet(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
 	} else {
-		r, err = c.c.Set(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
+		err = c.c.Set(tableId, []byte(rowKey), []byte(colKey), []byte(value), score, 0)
 	}
 	if err != nil {
 		return err
-	}
-	if r.ErrCode != 0 {
-		return fmt.Errorf(errCodeMsg(r.ErrCode))
 	}
 
 	fmt.Println("OK")
@@ -268,9 +262,9 @@ func (c *client) del(zop bool, args []string) error {
 	}
 
 	if zop {
-		_, err = c.c.ZDel(tableId, []byte(rowKey), []byte(colKey), 0)
+		err = c.c.ZDel(tableId, []byte(rowKey), []byte(colKey), 0)
 	} else {
-		_, err = c.c.Del(tableId, []byte(rowKey), []byte(colKey), 0)
+		err = c.c.Del(tableId, []byte(rowKey), []byte(colKey), 0)
 	}
 	if err != nil {
 		return err
@@ -308,20 +302,17 @@ func (c *client) incr(zop bool, args []string) error {
 		}
 	}
 
-	var r *table.OneReply
+	var value []byte
 	if zop {
-		r, err = c.c.ZIncr(tableId, []byte(rowKey), []byte(colKey), score, 0)
+		value, score, err = c.c.ZIncr(tableId, []byte(rowKey), []byte(colKey), score, 0)
 	} else {
-		r, err = c.c.Incr(tableId, []byte(rowKey), []byte(colKey), score, 0)
+		value, score, err = c.c.Incr(tableId, []byte(rowKey), []byte(colKey), score, 0)
 	}
 	if err != nil {
 		return err
 	}
-	if r.ErrCode != 0 {
-		return fmt.Errorf("error code %d", r.ErrCode)
-	}
 
-	fmt.Printf("[%d\t%q]\n", r.Score, r.Value)
+	fmt.Printf("[%d\t%q]\n", score, value)
 	return nil
 }
 
@@ -358,13 +349,13 @@ func (c *client) scan(args []string) error {
 		return err
 	}
 
-	if len(r.Reply) == 0 {
+	if len(r.Kvs) == 0 {
 		fmt.Println("No record!")
 	} else {
-		for i := 0; i < len(r.Reply); i++ {
-			var one = r.Reply[i]
+		for i := 0; i < len(r.Kvs); i++ {
+			var kv = r.Kvs[i]
 			fmt.Printf("%2d) [%q\t%q]\t[%d\t%q]\n", i,
-				one.RowKey, one.ColKey, one.Score, one.Value)
+				kv.RowKey, kv.ColKey, kv.Score, kv.Value)
 		}
 	}
 
@@ -410,13 +401,13 @@ func (c *client) zscan(args []string) error {
 		return err
 	}
 
-	if len(r.Reply) == 0 {
+	if len(r.Kvs) == 0 {
 		fmt.Println("No record!")
 	} else {
-		for i := 0; i < len(r.Reply); i++ {
-			var one = r.Reply[i]
+		for i := 0; i < len(r.Kvs); i++ {
+			var kv = r.Kvs[i]
 			fmt.Printf("%2d) [%q\t%d\t%q]\t[%q]\n", i,
-				one.RowKey, one.Score, one.ColKey, one.Value)
+				kv.RowKey, kv.Score, kv.ColKey, kv.Value)
 		}
 	}
 

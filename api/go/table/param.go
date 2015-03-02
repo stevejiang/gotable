@@ -18,45 +18,147 @@ import (
 	"github.com/stevejiang/gotable/api/go/table/proto"
 )
 
-type OneArgs struct {
-	Cas uint32
-	*proto.KeyValue
+type GetArgs struct {
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
+	Cas     uint32
 }
 
-type OneReply struct {
-	ErrCode int8   // Error Code Replied
-	Cas     uint32 // Only meaningful for GET/ZGET/MGET/ZMGET
-	*proto.KeyValue
+type GetReply struct {
+	ErrCode int8
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
+	Value   []byte
+	Score   int64
+	Cas     uint32
 }
 
-type MultiArgs struct {
-	Args []OneArgs
+type SetArgs struct {
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
+	Value   []byte
+	Score   int64
+	Cas     uint32
 }
 
-type MultiReply struct {
-	Reply []OneReply
+type SetReply struct {
+	ErrCode int8
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
 }
 
-func (a *MultiArgs) AddGetArgs(tableId uint8, rowKey, colKey []byte, cas uint32) {
-	a.Args = append(a.Args,
-		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}})
+type IncrArgs struct {
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
+	Score   int64
+	Cas     uint32
 }
 
-func (a *MultiArgs) AddDelArgs(tableId uint8, rowKey, colKey []byte, cas uint32) {
-	a.Args = append(a.Args,
-		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}})
+type IncrReply struct {
+	ErrCode int8
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
+	Value   []byte
+	Score   int64
 }
 
-func (a *MultiArgs) AddSetArgs(tableId uint8, rowKey, colKey, value []byte,
-	score int64, cas uint32) {
-	a.Args = append(a.Args,
-		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, value, score}})
+type DelArgs GetArgs
+type DelReply SetReply
+
+type MGetArgs []GetArgs
+type MSetArgs []SetArgs
+type MDelArgs []DelArgs
+type MIncrArgs []IncrArgs
+
+type multiArgs interface {
+	length() int
+	toKV(kv []proto.KeyValue)
 }
 
-func (a *MultiArgs) AddIncrArgs(tableId uint8, rowKey, colKey []byte,
-	score int64, cas uint32) {
-	a.Args = append(a.Args,
-		OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, score}})
+func (a MGetArgs) length() int {
+	return len(a)
+}
+
+func (a MGetArgs) toKV(kv []proto.KeyValue) {
+	for i := 0; i < len(a); i++ {
+		kv[i].TableId = a[i].TableId
+		kv[i].RowKey = a[i].RowKey
+		kv[i].ColKey = a[i].ColKey
+		kv[i].SetCas(a[i].Cas)
+	}
+}
+
+func (a MSetArgs) length() int {
+	return len(a)
+}
+
+func (a MSetArgs) toKV(kv []proto.KeyValue) {
+	for i := 0; i < len(a); i++ {
+		kv[i].TableId = a[i].TableId
+		kv[i].RowKey = a[i].RowKey
+		kv[i].ColKey = a[i].ColKey
+		kv[i].SetCas(a[i].Cas)
+		kv[i].SetScore(a[i].Score)
+		kv[i].SetValue(a[i].Value)
+	}
+}
+
+func (a MDelArgs) length() int {
+	return len(a)
+}
+
+func (a MDelArgs) toKV(kv []proto.KeyValue) {
+	for i := 0; i < len(a); i++ {
+		kv[i].TableId = a[i].TableId
+		kv[i].RowKey = a[i].RowKey
+		kv[i].ColKey = a[i].ColKey
+		kv[i].SetCas(a[i].Cas)
+	}
+}
+
+func (a MIncrArgs) length() int {
+	return len(a)
+}
+
+func (a MIncrArgs) toKV(kv []proto.KeyValue) {
+	for i := 0; i < len(a); i++ {
+		kv[i].TableId = a[i].TableId
+		kv[i].RowKey = a[i].RowKey
+		kv[i].ColKey = a[i].ColKey
+		kv[i].SetCas(a[i].Cas)
+		kv[i].SetScore(a[i].Score)
+	}
+}
+
+func copyBytes(in []byte) []byte {
+	if in == nil {
+		return nil
+	}
+	var out = make([]byte, len(in))
+	copy(out, in)
+	return out
+}
+
+func (a *MGetArgs) Add(tableId uint8, rowKey, colKey []byte, cas uint32) {
+	*a = append(*a, GetArgs{tableId, rowKey, colKey, cas})
+}
+
+func (a *MSetArgs) Add(tableId uint8, rowKey, colKey, value []byte, score int64, cas uint32) {
+	*a = append(*a, SetArgs{tableId, rowKey, colKey, value, score, cas})
+}
+
+func (a *MDelArgs) Add(tableId uint8, rowKey, colKey []byte, cas uint32) {
+	*a = append(*a, DelArgs{tableId, rowKey, colKey, cas})
+}
+
+func (a *MIncrArgs) Add(tableId uint8, rowKey, colKey []byte, score int64, cas uint32) {
+	*a = append(*a, IncrArgs{tableId, rowKey, colKey, score, cas})
 }
 
 type scanContext struct {
@@ -66,16 +168,23 @@ type scanContext struct {
 	num          int  // Max number of scan reply records
 }
 
+type ScanKV struct {
+	TableId uint8
+	RowKey  []byte
+	ColKey  []byte
+	Value   []byte
+	Score   int64
+}
+
 type ScanReply struct {
-	Reply []*proto.KeyValue
-	End   bool // false: Not end yet; true: Scan to end, stop now
+	Kvs []ScanKV
+	End bool // false: Not end yet; true: Scan to end, stop now
 
 	ctx scanContext
 }
 
 type dumpContext struct {
 	oneTable    bool   // Never change during dump
-	dbId        uint8  // Never change during dump
 	tableId     uint8  // Never change during dump
 	startUnitId uint16 // Never change during dump
 	endUnitId   uint16 // Never change during dump
@@ -83,14 +192,18 @@ type dumpContext struct {
 	unitStart   bool   // Next dump start from new UnitId
 }
 
-type DumpRecord struct {
+type DumpKV struct {
+	TableId  uint8
 	ColSpace uint8
-	*proto.KeyValue
+	RowKey   []byte
+	ColKey   []byte
+	Value    []byte
+	Score    int64
 }
 
 type DumpReply struct {
-	Reply []DumpRecord
-	End   bool // false: Not end yet; true: Has scan to end, stop now
+	Kvs []DumpKV
+	End bool // false: Not end yet; true: Has scan to end, stop now
 
 	ctx dumpContext
 }

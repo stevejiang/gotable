@@ -117,7 +117,7 @@ func (tbl *Table) Auth(req *PkgArgs, au Authorize) []byte {
 		if len(password) > 0 && tbl.authPwd[in.DbId] == password {
 			authDB = in.DbId
 		} else {
-			in.SetErrCode(table.EcNoPrivilege)
+			in.SetErrCode(table.EcAuthFailed)
 		}
 	}
 	tbl.mtx.Unlock()
@@ -132,7 +132,7 @@ func (tbl *Table) Auth(req *PkgArgs, au Authorize) []byte {
 }
 
 func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
-	kv *proto.KeyValueCtrl) error {
+	kv *proto.KeyValue) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	var rawColSpace uint8 = proto.ColSpaceDefault
@@ -171,7 +171,7 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
 }
 
 func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
-	kv *proto.KeyValueCtrl, replication bool) error {
+	kv *proto.KeyValue, replication bool) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if len(kv.RowKey) == 0 {
@@ -253,7 +253,7 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 	return nil
 }
 
-func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValueCtrl) error {
+func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValue) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	var rawColSpace uint8 = proto.ColSpaceDefault
@@ -290,7 +290,7 @@ func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValueCtrl) error 
 }
 
 func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
-	kv *proto.KeyValueCtrl, replication bool) error {
+	kv *proto.KeyValue, replication bool) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	var rawColSpace uint8 = proto.ColSpaceDefault
@@ -361,7 +361,7 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 }
 
 func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
-	kv *proto.KeyValueCtrl, replication bool) error {
+	kv *proto.KeyValue, replication bool) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if len(kv.RowKey) == 0 {
@@ -466,7 +466,7 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
-		err = tbl.getKV(nil, zop, in.DbId, &in.KeyValueCtrl)
+		err = tbl.getKV(nil, zop, in.DbId, &in.KeyValue)
 		if err != nil {
 			log.Printf("getKV failed: %s\n", err)
 		}
@@ -516,7 +516,7 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 		// Sync full DB, including DB 0
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.setSyncKV(zop, in.DbId, &in.KeyValueCtrl)
+		err = tbl.setSyncKV(zop, in.DbId, &in.KeyValue)
 		tbl.rwMtx.RUnlock()
 
 		if err == nil {
@@ -551,7 +551,7 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.setKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
+		err = tbl.setKV(nil, zop, in.DbId, &in.KeyValue, replication)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
@@ -614,7 +614,7 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.delKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
+		err = tbl.delKV(nil, zop, in.DbId, &in.KeyValue, replication)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
@@ -677,7 +677,7 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValueCtrl, replication)
+		err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValue, replication)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
@@ -804,7 +804,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 		}
 
 		if i < scanNum {
-			var kv proto.KeyValueCtrl
+			var kv proto.KeyValue
 			kv.TableId = in.TableId
 			kv.RowKey = in.RowKey
 			kv.ColKey = zColKey
@@ -914,7 +914,7 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 		}
 
 		if i < scanNum {
-			var kv proto.KeyValueCtrl
+			var kv proto.KeyValue
 			kv.TableId = in.TableId
 			kv.RowKey = in.RowKey
 			kv.ColKey = colKey
@@ -1035,7 +1035,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 			continue // No need to dup dump
 		}
 
-		var kv proto.KeyValueCtrl
+		var kv proto.KeyValue
 		if colSpace != proto.ColSpaceScore1 {
 			kv.ColKey = colKey
 			kv.Value, kv.Score = parseRawValue(it.Value())

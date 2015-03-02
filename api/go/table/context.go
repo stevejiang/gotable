@@ -18,7 +18,6 @@ import (
 	"errors"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/ctrl"
-	"strconv"
 )
 
 // Connection Context to GoTable server.
@@ -48,21 +47,16 @@ func (c *Context) Auth(password string) error {
 		return nil
 	}
 
-	var args = OneArgs{0, &proto.KeyValue{0, []byte(password), nil, nil, 0}}
-	call, err := c.goOneOp(false, args, proto.CmdAuth, nil)
+	call, err := c.goOneOp(false, proto.CmdAuth, 0, []byte(password), nil, nil, 0, 0, nil)
 	if err != nil {
 		return err
 	}
 
-	r, err := (<-call.Done).Reply()
+	_, err = (<-call.Done).Reply()
 	if err != nil {
 		return err
 	}
 
-	t := r.(*OneReply)
-	if t.ErrCode != 0 {
-		return ErrAuthFailed
-	}
 	return nil
 }
 
@@ -76,106 +70,178 @@ func (c *Context) Ping() error {
 	return err
 }
 
-func (c *Context) Get(tableId uint8, rowKey, colKey []byte,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoGet(tableId, rowKey, colKey, cas, nil))
+func (c *Context) Get(tableId uint8, rowKey, colKey []byte, cas uint32) (
+	value []byte, score int64, casReply uint32, err error) {
+	return replyGet(c.GoGet(tableId, rowKey, colKey, cas, nil))
 }
 
-func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoZGet(tableId, rowKey, colKey, cas, nil))
+func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte, cas uint32) (
+	value []byte, score int64, newCas uint32, err error) {
+	return replyGet(c.GoZGet(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoSet(tableId, rowKey, colKey, value, score, cas, nil))
+	cas uint32) error {
+	return replySet(c.GoSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
 func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil))
+	cas uint32) error {
+	return replySet(c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
 func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoDel(tableId, rowKey, colKey, cas, nil))
+	cas uint32) error {
+	return replySet(c.GoDel(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoZDel(tableId, rowKey, colKey, cas, nil))
+	cas uint32) error {
+	return replySet(c.GoZDel(tableId, rowKey, colKey, cas, nil))
 }
 
 func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoIncr(tableId, rowKey, colKey, score, cas, nil))
+	cas uint32) (newValue []byte, newScore int64, err error) {
+	return replyIncr(c.GoIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
 func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
-	cas uint32) (*OneReply, error) {
-	return doOneReply(c.GoZIncr(tableId, rowKey, colKey, score, cas, nil))
+	cas uint32) (newValue []byte, newScore int64, err error) {
+	return replyIncr(c.GoZIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
-func (c *Context) MGet(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoMGet(args, nil))
+func (c *Context) MGet(args MGetArgs) ([]GetReply, error) {
+	call, err := c.GoMGet(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]GetReply), nil
 }
 
-func (c *Context) ZmGet(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoZmGet(args, nil))
+func (c *Context) ZmGet(args MGetArgs) ([]GetReply, error) {
+	call, err := c.GoZmGet(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]GetReply), nil
 }
 
-func (c *Context) MSet(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoMSet(args, nil))
+func (c *Context) MSet(args MSetArgs) ([]SetReply, error) {
+	call, err := c.GoMSet(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]SetReply), nil
 }
 
-func (c *Context) ZmSet(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoZmSet(args, nil))
+func (c *Context) ZmSet(args MSetArgs) ([]SetReply, error) {
+	call, err := c.GoZmSet(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]SetReply), nil
 }
 
-func (c *Context) MDel(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoMDel(args, nil))
+func (c *Context) MDel(args MDelArgs) ([]DelReply, error) {
+	call, err := c.GoMDel(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]DelReply), nil
 }
 
-func (c *Context) ZmDel(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoZmDel(args, nil))
+func (c *Context) ZmDel(args MDelArgs) ([]DelReply, error) {
+	call, err := c.GoZmDel(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]DelReply), nil
 }
 
-func (c *Context) MIncr(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoMIncr(args, nil))
+func (c *Context) MIncr(args MIncrArgs) ([]IncrReply, error) {
+	call, err := c.GoMIncr(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]IncrReply), nil
 }
 
-func (c *Context) ZmIncr(args *MultiArgs) (*MultiReply, error) {
-	return doMultiReply(c.GoZmIncr(args, nil))
+func (c *Context) ZmIncr(args MIncrArgs) ([]IncrReply, error) {
+	call, err := c.GoZmIncr(args, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, err
+	}
+	return r.([]IncrReply), nil
 }
 
 func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
-	asc bool, num int) (*ScanReply, error) {
-	return doScanReply(c.GoScan(tableId, rowKey, colKey, asc, num, nil))
+	asc bool, num int) (ScanReply, error) {
+	return replyScan(c.GoScan(tableId, rowKey, colKey, asc, num, nil))
 }
 
 func (c *Context) ScanStart(tableId uint8, rowKey []byte,
-	asc bool, num int) (*ScanReply, error) {
-	return doScanReply(c.GoScanStart(tableId, rowKey, asc, num, nil))
+	asc bool, num int) (ScanReply, error) {
+	return replyScan(c.GoScanStart(tableId, rowKey, asc, num, nil))
 }
 
 func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
-	asc, orderByScore bool, num int) (*ScanReply, error) {
-	return doScanReply(c.GoZScan(tableId, rowKey, colKey, score,
+	asc, orderByScore bool, num int) (ScanReply, error) {
+	return replyScan(c.GoZScan(tableId, rowKey, colKey, score,
 		asc, orderByScore, num, nil))
 }
 
 func (c *Context) ZScanStart(tableId uint8, rowKey []byte,
-	asc, orderByScore bool, num int) (*ScanReply, error) {
-	return doScanReply(c.GoZScanStart(tableId, rowKey,
+	asc, orderByScore bool, num int) (ScanReply, error) {
+	return replyScan(c.GoZScanStart(tableId, rowKey,
 		asc, orderByScore, num, nil))
 }
 
 // Scan/ZScan more records.
-func (c *Context) ScanMore(last *ScanReply) (*ScanReply, error) {
-	if last.End || len(last.Reply) == 0 {
-		return nil, ErrScanEnded
+func (c *Context) ScanMore(last ScanReply) (ScanReply, error) {
+	if last.End || len(last.Kvs) == 0 {
+		return ScanReply{}, ErrScanEnded
 	}
-	var r = last.Reply[len(last.Reply)-1]
+	var r = last.Kvs[len(last.Kvs)-1]
 	var call *Call
 	var err error
 	if last.ctx.zop {
@@ -185,7 +251,7 @@ func (c *Context) ScanMore(last *ScanReply) (*ScanReply, error) {
 		call, err = c.GoScan(r.TableId, r.RowKey, r.ColKey,
 			last.ctx.asc, last.ctx.num, nil)
 	}
-	return doScanReply(call, err)
+	return replyScan(call, err)
 }
 
 // Dump start from the pivot record.
@@ -194,20 +260,20 @@ func (c *Context) ScanMore(last *ScanReply) (*ScanReply, error) {
 // The pivot record itself is excluded from the reply.
 func (c *Context) Dump(oneTable bool, tableId, colSpace uint8,
 	rowKey, colKey []byte, score int64,
-	startUnitId, endUnitId uint16) (*DumpReply, error) {
+	startUnitId, endUnitId uint16) (DumpReply, error) {
 	call, err := c.goDump(oneTable, tableId, colSpace, rowKey, colKey,
 		score, startUnitId, endUnitId, nil)
 	if err != nil {
-		return nil, err
+		return DumpReply{}, err
 	}
 
 	r, err := (<-call.Done).Reply()
 	if err != nil {
-		return nil, err
+		return DumpReply{}, err
 	}
 
-	var t = r.(*DumpReply)
-	if t.End || len(t.Reply) > 0 {
+	var t = r.(DumpReply)
+	if t.End || len(t.Kvs) > 0 {
 		return t, nil
 	}
 
@@ -215,57 +281,57 @@ func (c *Context) Dump(oneTable bool, tableId, colSpace uint8,
 }
 
 // Dump the selected Table.
-func (c *Context) DumpTable(tableId uint8) (*DumpReply, error) {
+func (c *Context) DumpTable(tableId uint8) (DumpReply, error) {
 	return c.Dump(true, tableId, 0, nil, nil, 0, 0, 65535)
 }
 
 // Dump current DB(dbId in Context).
-func (c *Context) DumpDB() (*DumpReply, error) {
+func (c *Context) DumpDB() (DumpReply, error) {
 	return c.Dump(false, 0, 0, nil, nil, 0, 0, 65535)
 }
 
 // Dump more records.
-func (c *Context) DumpMore(last *DumpReply) (*DumpReply, error) {
+func (c *Context) DumpMore(last DumpReply) (DumpReply, error) {
 	if last.End {
-		return nil, ErrScanEnded
+		return DumpReply{}, ErrScanEnded
 	}
 
 	var t = last
 	for {
-		var rec *DumpRecord
+		var rec DumpKV
 		var lastUnitId = t.ctx.lastUnitId
 		if t.ctx.unitStart {
 			lastUnitId += 1
-			rec = &DumpRecord{0, &proto.KeyValue{}}
 			if t.ctx.oneTable {
 				rec.TableId = t.ctx.tableId
 			}
 		} else {
-			rec = &t.Reply[len(t.Reply)-1]
+			rec = t.Kvs[len(t.Kvs)-1]
 		}
 
 		call, err := c.goDump(t.ctx.oneTable, rec.TableId, rec.ColSpace,
 			rec.RowKey, rec.ColKey, rec.Score, lastUnitId, t.ctx.endUnitId, nil)
 		if err != nil {
-			return nil, err
+			return DumpReply{}, err
 		}
 
 		r, err := (<-call.Done).Reply()
 		if err != nil {
-			return nil, err
+			return DumpReply{}, err
 		}
 
-		t = r.(*DumpReply)
-		if t.End || len(t.Reply) > 0 {
+		t = r.(DumpReply)
+		if t.End || len(t.Kvs) > 0 {
 			return t, nil
 		}
 	}
 
-	return nil, ErrScanEnded
+	return DumpReply{}, ErrScanEnded
 }
 
 // Get, Set, Del, Incr, ZGet, ZSet, ZDel, ZIncr
-func (c *Context) goOneOp(zop bool, args OneArgs, cmd uint8,
+func (c *Context) goOneOp(zop bool, cmd, tableId uint8,
+	rowKey, colKey, value []byte, score int64, cas uint32,
 	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(cmd, done)
 	if call.err != nil {
@@ -276,13 +342,13 @@ func (c *Context) goOneOp(zop bool, args OneArgs, cmd uint8,
 	p.Seq = call.seq
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
-	p.TableId = args.TableId
-	p.RowKey = args.RowKey
-	p.ColKey = args.ColKey
+	p.TableId = tableId
+	p.RowKey = rowKey
+	p.ColKey = colKey
 
-	p.SetCas(args.Cas)
-	p.SetScore(args.Score)
-	p.SetValue(args.Value)
+	p.SetCas(cas)
+	p.SetScore(score)
+	p.SetValue(value)
 
 	// ZGet, ZSet, ZDel, ZIncr
 	if zop {
@@ -303,59 +369,51 @@ func (c *Context) goOneOp(zop bool, args OneArgs, cmd uint8,
 }
 
 func (c *Context) GoPing(done chan *Call) (*Call, error) {
-	return c.goOneOp(false, OneArgs{0, &proto.KeyValue{}}, proto.CmdPing, done)
+	return c.goOneOp(false, proto.CmdPing, 0, nil, nil, nil, 0, 0, done)
 }
 
 func (c *Context) GoGet(tableId uint8, rowKey, colKey []byte, cas uint32,
 	done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
-	return c.goOneOp(false, args, proto.CmdGet, done)
+	return c.goOneOp(false, proto.CmdGet, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
 func (c *Context) GoZGet(tableId uint8, rowKey, colKey []byte, cas uint32,
 	done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
-	return c.goOneOp(true, args, proto.CmdGet, done)
+	return c.goOneOp(true, proto.CmdGet, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
 func (c *Context) GoSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, value, score}}
-	return c.goOneOp(false, args, proto.CmdSet, done)
+	return c.goOneOp(false, proto.CmdSet, tableId, rowKey, colKey, value, score, cas, done)
 }
 
 func (c *Context) GoZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, value, score}}
-	return c.goOneOp(true, args, proto.CmdSet, done)
+	return c.goOneOp(true, proto.CmdSet, tableId, rowKey, colKey, value, score, cas, done)
 }
 
 func (c *Context) GoDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
-	return c.goOneOp(false, args, proto.CmdDel, done)
+	return c.goOneOp(false, proto.CmdDel, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
 func (c *Context) GoZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, 0}}
-	return c.goOneOp(true, args, proto.CmdDel, done)
+	return c.goOneOp(true, proto.CmdDel, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
 func (c *Context) GoIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, score}}
-	return c.goOneOp(false, args, proto.CmdIncr, done)
+	return c.goOneOp(false, proto.CmdIncr, tableId, rowKey, colKey, nil, score, cas, done)
 }
 
 func (c *Context) GoZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
-	var args = OneArgs{cas, &proto.KeyValue{tableId, rowKey, colKey, nil, score}}
-	return c.goOneOp(true, args, proto.CmdIncr, done)
+	return c.goOneOp(true, proto.CmdIncr, tableId, rowKey, colKey, nil, score, cas, done)
 }
 
 // MGet, MSet, MDel, MIncr, ZMGet, ZMSet, ZMDel, ZMIncr
-func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
+func (c *Context) goMultiOp(zop bool, args multiArgs, cmd uint8,
 	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(cmd, done)
 	if call.err != nil {
@@ -372,16 +430,8 @@ func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
 		p.PkgFlag |= proto.FlagZop
 	}
 
-	p.Kvs = make([]proto.KeyValueCtrl, len(args.Args))
-	for i := 0; i < len(args.Args); i++ {
-		p.Kvs[i].TableId = args.Args[i].TableId
-		p.Kvs[i].RowKey = args.Args[i].RowKey
-		p.Kvs[i].ColKey = args.Args[i].ColKey
-
-		p.Kvs[i].SetCas(args.Args[i].Cas)
-		p.Kvs[i].SetScore(args.Args[i].Score)
-		p.Kvs[i].SetValue(args.Args[i].Value)
-	}
+	p.Kvs = make([]proto.KeyValue, args.length())
+	args.toKV(p.Kvs)
 
 	call.pkg = make([]byte, p.Length())
 	_, err := p.Encode(call.pkg)
@@ -395,36 +445,36 @@ func (c *Context) goMultiOp(zop bool, args *MultiArgs, cmd uint8,
 	return call, nil
 }
 
-func (c *Context) GoMGet(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(false, args, proto.CmdMGet, done)
+func (c *Context) GoMGet(args []GetArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(false, MGetArgs(args), proto.CmdMGet, done)
 }
 
-func (c *Context) GoZmGet(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(true, args, proto.CmdMGet, done)
+func (c *Context) GoZmGet(args []GetArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(true, MGetArgs(args), proto.CmdMGet, done)
 }
 
-func (c *Context) GoMSet(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(false, args, proto.CmdMSet, done)
+func (c *Context) GoMSet(args []SetArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(false, MSetArgs(args), proto.CmdMSet, done)
 }
 
-func (c *Context) GoZmSet(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(true, args, proto.CmdMSet, done)
+func (c *Context) GoZmSet(args []SetArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(true, MSetArgs(args), proto.CmdMSet, done)
 }
 
-func (c *Context) GoMDel(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(false, args, proto.CmdMDel, done)
+func (c *Context) GoMDel(args []DelArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(false, MDelArgs(args), proto.CmdMDel, done)
 }
 
-func (c *Context) GoZmDel(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(true, args, proto.CmdMDel, done)
+func (c *Context) GoZmDel(args []DelArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(true, MDelArgs(args), proto.CmdMDel, done)
 }
 
-func (c *Context) GoMIncr(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(false, args, proto.CmdMIncr, done)
+func (c *Context) GoMIncr(args []IncrArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(false, MIncrArgs(args), proto.CmdMIncr, done)
 }
 
-func (c *Context) GoZmIncr(args *MultiArgs, done chan *Call) (*Call, error) {
-	return c.goMultiOp(true, args, proto.CmdMIncr, done)
+func (c *Context) GoZmIncr(args []IncrArgs, done chan *Call) (*Call, error) {
+	return c.goMultiOp(true, MIncrArgs(args), proto.CmdMIncr, done)
 }
 
 func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
@@ -533,7 +583,7 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 		return call, err
 	}
 
-	call.ctx = dumpContext{oneTable, c.dbId, tableId,
+	call.ctx = dumpContext{oneTable, tableId,
 		startUnitId, endUnitId, startUnitId, false}
 
 	c.cli.sending <- call
@@ -573,40 +623,65 @@ func (c *Context) SlaveOf(mis []ctrl.MasterInfo) error {
 	return nil
 }
 
-func doOneReply(call *Call, err error) (*OneReply, error) {
+func replyGet(call *Call, err error) ([]byte, int64, uint32, error) {
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
 
 	r, err := (<-call.Done).Reply()
 	if err != nil {
-		return nil, err
+		return nil, 0, 0, err
 	}
-	return r.(*OneReply), nil
+
+	a := r.(GetReply)
+	var value []byte
+	if a.Value != nil {
+		value = make([]byte, len(a.Value))
+		copy(value, a.Value)
+	}
+
+	return value, a.Score, a.Cas, nil
 }
 
-func doMultiReply(call *Call, err error) (*MultiReply, error) {
+func replySet(call *Call, err error) error {
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, err
-	}
-	return r.(*MultiReply), nil
+	_, err = (<-call.Done).Reply()
+	return err
 }
 
-func doScanReply(call *Call, err error) (*ScanReply, error) {
+func replyIncr(call *Call, err error) ([]byte, int64, error) {
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	r, err := (<-call.Done).Reply()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return r.(*ScanReply), nil
+
+	var value []byte
+	var a = r.(IncrReply)
+	if a.Value != nil {
+		value = make([]byte, len(a.Value))
+		copy(value, a.Value)
+	}
+
+	return value, a.Score, nil
+}
+
+func replyScan(call *Call, err error) (ScanReply, error) {
+	if err != nil {
+		return ScanReply{}, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return ScanReply{}, err
+	}
+	return r.(ScanReply), nil
 }
 
 func (call *Call) Reply() (interface{}, error) {
@@ -618,33 +693,43 @@ func (call *Call) Reply() (interface{}, error) {
 		return nil, ErrCallNotReady
 	}
 
-	switch call.cmd {
-	case proto.CmdAuth:
-		fallthrough
-	case proto.CmdPing:
-		fallthrough
-	case proto.CmdIncr:
-		fallthrough
-	case proto.CmdDel:
-		fallthrough
-	case proto.CmdSet:
-		fallthrough
-	case proto.CmdGet:
+	if proto.CmdAuth == call.cmd ||
+		proto.CmdPing == call.cmd ||
+		proto.CmdIncr == call.cmd ||
+		proto.CmdDel == call.cmd ||
+		proto.CmdSet == call.cmd ||
+		proto.CmdGet == call.cmd {
 		var p proto.PkgOneOp
 		_, err := p.Decode(call.pkg)
 		if err != nil {
 			call.err = err
 			return nil, call.err
 		}
-		return &OneReply{p.ErrCode, p.Cas, &p.KeyValue}, nil
+		if p.ErrCode < 0 {
+			return nil, getErr(p.ErrCode)
+		}
+		switch call.cmd {
+		case proto.CmdAuth:
+			return nil, nil
+		case proto.CmdPing:
+			return nil, nil
+		case proto.CmdIncr:
+			return IncrReply{p.ErrCode, p.TableId, copyBytes(p.RowKey),
+				copyBytes(p.ColKey), copyBytes(p.Value), p.Score}, nil
+		case proto.CmdDel:
+			return nil, nil
+		case proto.CmdSet:
+			return nil, nil
+		case proto.CmdGet:
+			return GetReply{p.ErrCode, p.TableId, copyBytes(p.RowKey),
+				copyBytes(p.ColKey), copyBytes(p.Value), p.Score, p.Cas}, nil
+		}
+	}
 
-	case proto.CmdMIncr:
-		fallthrough
-	case proto.CmdMDel:
-		fallthrough
-	case proto.CmdMSet:
-		fallthrough
-	case proto.CmdMGet:
+	if proto.CmdMIncr == call.cmd ||
+		proto.CmdMDel == call.cmd ||
+		proto.CmdMSet == call.cmd ||
+		proto.CmdMGet == call.cmd {
 		var p proto.PkgMultiOp
 		_, err := p.Decode(call.pkg)
 		if err != nil {
@@ -652,18 +737,45 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
-		if p.ErrCode != 0 {
-			return nil, errors.New("error code " + strconv.Itoa(int(p.ErrCode)))
+		if p.ErrCode < 0 {
+			return nil, getErr(p.ErrCode)
 		}
 
-		var r MultiReply
-		r.Reply = make([]OneReply, len(p.Kvs))
-		for i := 0; i < len(p.Kvs); i++ {
-			r.Reply[i].ErrCode = p.Kvs[i].ErrCode
-			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
+		switch call.cmd {
+		case proto.CmdMIncr:
+			var r = make([]IncrReply, len(p.Kvs))
+			for i := 0; i < len(r); i++ {
+				r[i] = IncrReply{p.Kvs[i].ErrCode, p.Kvs[i].TableId,
+					copyBytes(p.Kvs[i].RowKey), copyBytes(p.Kvs[i].ColKey),
+					copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
+			}
+			return r, nil
+		case proto.CmdMDel:
+			var r = make([]DelReply, len(p.Kvs))
+			for i := 0; i < len(r); i++ {
+				r[i] = DelReply{p.Kvs[i].ErrCode, p.Kvs[i].TableId,
+					copyBytes(p.Kvs[i].RowKey), copyBytes(p.Kvs[i].ColKey)}
+			}
+			return r, nil
+		case proto.CmdMSet:
+			var r = make([]SetReply, len(p.Kvs))
+			for i := 0; i < len(r); i++ {
+				r[i] = SetReply{p.Kvs[i].ErrCode, p.Kvs[i].TableId,
+					copyBytes(p.Kvs[i].RowKey), copyBytes(p.Kvs[i].ColKey)}
+			}
+			return r, nil
+		case proto.CmdMGet:
+			var r = make([]GetReply, len(p.Kvs))
+			for i := 0; i < len(r); i++ {
+				r[i] = GetReply{p.Kvs[i].ErrCode, p.Kvs[i].TableId,
+					copyBytes(p.Kvs[i].RowKey), copyBytes(p.Kvs[i].ColKey),
+					copyBytes(p.Kvs[i].Value), p.Kvs[i].Score, p.Kvs[i].Cas}
+			}
+			return r, nil
 		}
-		return &r, nil
+	}
 
+	switch call.cmd {
 	case proto.CmdScan:
 		var p proto.PkgScanResp
 		_, err := p.Decode(call.pkg)
@@ -672,18 +784,19 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
-		if p.ErrCode != 0 {
-			return nil, errors.New("error code " + strconv.Itoa(int(p.ErrCode)))
+		if p.ErrCode < 0 {
+			return nil, getErr(p.ErrCode)
 		}
 
 		var r ScanReply
 		r.ctx = call.ctx.(scanContext)
 		r.End = (p.PkgFlag&proto.FlagEnd != 0)
-		r.Reply = make([]*proto.KeyValue, len(p.Kvs))
+		r.Kvs = make([]ScanKV, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
-			r.Reply[i] = &p.Kvs[i].KeyValue
+			r.Kvs[i] = ScanKV{p.Kvs[i].TableId, copyBytes(p.Kvs[i].RowKey),
+				copyBytes(p.Kvs[i].ColKey), copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
 		}
-		return &r, nil
+		return r, nil
 
 	case proto.CmdDump:
 		var p proto.PkgDumpResp
@@ -693,8 +806,8 @@ func (call *Call) Reply() (interface{}, error) {
 			return nil, call.err
 		}
 
-		if p.ErrCode != 0 {
-			return nil, errors.New("error code " + strconv.Itoa(int(p.ErrCode)))
+		if p.ErrCode < 0 {
+			return nil, getErr(p.ErrCode)
 		}
 
 		var r DumpReply
@@ -702,12 +815,13 @@ func (call *Call) Reply() (interface{}, error) {
 		r.ctx.lastUnitId = p.LastUnitId
 		r.ctx.unitStart = (p.PkgFlag&proto.FlagUnitStart != 0)
 		r.End = (p.PkgFlag&proto.FlagEnd != 0)
-		r.Reply = make([]DumpRecord, len(p.Kvs))
+		r.Kvs = make([]DumpKV, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
-			r.Reply[i].ColSpace = p.Kvs[i].ColSpace
-			r.Reply[i].KeyValue = &p.Kvs[i].KeyValue
+			r.Kvs[i] = DumpKV{p.Kvs[i].TableId, p.Kvs[i].ColSpace,
+				copyBytes(p.Kvs[i].RowKey), copyBytes(p.Kvs[i].ColKey),
+				copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
 		}
-		return &r, nil
+		return r, nil
 
 	case proto.CmdSlaveOf:
 		var p ctrl.PkgSlaveOf
@@ -716,7 +830,7 @@ func (call *Call) Reply() (interface{}, error) {
 			call.err = err
 			return nil, call.err
 		}
-		return &p, nil
+		return p, nil
 	}
 
 	return nil, ErrUnknownCmd
