@@ -32,15 +32,18 @@ enum {
 	EcOk          = 0,   // Success
 	EcCasNotMatch = -50, // CAS not match, get new CAS and try again
 	EcTempFail    = -51, // Temporary failed, retry may fix this
-	EcNoPrivilege = -60, // No access privilege
-	EcWriteSlaver = -62, // Can NOT write slaver directly
-	EcReadFail    = -63, // Read failed
-	EcWriteFail   = -64, // Write failed
-	EcDecodeFail  = -65, // Decode request PKG failed
-	EcInvDbId     = -66, // Invalid DB ID (cannot be 0)
-	EcInvRowKey   = -67, // Invalid RowKey (cannot be empty)
-	EcInvValue    = -68, // Invalid Value (length < 512KB)
-	EcInvScanNum  = -69, // Scan request number out of range
+	EcUnknownCmd  = -60, // Unknown cmd
+	EcAuthFailed  = -61, // Authorize failed
+	EcNoPrivilege = -62, // No access privilege
+	EcWriteSlaver = -63, // Can NOT write slaver directly
+	EcReadFail    = -64, // Read failed
+	EcWriteFail   = -65, // Write failed
+	EcDecodeFail  = -66, // Decode request PKG failed
+	EcInvDbId     = -67, // Invalid DB ID (cannot be 255)
+	EcInvRowKey   = -68, // RowKey length should be [1 ~ 255]
+	EcInvValue    = -69, // Value length should be [0 ~ 512KB]
+	EcInvScanNum  = -70, // Scan request number out of range
+	EcScanEnded   = -71, // Already scan/dump to end
 };
 
 struct GetArgs {

@@ -286,7 +286,11 @@ func (kv *KeyValue) Decode(pkg []byte) (int, error) {
 		kv.Value = pkg[n : n+valueLen]
 		n += valueLen
 	} else {
-		kv.Value = nil
+		if kv.ErrCode != 0 {
+			kv.Value = nil // Key not exist
+		} else {
+			kv.Value = pkg[0:0]
+		}
 	}
 	if kv.CtrlFlag&CtrlScore != 0 {
 		if n+8 > pkgLen {
