@@ -34,7 +34,7 @@ func main() {
 
 	var cli = newClient()
 	if cli == nil {
-		fmt.Printf("Failed to create client!\n")
+		fmt.Printf("Failed to create client!\n\n")
 		flag.Usage()
 		return
 	}

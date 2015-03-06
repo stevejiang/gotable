@@ -17,8 +17,10 @@ package store
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"github.com/stevejiang/gotable/api/go/table"
 	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/config"
 	"github.com/stevejiang/gotable/ctrl"
 	"log"
 	"os"
@@ -27,6 +29,12 @@ import (
 
 const (
 	zopScoreUp = uint64(0x8000000000000000)
+)
+
+// AdminDB keys
+const (
+	KeyFullSyncEnd = "full-sync-end"
+	KeyIncrSyncEnd = "incr-sync-end"
 )
 
 type PkgArgs struct {
@@ -171,7 +179,7 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
 }
 
 func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
-	kv *proto.KeyValue, replication bool) error {
+	kv *proto.KeyValue, wa *WriteAccess) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if len(kv.RowKey) == 0 {
@@ -192,7 +200,7 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
-	if !replication {
+	if !wa.replication {
 		if kv.Cas != 0 {
 			var cas = lck.GetCas(rawKey)
 			if cas != kv.Cas {
@@ -290,7 +298,7 @@ func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValue) error {
 }
 
 func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
-	kv *proto.KeyValue, replication bool) error {
+	kv *proto.KeyValue, wa *WriteAccess) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	var rawColSpace uint8 = proto.ColSpaceDefault
@@ -302,7 +310,7 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
-	if !replication {
+	if !wa.replication {
 		if kv.Cas != 0 {
 			var cas = lck.GetCas(rawKey)
 			if cas != kv.Cas {
@@ -361,7 +369,7 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 }
 
 func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
-	kv *proto.KeyValue, replication bool) error {
+	kv *proto.KeyValue, wa *WriteAccess) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if len(kv.RowKey) == 0 {
@@ -378,7 +386,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
-	if !replication {
+	if !wa.replication {
 		if kv.Cas != 0 {
 			var cas = lck.GetCas(rawKey)
 			if cas != kv.Cas {
@@ -535,7 +543,7 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
-func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
+func (tbl *Table) Set(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
@@ -551,7 +559,7 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.setKV(nil, zop, in.DbId, &in.KeyValue, replication)
+		err = tbl.setKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
@@ -565,7 +573,7 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
-func (tbl *Table) MSet(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
+func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
@@ -584,7 +592,7 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.setKV(wb, zop, in.DbId, &in.Kvs[i], replication)
+			err = tbl.setKV(wb, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("setKV failed: %s\n", err)
 				break
@@ -598,7 +606,7 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
-func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
+func (tbl *Table) Del(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
@@ -614,7 +622,7 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.delKV(nil, zop, in.DbId, &in.KeyValue, replication)
+		err = tbl.delKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
@@ -628,7 +636,7 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, replication bool) ([]byte, boo
 	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
-func (tbl *Table) MDel(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
+func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
@@ -647,7 +655,7 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.delKV(wb, zop, in.DbId, &in.Kvs[i], replication)
+			err = tbl.delKV(wb, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("delKV failed: %s\n", err)
 				break
@@ -661,7 +669,7 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
-func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
+func (tbl *Table) Incr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
@@ -677,7 +685,7 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValue, replication)
+		err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
@@ -691,7 +699,7 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, replication bool) ([]byte, bo
 	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
-func (tbl *Table) MIncr(req *PkgArgs, au Authorize, replication bool) ([]byte, bool) {
+func (tbl *Table) MIncr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
 	_, err := in.Decode(req.Pkg)
 	if err != nil {
@@ -710,7 +718,7 @@ func (tbl *Table) MIncr(req *PkgArgs, au Authorize, replication bool) ([]byte, b
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.incrKV(wb, zop, in.DbId, &in.Kvs[i], replication)
+			err = tbl.incrKV(wb, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("incrKV failed: %s\n", err)
 				break
@@ -1077,6 +1085,40 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	return pkg
 }
 
+func (tbl *Table) DeleteUnit(unitId uint16) error {
+	const maxDelNum = 1000000
+	var count, endTimes int
+	for {
+		var it = tbl.db.NewIterator(false)
+		it.Seek(getRawUnitKey(unitId, 0, 0))
+		for count = 0; it.Valid() && count < maxDelNum; it.Next() {
+			curUnitId := parseRawKeyUnitId(it.Key())
+			if curUnitId != unitId {
+				break
+			}
+			err := tbl.db.Del(it.Key(), nil)
+			if err != nil {
+				it.Close()
+				return err
+			}
+			count++
+		}
+		it.Close()
+
+		if count < maxDelNum {
+			endTimes++
+		}
+		if endTimes > 1 {
+			if count > 0 {
+				return errors.New("the deleting unit still has new data written")
+			}
+			return nil
+		}
+	}
+
+	return nil
+}
+
 func (tbl *Table) NewIterator(fillCache bool) *Iterator {
 	return tbl.db.NewIterator(fillCache)
 }
@@ -1157,6 +1199,10 @@ func parseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
 	colSpace = rawKey[colTypePos]
 	colKey = rawKey[(colTypePos + 1):]
 	return
+}
+
+func parseRawKeyUnitId(rawKey []byte) uint16 {
+	return binary.BigEndian.Uint16(rawKey)
 }
 
 func parseZColKey(colKey []byte) ([]byte, int64) {
@@ -1256,4 +1302,64 @@ func replyHandle(out proto.PkgResponse) []byte {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
 	return pkg
+}
+
+type WriteAccess struct {
+	replication bool // Replication slaver
+	hasMaster   bool
+	migration   bool
+	unitId      uint16
+}
+
+func NewWriteAccess(replication bool, mc *config.MasterConfig) *WriteAccess {
+	hasMaster, migration, unitId := mc.GetMasterUnit()
+	return &WriteAccess{replication, hasMaster, migration, unitId}
+}
+
+// Do we have right to write this key?
+func (m *WriteAccess) CheckKey(dbId, tableId uint8, rowKey []byte) bool {
+	if m.replication {
+		return true // Accept all replication data
+	}
+
+	if !m.hasMaster {
+		return true
+	}
+
+	if m.migration {
+		return m.unitId != ctrl.GetUnitId(dbId, tableId, rowKey)
+	} else {
+		return false
+	}
+}
+
+// Do we have right to write this unit?
+func (m *WriteAccess) CheckUnit(unitId uint16) bool {
+	if m.replication {
+		return true // Accept all replication data
+	}
+
+	if !m.hasMaster {
+		return true
+	}
+
+	if m.migration {
+		return m.unitId != unitId
+	} else {
+		return false
+	}
+}
+
+// return false: no right to write!
+// return true: may have right to write, need to check key or unit again
+func (m *WriteAccess) Check() bool {
+	if m.replication {
+		return true // Accept all replication data
+	}
+
+	if m.hasMaster && !m.migration {
+		return false
+	}
+
+	return true
 }

@@ -14,29 +14,53 @@
 
 package ctrl
 
-// Unit Range [Start, End]
-type UnitRange struct {
-	Start uint16
-	End   uint16
-}
-
-// Master command pkg
-type PkgMaster struct {
-	SlaveAddr string
-	LastSeq   uint64
-	Urs       []UnitRange
-
-	ErrMsg string // error msg, nil means no error
-}
-
-type MasterInfo struct {
-	Host string // ip:host
-	Urs  []UnitRange
-}
+// Slaver/Migration status
+const (
+	NotSlaver       = iota // Not a normal slaver (also not a migration slaver)
+	SlaverInit             // Just receive slaver or migration command
+	SlaverNeedClear        // Slaver has old data, need to clear old data
+	SlaverClear            // Slaver clearing(deleting) old data
+	SlaverFullSync         // Doing full sync right now
+	SlaverIncrSync         // Doing incremental sync right now
+	SlaverReady            // Slaver is up to date with master
+)
 
 // SlaveOf command pkg
 type PkgSlaveOf struct {
-	Mis []MasterInfo
+	ClientReq  bool   // true: from client api; false: from slaver to master
+	MasterAddr string // ip:host, no master if emtpy
+	SlaverAddr string // ip:host
+	LastSeq    uint64
+	ErrMsg     string // error msg, nil means no error
+}
 
+// Migrate command pkg.
+// When stop migration:
+// If all data migrated, switch client requests to new servers.
+// If migration failed, wait for delete unit command.
+// Steps in cluster mode when migration succeeds:
+// 1. new servers switch to normal status (but still hold the master/slaver connection)
+// 2. switch proxy and client requests routed to new servers
+// 3. wait for 10 seconds, and close the master/slaver connection
+// 4. delete the unit data from old servers
+type PkgMigrate struct {
+	ClientReq  bool   // true: from client api; false: from slaver to master
+	MasterAddr string // ip:host, stop migration if empty
+	SlaverAddr string // ip:host
+	UnitId     uint16 // The unit to be migrated
+	ErrMsg     string // error msg, nil means no error
+}
+
+// Get migration status
+type PkgMigStatus struct {
+	MasterAddr string // ip:host
+	UnitId     uint16 // The unit under migration
+	Status     int
+	ErrMsg     string // error msg, nil means no error
+}
+
+// Delete unit data
+type PkgDelUnit struct {
+	UnitId uint16 // The unit to delete
 	ErrMsg string // error msg, nil means no error
 }

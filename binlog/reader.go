@@ -71,11 +71,12 @@ func (r *Reader) Close() {
 	r.bin = nil
 	r.curBufR = nil
 	r.curMemPos = -1
-	r.curInfo.idx = 0
+	r.curInfo.Idx = 0
 	r.rseq = nil
 }
 
 func (r *Reader) init(logSeq uint64) bool {
+	var err error
 	r.bin.mtx.Lock()
 
 	r.bin.rseqs = append(r.bin.rseqs, r.rseq)
@@ -84,11 +85,11 @@ func (r *Reader) init(logSeq uint64) bool {
 	var index = -1
 	for i, f := range r.bin.infos {
 		index = i
-		if logSeq < f.minSeq {
+		if logSeq < f.MinSeq {
 			break
 		}
 
-		if f.maxSeq >= logSeq || f.maxSeq == 0 {
+		if f.MaxSeq >= logSeq || f.MaxSeq == 0 {
 			break
 		}
 	}
@@ -96,18 +97,18 @@ func (r *Reader) init(logSeq uint64) bool {
 	if index < 0 {
 		r.bin.mtx.Unlock() // unlock immediately
 		r.curMemPos = -1
-		r.curInfo.idx = 0
+		r.curInfo.Idx = 0
 		return true
 	} else {
 		r.curInfo = *r.bin.infos[index]
 	}
 
-	var err error
-	if r.curInfo.done {
-		r.rseq.seq = r.curInfo.minSeq
+	r.rseq.seq = r.curInfo.MinSeq
+
+	if r.curInfo.Done {
 		r.bin.mtx.Unlock() // unlock immediately
 
-		var name = r.bin.GetBinFileName(r.curInfo.idx)
+		var name = r.bin.GetBinFileName(r.curInfo.Idx)
 		r.curFile, err = os.Open(name)
 		if err != nil {
 			log.Printf("open file failed: (%s) %s\n", name, err)
@@ -134,9 +135,8 @@ func (r *Reader) init(logSeq uint64) bool {
 	} else {
 		defer r.bin.mtx.Unlock() // wait until func finished
 
-		r.rseq.seq = r.bin.seqHead.minSeq
-		if r.curInfo.idx != r.bin.fileIdx {
-			log.Printf("invalid file index (%d, %d)\n", r.curInfo.idx, r.bin.fileIdx)
+		if r.curInfo.Idx != r.bin.fileIdx {
+			log.Printf("invalid file index (%d, %d)\n", r.curInfo.Idx, r.bin.fileIdx)
 			return false
 		}
 		r.curMemPos = 0
@@ -174,17 +174,17 @@ func (r *Reader) nextFile() []byte {
 	r.curMemPos = -1
 
 	var find bool
-	var curIdx = r.curInfo.idx
+	var curIdx = r.curInfo.Idx
 
 	r.bin.mtx.Lock()
 	var memFileIdx = r.bin.fileIdx
 	var infos = r.bin.infos
 	if curIdx > 0 {
 		for i := len(infos) - 1; i >= 0; i-- {
-			if infos[i].idx <= curIdx {
+			if infos[i].Idx <= curIdx {
 				break
 			}
-			if infos[i].idx == curIdx+1 || (i > 0 && infos[i-1].idx == curIdx) {
+			if infos[i].Idx == curIdx+1 || (i > 0 && infos[i-1].Idx == curIdx) {
 				r.curInfo = *infos[i]
 				find = true
 				break
@@ -195,7 +195,7 @@ func (r *Reader) nextFile() []byte {
 		find = true
 	}
 	if find {
-		r.rseq.seq = r.curInfo.minSeq
+		r.rseq.seq = r.curInfo.MinSeq
 	}
 	r.bin.mtx.Unlock()
 
@@ -204,8 +204,8 @@ func (r *Reader) nextFile() []byte {
 	}
 
 	var err error
-	if r.curInfo.done {
-		var name = r.bin.GetBinFileName(r.curInfo.idx)
+	if r.curInfo.Done {
+		var name = r.bin.GetBinFileName(r.curInfo.Idx)
 		r.curFile, err = os.Open(name)
 		if err != nil {
 			log.Printf("open file failed: (%s) %s\n", name, err)
@@ -218,8 +218,8 @@ func (r *Reader) nextFile() []byte {
 			r.curBufR.Reset(r.curFile)
 		}
 	} else {
-		if r.curInfo.idx != memFileIdx {
-			log.Printf("invalid file index (%d, %d)\n", r.curInfo.idx, memFileIdx)
+		if r.curInfo.Idx != memFileIdx {
+			log.Printf("invalid file index (%d, %d)\n", r.curInfo.Idx, memFileIdx)
 			return nil
 		}
 		r.curMemPos = 0
@@ -239,16 +239,16 @@ func (r *Reader) next() []byte {
 		return pkg
 	} else if r.curMemPos >= 0 {
 		r.bin.mtx.Lock()
-		if r.curInfo.idx != r.bin.fileIdx {
+		if r.curInfo.Idx != r.bin.fileIdx {
 			for _, f := range r.bin.infos {
-				if f.idx == r.curInfo.idx {
+				if f.Idx == r.curInfo.Idx {
 					r.curInfo = *f
 					break
 				}
 			}
 			r.bin.mtx.Unlock() // unlock immediately
 
-			var name = r.bin.GetBinFileName(r.curInfo.idx)
+			var name = r.bin.GetBinFileName(r.curInfo.Idx)
 			r.curFile, err = os.Open(name)
 			if err != nil {
 				log.Printf("open file failed: (%s) %s\n", name, err)
@@ -293,8 +293,5 @@ func (r *Reader) next() []byte {
 }
 
 func (r *Reader) Next() []byte {
-	//	r.bin.mtx.Lock()
-	//	defer r.bin.mtx.Unlock()
-
 	return r.next()
 }

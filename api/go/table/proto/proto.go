@@ -50,11 +50,14 @@ const (
 	CmdMIncr = 0x65
 
 	// Inner SYNC
-	CmdSync = 0xB0
+	CmdSync   = 0xB0 // Sync data
+	CmdSyncSt = 0xB1 // Sync status
 
 	// Inner CTRL
-	CmdMaster  = 0xD0
-	CmdSlaveOf = 0xD1
+	CmdSlaveOf   = 0xD0
+	CmdMigrate   = 0xD1 // Start/Stop migration
+	CmdMigStatus = 0xD2 // Get migration status
+	CmdDelUnit   = 0xD3 // Delete unit data
 )
 
 const (

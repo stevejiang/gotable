@@ -17,9 +17,9 @@ package server
 import (
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/binlog"
+	"github.com/stevejiang/gotable/config"
 	"github.com/stevejiang/gotable/ctrl"
 	"github.com/stevejiang/gotable/store"
-	"github.com/stevejiang/gotable/util"
 	"log"
 	"net"
 	"sync"
@@ -28,34 +28,45 @@ import (
 )
 
 type slaver struct {
-	mi      ctrl.MasterInfo
 	reqChan *RequestChan
 	bin     *binlog.BinLog
+	mc      *config.MasterConfig
+	mi      config.MasterInfo
 
 	mtx    sync.Mutex // protects following
 	cli    *Client
 	closed bool
 }
 
-func newSlaver(mi ctrl.MasterInfo, reqChan *RequestChan, bin *binlog.BinLog) *slaver {
+func NewSlaver(reqChan *RequestChan, bin *binlog.BinLog,
+	mc *config.MasterConfig) *slaver {
 	var slv = new(slaver)
-	slv.mi = mi
 	slv.reqChan = reqChan
 	slv.bin = bin
+	slv.mc = mc
+	slv.mi = mc.GetMaster()
 
 	return slv
 }
 
 func (slv *slaver) Close() {
+	var cli *Client
 	slv.mtx.Lock()
 	if !slv.closed {
 		slv.closed = true
-		if slv.cli != nil {
-			slv.cli.Close()
-			slv.cli = nil
-		}
+		cli = slv.cli
 	}
 	slv.mtx.Unlock()
+
+	if cli != nil {
+		cli.Close()
+	}
+}
+
+func (slv *slaver) DelayClose() {
+	log.Printf("Delay close slaver %p\n", slv)
+	time.Sleep(time.Second * 2)
+	slv.Close()
 }
 
 func (slv *slaver) IsClosed() bool {
@@ -65,47 +76,85 @@ func (slv *slaver) IsClosed() bool {
 	return closed
 }
 
-func (slv *slaver) goConnectToMaster() {
+func (slv *slaver) GoConnectToMaster() {
+	slv.doConnectToMaster()
+
+	slv.cli = nil
+	slv.bin = nil
+	slv.reqChan = nil
+	slv.mc = nil
+}
+
+func (slv *slaver) doConnectToMaster() {
 	for {
 		if slv.IsClosed() {
 			return
 		}
 
-		c, err := net.Dial("tcp", slv.mi.Host)
-		if err == nil {
-			cli := NewClient(c, false)
-			slv.mtx.Lock()
-			slv.cli = cli
-			slv.mtx.Unlock()
-			if slv.IsClosed() {
-				return
-			}
+		c, err := net.Dial("tcp", slv.mi.MasterAddr)
+		if err != nil {
+			log.Printf("Connect to master %s failed, sleep 1 second and try again.\n",
+				slv.mi.MasterAddr)
+			time.Sleep(time.Second)
+			continue
+		}
 
-			cli.SetClientType(ClientTypeSlaver)
+		cli := NewClient(c, false)
+		slv.mtx.Lock()
+		slv.cli = cli
+		slv.mtx.Unlock()
+		if slv.IsClosed() {
+			return
+		}
 
-			go cli.GoRecvRequest(slv.reqChan)
-			go cli.GoSendResponse()
+		cli.SetClientType(ClientTypeSlaver)
 
-			var en = ctrl.NewEncoder()
-			var pm ctrl.PkgMaster
-			pm.Urs = slv.mi.Urs
-			pm.LastSeq = slv.bin.GetMasterSeq(1) //TODO
-			log.Printf("Connect to master with start log seq %d\n", pm.LastSeq)
+		go cli.GoRecvRequest(slv.reqChan)
+		go cli.GoSendResponse()
 
-			var resp = &Response{proto.CmdMaster, 0, 0, nil}
-			resp.Pkg, err = en.Encode(proto.CmdMaster, 0, 0, &pm)
+		var resp = &Response{proto.CmdSlaveOf, 0, 0, nil}
+		var en = ctrl.NewEncoder()
+		if slv.mi.Migration {
+			var p ctrl.PkgMigrate
+			p.ClientReq = false
+			p.MasterAddr = slv.mi.MasterAddr
+			p.SlaverAddr = slv.mi.SlaverAddr
+			p.UnitId = slv.mi.UnitId
+
+			resp.Cmd = proto.CmdMigrate
+			resp.Pkg, err = en.Encode(proto.CmdMigrate, 0, 0, &p)
 			if err != nil {
 				log.Printf("Fatal Encode error: %s\n", err)
 				return
 			}
-			cli.AddResp(resp)
-
-			for !cli.IsClosed() {
-				time.Sleep(time.Second)
-			}
 		} else {
-			log.Printf("Connect to master %s failed, sleep 1 second and try again.\n",
-				slv.mi.Host)
+			lastSeq, valid := slv.bin.GetMasterSeq()
+			if !valid {
+				slv.mc.SetStatus(ctrl.SlaverNeedClear)
+				// Any better solution?
+				log.Fatalf("Slaver has old data with lastSeq %d, please clear first! "+
+					"(Restart may fix this issue)", lastSeq)
+			}
+
+			var p ctrl.PkgSlaveOf
+			p.ClientReq = false
+			p.MasterAddr = slv.mi.MasterAddr
+			p.SlaverAddr = slv.mi.SlaverAddr
+			p.LastSeq = lastSeq
+			log.Printf("Connect to master %s with lastSeq %d\n",
+				slv.mi.MasterAddr, p.LastSeq)
+
+			resp.Pkg, err = en.Encode(proto.CmdSlaveOf, 0, 0, &p)
+			if err != nil {
+				log.Printf("Fatal Encode error: %s\n", err)
+				return
+			}
+		}
+
+		cli.AddResp(resp)
+		slv.mc.SetStatus(ctrl.SlaverFullSync)
+
+		for !cli.IsClosed() {
 			time.Sleep(time.Second)
 		}
 	}
@@ -115,43 +164,59 @@ type master struct {
 	syncChan  chan struct{}
 	cli       *Client
 	bin       *binlog.BinLog
+	reader    *binlog.Reader
 	slaveAddr string
 	lastSeq   uint64
-	urs       []ctrl.UnitRange
-	ubm       *util.BitMap
+	migration bool   // true: Migration; false: Normal master/slaver
+	unitId    uint16 // Only meaningful for migration
 
 	// atomic
 	closed uint32
 }
 
-func newMaster(slaveAddr string, lastSeq uint64, urs []ctrl.UnitRange,
+func NewMaster(slaveAddr string, lastSeq uint64, migration bool, unitId uint16,
 	cli *Client, bin *binlog.BinLog) *master {
 	var ms = new(master)
 	ms.syncChan = make(chan struct{}, 20)
 	ms.cli = cli
 	ms.bin = bin
+	ms.reader = nil
 	ms.slaveAddr = slaveAddr
 	ms.lastSeq = lastSeq
-	ms.urs = urs
-	ms.ubm = util.NewBitMap(ctrl.TotalUnitNum / 8)
-	for i := 0; i < len(urs); i++ {
-		tr := urs[i]
-		for j := tr.Start; j <= tr.End; j++ {
-			ms.ubm.Set(uint(j))
-		}
+	ms.migration = migration
+	if migration {
+		ms.unitId = unitId
+	} else {
+		ms.unitId = ctrl.TotalUnitNum
 	}
-	ms.cli.SetMaster(ms)
+	ms.bin.RegisterMonitor(ms)
 
 	return ms
 }
 
 func (ms *master) doClose() {
-	ms.bin.RemoveMonitor(ms)
+	atomic.AddUint32(&ms.closed, 1)
+
+	cli := ms.cli
+	if cli != nil {
+		cli.Close()
+	}
+
+	bin := ms.bin
+	if bin != nil {
+		bin.RemoveMonitor(ms)
+	}
+
+	reader := ms.reader
+	if reader != nil {
+		reader.Close()
+	}
 
 	ms.cli = nil
 	ms.bin = nil
-	ms.urs = nil
-	ms.ubm = nil
+	ms.reader = nil
+
+	log.Printf("Master sync to slaver %s is closed\n", ms.slaveAddr)
 }
 
 func (ms *master) Close() {
@@ -170,130 +235,146 @@ func (ms *master) NewLogComming() {
 		ms.syncChan <- struct{}{}
 	}
 }
+func (ms *master) syncStatus(key string, lastSeq uint64) {
+	var p proto.PkgOneOp
+	p.Cmd = proto.CmdSyncSt
+	p.DbId = proto.AdminDbId
+	p.Seq = lastSeq
+	p.RowKey = []byte(key)
+	var pkg = make([]byte, p.Length())
+	p.Encode(pkg)
+	ms.cli.AddResp(&Response{p.Cmd, p.DbId, p.Seq, pkg})
+}
 
 func (ms *master) fullSync(tbl *store.Table) uint64 {
 	var lastSeq uint64
 	if ms.lastSeq > 0 {
 		lastSeq = ms.lastSeq
-		log.Println("Already full asynced")
-	} else {
-		// Stop write globally
-		rwMtx := tbl.GetRWMutex()
-		rwMtx.Lock()
-		var valid bool
-		for lastSeq, valid = ms.bin.GetLastLogSeq(); !valid; {
-			log.Println("Stop write globally for 1ms")
-			time.Sleep(1e6)
-			lastSeq, valid = ms.bin.GetLastLogSeq()
+		if ms.migration {
+			log.Printf("Already full migrated to %s unitId %d\n",
+				ms.slaveAddr, ms.unitId)
+		} else {
+			log.Printf("Already full synced to %s\n", ms.slaveAddr)
 		}
-		var it = tbl.NewIterator(false)
-		rwMtx.Unlock()
+		return lastSeq
+	}
 
-		defer it.Close()
+	// Stop write globally
+	rwMtx := tbl.GetRWMutex()
+	rwMtx.Lock()
+	var valid bool
+	for lastSeq, valid = ms.bin.GetLastLogSeq(); !valid; {
+		log.Println("Stop write globally for 1ms")
+		time.Sleep(time.Millisecond)
+		lastSeq, valid = ms.bin.GetLastLogSeq()
+	}
+	var it = tbl.NewIterator(false)
+	rwMtx.Unlock()
 
-		// Full sync
-		var hasRecord = false
-		var one proto.PkgOneOp
-		one.Cmd = proto.CmdSync
-		for it.SeekToFirst(); it.Valid(); it.Next() {
-			if hasRecord {
-				var pkg = make([]byte, one.Length())
-				one.Encode(pkg)
-				ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
-			}
+	defer it.Close()
 
-			hasRecord = false
-			unitId, ok := store.SeekAndCopySyncPkg(it, &one)
-			if !ok {
+	// Full sync
+	var one proto.PkgOneOp
+	one.Cmd = proto.CmdSync
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		unitId, ok := store.SeekAndCopySyncPkg(it, &one)
+		if !ok {
+			break
+		}
+		if ms.migration && ms.unitId != unitId {
+			if ms.unitId < unitId {
 				break
-			}
-			if ms.ubm.Get(uint(unitId)) {
-				hasRecord = true
-			} else {
-				var u = unitId + 1
-				for ; u < ctrl.TotalUnitNum; u++ {
-					if ms.ubm.Get(uint(u)) {
-						store.SeekToUnit(it, u, 0, 0)
-						if it.Valid() {
-							unitId, ok = store.SeekAndCopySyncPkg(it, &one)
-							if !ok {
-								break
-							}
-							if ms.ubm.Get(uint(unitId)) {
-								hasRecord = true
-							}
-						}
-						break
-					}
+			} else if ms.unitId > unitId {
+				store.SeekToUnit(it, ms.unitId, 0, 0)
+				if !it.Valid() {
+					break
 				}
-				if u >= ctrl.TotalUnitNum || !it.Valid() {
+				unitId, ok = store.SeekAndCopySyncPkg(it, &one)
+				if !ok || ms.unitId != unitId {
 					break
 				}
 			}
-
-			if ms.cli.IsClosed() {
-				return lastSeq
-			}
 		}
 
-		if hasRecord {
-			one.Seq = lastSeq
-			var pkg = make([]byte, one.Length())
-			one.Encode(pkg)
-			ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
+		if ms.cli.IsClosed() {
+			return lastSeq
 		}
 
-		log.Println("Full async finished")
+		one.Seq = 0
+		var pkg = make([]byte, one.Length())
+		one.Encode(pkg)
+		ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
+	}
+
+	// Tell slaver full sync finished
+	if ms.migration {
+		ms.syncStatus(store.KeyFullSyncEnd, 0)
+		log.Printf("Full migration to %s unitId %d finished\n",
+			ms.slaveAddr, ms.unitId)
+	} else {
+		ms.syncStatus(store.KeyFullSyncEnd, lastSeq)
+		log.Printf("Full sync to %s finished\n", ms.slaveAddr)
 	}
 
 	return lastSeq
 }
 
-func (ms *master) goAsync(tbl *store.Table) {
+func (ms *master) GoAsync(tbl *store.Table) {
 	var lastSeq = ms.fullSync(tbl)
 	if ms.cli.IsClosed() {
 		log.Println("Master-slaver connection is closed, stop sync!")
 		return
 	}
 
-	log.Printf("Start incremental sync, lastSeq=%d\n", lastSeq)
+	if ms.migration {
+		log.Printf("Start incremental migration to %s unitId %d, lastSeq=%d\n",
+			ms.slaveAddr, ms.unitId, lastSeq)
+	} else {
+		log.Printf("Start incremental sync to %s, lastSeq=%d",
+			ms.slaveAddr, lastSeq)
+	}
 
 	ms.NewLogComming()
 
+	var isReady bool
+	var readyCount int64
+	var head proto.PkgHead
 	var lastResp *Response
-	var reader *binlog.Reader
 	var tick = time.Tick(time.Second)
 	for {
 		select {
 		case _, ok := <-ms.syncChan:
-			if !ok || ms.IsClosed() {
-				if reader != nil {
-					reader.Close()
-				}
+			if !ok || ms.IsClosed() || ms.cli.IsClosed() {
 				ms.doClose()
-				log.Printf("Master sync channel closed %p\n", ms)
 				return
 			}
 
-			if reader == nil {
-				reader = binlog.NewReader(ms.bin, lastSeq)
+			if ms.reader == nil {
+				ms.reader = binlog.NewReader(ms.bin, lastSeq)
 			}
-			if reader == nil {
+			if ms.reader == nil {
 				ms.doClose()
-				log.Printf("Master sync channel closed %p\n", ms)
 				return
 			}
 
-			for !ms.IsClosed() {
-				var pkg = reader.Next()
+			for !ms.IsClosed() && !ms.cli.IsClosed() {
+				var pkg = ms.reader.Next()
 				if pkg == nil {
+					if readyCount%60 == 0 {
+						ms.syncStatus(store.KeyIncrSyncEnd, 0)
+						readyCount++
+					} else {
+						isReady = true
+					}
 					break
 				}
 
-				var head proto.PkgHead
-				_, err := head.Decode(pkg)
+				pkg, err := ms.convertMigPkg(pkg, &head)
 				if err != nil {
 					break
+				}
+				if pkg == nil {
+					continue
 				}
 
 				lastResp = &Response{head.Cmd, head.DbId, head.Seq, pkg}
@@ -301,13 +382,15 @@ func (ms *master) goAsync(tbl *store.Table) {
 			}
 
 		case <-tick:
-			if ms.IsClosed() {
-				if reader != nil {
-					reader.Close()
-				}
+			if ms.IsClosed() || ms.cli.IsClosed() {
 				ms.doClose()
-				log.Printf("Master sync channel closed %p\n", ms)
 				return
+			}
+
+			if isReady {
+				readyCount++
+			} else {
+				isReady = false
 			}
 
 			ms.NewLogComming()
@@ -317,4 +400,65 @@ func (ms *master) goAsync(tbl *store.Table) {
 			}
 		}
 	}
+}
+
+func (ms *master) convertMigPkg(pkg []byte, head *proto.PkgHead) ([]byte, error) {
+	//TODO: check key unit for migration
+	_, err := head.Decode(pkg)
+	if err != nil {
+		return nil, err
+	}
+
+	if !ms.migration {
+		return pkg, nil
+	}
+
+	switch head.Cmd {
+	case proto.CmdIncr:
+		fallthrough
+	case proto.CmdDel:
+		fallthrough
+	case proto.CmdSync:
+		fallthrough
+	case proto.CmdSet:
+		var p proto.PkgOneOp
+		_, err = p.Decode(pkg)
+		if err != nil {
+			return nil, err
+		}
+		if ms.unitId == ctrl.GetUnitId(p.DbId, p.TableId, p.RowKey) {
+			return pkg, nil
+		} else {
+			return nil, nil
+		}
+	case proto.CmdMIncr:
+		fallthrough
+	case proto.CmdMDel:
+		fallthrough
+	case proto.CmdMSet:
+		var p proto.PkgMultiOp
+		_, err = p.Decode(pkg)
+		if err != nil {
+			return nil, err
+		}
+		var kvs []proto.KeyValue
+		for i := 0; i < len(p.Kvs); i++ {
+			if ms.unitId == ctrl.GetUnitId(p.DbId, p.Kvs[i].TableId, p.Kvs[i].RowKey) {
+				kvs = append(kvs, p.Kvs[i])
+			}
+		}
+		if len(kvs) == 0 {
+			return nil, nil
+		} else {
+			p.Kvs = kvs
+			pkg = make([]byte, p.Length())
+			_, err = p.Encode(pkg)
+			if err != nil {
+				return nil, err
+			}
+			return pkg, nil
+		}
+	}
+
+	return nil, nil
 }

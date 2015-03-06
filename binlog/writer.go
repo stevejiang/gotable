@@ -16,12 +16,10 @@ package binlog
 
 import (
 	"bufio"
-	"bytes"
-	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/util"
-	"io"
 	"log"
 	"os"
 	"sort"
@@ -38,26 +36,14 @@ type Monitor interface {
 const (
 	memBinLogSize  = 1024 * 1024 * 8
 	keepBinFileNum = 5
+	MinNormalSeq   = uint64(1000000000000000000)
 )
-
-const (
-	seqFileHeadSize = 32
-	seqRecordOne    = 0x1 // One-2-one record of binlog seq
-	seqRecordAll    = 0x2 // Summary record of master seq
-)
-
-type seqFileHead struct {
-	minSeq  uint64
-	maxSeq  uint64
-	tailPos uint64
-	tailNum uint16
-}
 
 type fileInfo struct {
-	idx    uint64
-	minSeq uint64
-	maxSeq uint64
-	done   bool
+	Idx    uint64
+	MinSeq uint64
+	MaxSeq uint64
+	Done   bool
 }
 
 type readerSeq struct {
@@ -65,7 +51,6 @@ type readerSeq struct {
 }
 
 type Request struct {
-	MasterId  uint16
 	MasterSeq uint64
 	Pkg       []byte
 }
@@ -78,19 +63,14 @@ type BinLog struct {
 
 	binFile *os.File
 	binBufW *bufio.Writer
-	seqFile *os.File
-	seqBufW *bufio.Writer
 
 	mtx       sync.Mutex // The following variables are protected by mtx
-	msChanged bool
+	hasMaster bool       // Has master or not
+	msChanged bool       // Whether monitors changed
 	monitors  []Monitor
 
-	seqHead   seqFileHead
-	masterSeq map[uint16]uint64 //master id => last master binlog seq
-
-	fileIdx    uint64
-	logSeq     uint64
-	lastLogSeq uint64
+	fileIdx uint64
+	logSeq  uint64
 
 	memlog  []byte
 	usedLen int
@@ -111,8 +91,9 @@ func NewBinLog(dir string, memSize, keepNum int) *BinLog {
 
 	bin.reqChan = make(chan *Request, 10000)
 
+	bin.hasMaster = false // No master
 	bin.msChanged = true
-	bin.logSeq = 1000000 // start from here
+	bin.logSeq = MinNormalSeq // Master server seq start from here
 	bin.memlog = make([]byte, memBinLogSize)
 
 	err = bin.init()
@@ -132,79 +113,82 @@ func (bin *BinLog) init() error {
 		return err
 	}
 
-	err = bin.loadAndFixHeadAndTail(idxs)
+	err = bin.loadAndFixSeqFiles(idxs)
 	if err != nil {
 		return err
 	}
 
 	if len(bin.infos) > 0 {
-		bin.fileIdx = bin.infos[len(bin.infos)-1].idx
-		bin.logSeq = bin.infos[len(bin.infos)-1].maxSeq
-		bin.lastLogSeq = bin.logSeq + uint64(len(bin.reqChan))
+		bin.fileIdx = bin.infos[len(bin.infos)-1].Idx
+		bin.logSeq = bin.infos[len(bin.infos)-1].MaxSeq
 	}
-
-	var delIdxs []uint64
-	if len(bin.infos) > keepBinFileNum {
-		for i := 0; i < len(bin.infos)-keepBinFileNum; i++ {
-			delIdxs = append(delIdxs, bin.infos[i].idx)
-		}
-	}
-
-	bin.deleteOldBinLogFiles(delIdxs)
 
 	return nil
 }
 
 func (bin *BinLog) RegisterMonitor(m Monitor) {
 	bin.mtx.Lock()
-	defer bin.mtx.Unlock()
-
 	bin.monitors = append(bin.monitors, m)
 	bin.msChanged = true
+	bin.mtx.Unlock()
 }
 
 func (bin *BinLog) RemoveMonitor(m Monitor) {
 	bin.mtx.Lock()
-	defer bin.mtx.Unlock()
-
 	for index, tmp := range bin.monitors {
 		if tmp == m {
 			copy(bin.monitors[index:], bin.monitors[index+1:])
 			bin.monitors = bin.monitors[:len(bin.monitors)-1]
-			log.Println("Remove one monitor from monitors")
 			break
 		}
 	}
+	bin.mtx.Unlock()
 }
 
-func (bin *BinLog) GetMasterSeq(masterId uint16) uint64 {
+func (bin *BinLog) AsMaster() {
 	bin.mtx.Lock()
-	defer bin.mtx.Unlock()
-
-	if v, ok := bin.masterSeq[masterId]; ok {
-		return v
-	} else {
-		return 0
+	bin.hasMaster = false
+	if bin.logSeq < MinNormalSeq {
+		bin.logSeq = MinNormalSeq
 	}
+	bin.mtx.Unlock()
 }
 
-func (bin *BinLog) DropMaster(masterId uint16) {
+func (bin *BinLog) AsSlaver() {
 	bin.mtx.Lock()
-	defer bin.mtx.Unlock()
-
-	delete(bin.masterSeq, masterId)
+	bin.hasMaster = true
+	bin.logSeq = 0
+	bin.mtx.Unlock()
 }
 
 func (bin *BinLog) GetLogSeq() uint64 {
 	bin.mtx.Lock()
-	defer bin.mtx.Unlock()
-	return bin.logSeq
+	seq := bin.logSeq
+	bin.mtx.Unlock()
+	return seq
+}
+
+// Only for master/slaver mode
+func (bin *BinLog) GetMasterSeq() (masterSeq uint64, valid bool) {
+	masterSeq = 0
+	bin.mtx.Lock()
+	if len(bin.infos) > 0 {
+		masterSeq = bin.infos[len(bin.infos)-1].MaxSeq
+	}
+	bin.mtx.Unlock()
+
+	valid = true
+	if masterSeq > 0 && masterSeq < MinNormalSeq {
+		valid = false
+	}
+	return
 }
 
 func (bin *BinLog) GetLastLogSeq() (lastLogSeq uint64, valid bool) {
 	bin.mtx.Lock()
-	defer bin.mtx.Unlock()
-	return bin.lastLogSeq, len(bin.reqChan)*2 < cap(bin.reqChan)
+	lastLogSeq, valid = bin.logSeq, len(bin.reqChan) == 0
+	bin.mtx.Unlock()
+	return
 }
 
 func (bin *BinLog) AddRequest(req *Request) {
@@ -217,10 +201,6 @@ func (bin *BinLog) GetBinFileName(fileIdx uint64) string {
 
 func (bin *BinLog) GetSeqFileName(fileIdx uint64) string {
 	return fmt.Sprintf("%s/%06d.seq", bin.dir, fileIdx)
-}
-
-func (bin *BinLog) GetSeqFileTmpName(fileIdx uint64) string {
-	return fmt.Sprintf("%s/%06d.seq.tmp", bin.dir, fileIdx)
 }
 
 func (bin *BinLog) GoWriteBinLog() {
@@ -236,8 +216,11 @@ func (bin *BinLog) GoWriteBinLog() {
 			}
 
 			bin.mtx.Lock()
-			bin.logSeq++
-			bin.lastLogSeq = bin.logSeq + uint64(len(bin.reqChan))
+			if bin.hasMaster && req.MasterSeq > 0 {
+				bin.logSeq = req.MasterSeq
+			} else {
+				bin.logSeq++
+			}
 			if bin.msChanged {
 				bin.msChanged = false
 				ms = make([]Monitor, len(bin.monitors))
@@ -258,12 +241,9 @@ func (bin *BinLog) GoWriteBinLog() {
 			if bin.binBufW != nil {
 				bin.binBufW.Flush()
 			}
-			if bin.seqBufW != nil {
-				bin.seqBufW.Flush()
-			}
 			if lastReq != nil {
-				log.Printf("Write binlog: seq=%d, mId=%d, mSeq=%d\n",
-					bin.logSeq, lastReq.MasterId, lastReq.MasterSeq)
+				log.Printf("Write binlog: seq=%d, masterSeq=%d\n",
+					bin.logSeq, lastReq.MasterSeq)
 				lastReq = nil
 			}
 		}
@@ -278,31 +258,14 @@ func (bin *BinLog) doWrite(req *Request, logSeq uint64) error {
 			bin.binFile.Close()
 			bin.binFile = nil
 
-			if bin.seqFile != nil {
-				bin.seqBufW.Flush()
-				bin.seqBufW = nil
-
-				var mSeq = make(map[uint16]uint64)
-				bin.mtx.Lock()
-				for k, v := range bin.masterSeq {
-					mSeq[k] = v
-				}
-				var minSeq = bin.seqHead.minSeq
-				var maxSeq = bin.seqHead.maxSeq
-				bin.seqHead = seqFileHead{}
-				bin.mtx.Unlock()
-
-				bin.writeSeqFileHeadAndTail(mSeq, minSeq, maxSeq)
-				bin.seqFile.Close()
-				bin.seqFile = nil
-			}
-
 			bin.mtx.Lock()
 			bin.usedLen = 0
-			bin.infos[len(bin.infos)-1].done = true
+			bin.infos[len(bin.infos)-1].Done = true
+			var fi = *bin.infos[len(bin.infos)-1]
 			var delIdxs = bin.selectDelBinLogFiles()
 			bin.mtx.Unlock()
 
+			bin.writeSeqFile(&fi)
 			bin.deleteOldBinLogFiles(delIdxs)
 		}
 	}
@@ -320,37 +283,19 @@ func (bin *BinLog) doWrite(req *Request, logSeq uint64) error {
 			return err
 		}
 
-		name = bin.GetSeqFileName(bin.fileIdx)
-		bin.seqFile, err = os.Create(name)
-		if err != nil {
-			log.Printf("create file failed: (%s) %s\n", name, err)
-			return err
-		}
-
 		bin.binBufW = bufio.NewWriter(bin.binFile)
-		bin.seqBufW = bufio.NewWriterSize(bin.seqFile, 1024)
-
-		bin.seqBufW.Write(make([]byte, seqFileHeadSize))
 
 		bin.mtx.Lock()
 		bin.infos = append(bin.infos, &fileInfo{bin.fileIdx, logSeq, 0, false})
-		bin.seqHead.minSeq = logSeq
 		bin.mtx.Unlock()
 	}
 
 	copy(bin.memlog[bin.usedLen:], req.Pkg)
 	bin.binBufW.Write(req.Pkg)
-	bin.writeSeqFileRecord(req, logSeq)
 
 	bin.mtx.Lock()
 	bin.usedLen += len(req.Pkg)
-	bin.infos[len(bin.infos)-1].maxSeq = logSeq
-	bin.seqHead.maxSeq = logSeq
-	if req.MasterId > 0 {
-		if bin.masterSeq[req.MasterId] < req.MasterSeq {
-			bin.masterSeq[req.MasterId] = req.MasterSeq
-		}
-	}
+	bin.infos[len(bin.infos)-1].MaxSeq = logSeq
 	bin.mtx.Unlock()
 
 	return nil
@@ -367,12 +312,12 @@ func (bin *BinLog) selectDelBinLogFiles() []uint64 {
 	}
 	var delPivot = -1
 	for i := 0; i < len(bin.infos)-keepBinFileNum; i++ {
-		if bin.infos[i].maxSeq < minSeq {
+		if bin.infos[i].MaxSeq < minSeq {
 			delPivot = i
 		}
 	}
 	for i := 0; i <= delPivot; i++ {
-		delIdxs = append(delIdxs, bin.infos[i].idx)
+		delIdxs = append(delIdxs, bin.infos[i].Idx)
 	}
 	if delPivot > -1 {
 		bin.infos = bin.infos[delPivot+1:]
@@ -386,60 +331,6 @@ func (bin *BinLog) deleteOldBinLogFiles(idxs []uint64) {
 		os.Remove(bin.GetBinFileName(idx))
 		os.Remove(bin.GetSeqFileName(idx))
 	}
-}
-
-func (bin *BinLog) writeSeqFileRecord(req *Request, logSeq uint64) {
-	var oneRecord = make([]byte, 19)
-	oneRecord[0] = byte(seqRecordOne)
-	binary.BigEndian.PutUint16(oneRecord[1:], req.MasterId)
-	binary.BigEndian.PutUint64(oneRecord[3:], req.MasterSeq)
-	binary.BigEndian.PutUint64(oneRecord[11:], logSeq)
-	bin.seqBufW.Write(oneRecord)
-}
-
-func (bin *BinLog) writeSeqFileHeadAndTail(mSeq map[uint16]uint64,
-	minSeq, maxSeq uint64) error {
-
-	tailPos, err := bin.seqFile.Seek(0, os.SEEK_CUR)
-	if err != nil {
-		return err
-	}
-
-	var head = make([]byte, seqFileHeadSize)
-	var tail bytes.Buffer
-
-	//tail
-	tailNum := uint16(len(mSeq))
-	var tmp = make([]byte, 11)
-	for id, seq := range mSeq {
-		tmp[0] = byte(seqRecordAll)
-		binary.BigEndian.PutUint16(tmp[1:], id)
-		binary.BigEndian.PutUint64(tmp[3:], seq)
-		tail.Write(tmp)
-	}
-
-	// head
-	binary.BigEndian.PutUint64(head, minSeq)
-	binary.BigEndian.PutUint64(head[8:], maxSeq)
-	binary.BigEndian.PutUint64(head[16:], uint64(tailPos))
-	binary.BigEndian.PutUint16(head[24:], tailNum)
-
-	_, err = bin.seqFile.Write(tail.Bytes())
-	if err != nil {
-		return err
-	}
-
-	_, err = bin.seqFile.Seek(0, os.SEEK_SET)
-	if err != nil {
-		return err
-	}
-
-	_, err = bin.seqFile.Write(head)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (bin *BinLog) loadAllFilesIndex() ([]uint64, error) {
@@ -473,141 +364,93 @@ func (bin *BinLog) loadAllFilesIndex() ([]uint64, error) {
 	return idxs, nil
 }
 
-func (bin *BinLog) loadAndFixHeadAndTail(idxs []uint64) error {
-	var mSeq = make(map[uint16]uint64)
+func (bin *BinLog) writeSeqFile(fi *fileInfo) error {
+	var name = bin.GetSeqFileName(fi.Idx)
+	file, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
 
-	for _, idx := range idxs {
-		var name = bin.GetSeqFileName(idx)
-		f, err := os.Open(name)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// skip the idx
-				continue
-			} else {
-				return err
-			}
-		}
+	en := json.NewEncoder(file)
 
-		var head = make([]byte, seqFileHeadSize)
-		_, err = f.Read(head)
-		if err != nil {
-			f.Close()
-			// skip the idx
-			continue
-		}
-
-		var minSeq = binary.BigEndian.Uint64(head)
-		var maxSeq = binary.BigEndian.Uint64(head[8:])
-		var tailPos = binary.BigEndian.Uint64(head[16:])
-		var tailNum = binary.BigEndian.Uint16(head[24:])
-
-		var failed = false
-		if tailPos > 0 {
-			f.Seek(int64(tailPos), os.SEEK_SET)
-
-			var r = bufio.NewReader(f)
-			var oneRecord = make([]byte, 11)
-			var tmpSeq = make(map[uint16]uint64)
-			for {
-				_, err := io.ReadFull(r, oneRecord)
-				if err != nil {
-					if err == io.EOF || err == io.ErrUnexpectedEOF {
-						break
-					} else {
-						f.Close()
-						return err
-					}
-				}
-
-				if oneRecord[0] != byte(seqRecordAll) {
-					break
-				}
-
-				var masterId = binary.BigEndian.Uint16(oneRecord[1:])
-				var masterSeq = binary.BigEndian.Uint64(oneRecord[3:])
-				tmpSeq[masterId] = masterSeq
-			}
-
-			if int(tailNum) == len(tmpSeq) {
-				f.Close()
-				mSeq = tmpSeq
-				log.Printf("Succeed to parse seq tail\n")
-			} else {
-				f.Seek(seqFileHeadSize, os.SEEK_SET)
-				failed = true
-				log.Printf("Failed to parse seq tail! try scan seq file\n")
-			}
-		}
-
-		// Fix seq file
-		if tailPos == 0 || failed {
-			var r = bufio.NewReader(f)
-			var oneRecord = make([]byte, 19)
-			var first = true
-			for {
-				_, err := io.ReadFull(r, oneRecord)
-				if err != nil {
-					if err == io.EOF || err == io.ErrUnexpectedEOF {
-						break
-					} else {
-						f.Close()
-						return err
-					}
-				}
-
-				if oneRecord[0] != byte(seqRecordOne) {
-					break
-				}
-
-				var masterId = binary.BigEndian.Uint16(oneRecord[1:])
-				var masterSeq = binary.BigEndian.Uint64(oneRecord[3:])
-				var logSeq = binary.BigEndian.Uint64(oneRecord[11:])
-
-				if masterId > 0 && masterSeq > 0 && mSeq[masterId] < masterSeq {
-					mSeq[masterId] = masterSeq
-				}
-
-				maxSeq = logSeq
-				if first {
-					first = false
-					minSeq = logSeq
-				}
-
-				//log.Printf("%d\t%d\t%d\n", logSeq, masterId, masterSeq)
-			}
-
-			f.Close()
-
-			var tmpName = bin.GetSeqFileTmpName(idx)
-			bin.seqFile, err = os.Create(tmpName)
-			if err != nil {
-				return err
-			}
-
-			log.Printf("Fix seq file (%s): %v\n", name, mSeq)
-			_, err = bin.seqFile.Write(make([]byte, seqFileHeadSize))
-			if err != nil {
-				bin.seqFile.Close()
-				bin.seqFile = nil
-				return err
-			}
-
-			err = bin.writeSeqFileHeadAndTail(mSeq, minSeq, maxSeq)
-			bin.seqFile.Close()
-			bin.seqFile = nil
-			if err != nil {
-				return err
-			}
-
-			err = os.Rename(tmpName, name)
-			if err != nil {
-				return err
-			}
-		}
-
-		bin.infos = append(bin.infos, &fileInfo{idx, minSeq, maxSeq, true})
+	err = en.Encode(fi)
+	if err != nil {
+		return err
 	}
 
-	bin.masterSeq = mSeq
+	return nil
+}
+
+func (bin *BinLog) fixSeqFile(idx uint64) (fileInfo, error) {
+	var fi fileInfo
+	var name = bin.GetBinFileName(idx)
+	file, err := os.Open(name)
+	if err != nil {
+		return fi, err
+	}
+
+	var r = bufio.NewReader(file)
+	var headBuf = make([]byte, proto.HeadSize)
+	var head proto.PkgHead
+	for {
+		_, err := proto.ReadPkg(r, headBuf, &head, nil)
+		if err != nil {
+			break
+		}
+		if fi.MinSeq == 0 {
+			fi.MinSeq = head.Seq
+			fi.Idx = idx
+			fi.Done = true
+		}
+		if fi.MaxSeq < head.Seq {
+			fi.MaxSeq = head.Seq
+		}
+	}
+
+	file.Close()
+
+	if fi.Idx == 0 {
+		os.Remove(bin.GetBinFileName(idx))
+		os.Remove(bin.GetSeqFileName(idx))
+		return fi, fmt.Errorf("no record in bin file id %d", idx)
+	}
+
+	return fi, bin.writeSeqFile(&fi)
+}
+
+func (bin *BinLog) loadAndFixSeqFiles(idxs []uint64) error {
+	for _, idx := range idxs {
+		var needFix bool
+		var name = bin.GetSeqFileName(idx)
+		file, err := os.Open(name)
+		if err != nil {
+			if os.IsNotExist(err) {
+				needFix = true
+			} else {
+				return err
+			}
+		}
+
+		var fi fileInfo
+		if !needFix {
+			de := json.NewDecoder(file)
+			err = de.Decode(&fi)
+			if err != nil {
+				needFix = true
+			}
+			file.Close()
+		}
+
+		if needFix {
+			fi, err = bin.fixSeqFile(idx)
+		}
+
+		if err == nil && fi.Idx > 0 {
+			fi.Done = true
+			bin.infos = append(bin.infos, &fi)
+		}
+	}
+
 	return nil
 }

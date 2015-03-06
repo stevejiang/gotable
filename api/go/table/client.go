@@ -35,7 +35,6 @@ var (
 	ErrShutdown     = errors.New("connection is shut down")
 	ErrCallNotReady = errors.New("call not ready to reply")
 	ErrClosedPool   = errors.New("connection pool is closed")
-	ErrInvalidTag   = errors.New("invalid tag id")
 	ErrNoValidAddr  = errors.New("no valid address")
 )
 
@@ -158,7 +157,13 @@ func (c *Client) Close() error {
 	if c.p == nil {
 		return c.doClose()
 	} else {
-		return c.p.put(c)
+		c.mtx.Lock()
+		if c.shutdown {
+			c.mtx.Unlock()
+			return c.doClose()
+		}
+		c.mtx.Unlock()
+		return nil
 	}
 }
 
@@ -174,9 +179,8 @@ func (c *Client) doClose() error {
 	close(c.sending)
 	var err = c.c.Close()
 
-	var p = c.p
-	if p != nil {
-		p.remove(c)
+	if c.p != nil {
+		c.p.remove(c)
 	}
 
 	return err

@@ -593,14 +593,15 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 
 // Internal control command.
 // SlaveOf can change the replication settings of a slave on the fly.
-func (c *Context) SlaveOf(mis []ctrl.MasterInfo) error {
+func (c *Context) SlaveOf(host string) error {
 	call := c.cli.newCall(proto.CmdSlaveOf, nil)
 	if call.err != nil {
 		return call.err
 	}
 
 	var p ctrl.PkgSlaveOf
-	p.Mis = mis
+	p.ClientReq = true
+	p.MasterAddr = host
 
 	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
@@ -616,11 +617,78 @@ func (c *Context) SlaveOf(mis []ctrl.MasterInfo) error {
 		return err
 	}
 
-	t := r.(*ctrl.PkgSlaveOf)
+	t := r.(ctrl.PkgSlaveOf)
 	if t.ErrMsg != "" {
 		return errors.New(t.ErrMsg)
 	}
 	return nil
+}
+
+// Internal control command.
+// Migrate moves one unit data to another server on the fly.
+func (c *Context) Migrate(host string, unitId uint16) error {
+	call := c.cli.newCall(proto.CmdMigrate, nil)
+	if call.err != nil {
+		return call.err
+	}
+
+	var p ctrl.PkgMigrate
+	p.ClientReq = true
+	p.MasterAddr = host
+	p.UnitId = unitId
+
+	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	if err != nil {
+		c.cli.errCall(call, err)
+		return err
+	}
+
+	call.pkg = pkg
+	c.cli.sending <- call
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return err
+	}
+
+	t := r.(ctrl.PkgMigrate)
+	if t.ErrMsg != "" {
+		return errors.New(t.ErrMsg)
+	}
+	return nil
+}
+
+// Internal control command.
+// MigStatus reads migration status.
+func (c *Context) MigStatus(host string, unitId uint16) (int, error) {
+	call := c.cli.newCall(proto.CmdMigStatus, nil)
+	if call.err != nil {
+		return ctrl.NotSlaver, call.err
+	}
+
+	var p ctrl.PkgMigStatus
+	p.MasterAddr = host
+	p.UnitId = unitId
+
+	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	if err != nil {
+		c.cli.errCall(call, err)
+		return ctrl.NotSlaver, call.err
+	}
+
+	call.pkg = pkg
+	c.cli.sending <- call
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return ctrl.NotSlaver, call.err
+	}
+
+	t := r.(ctrl.PkgMigStatus)
+	if t.ErrMsg != "" {
+		return ctrl.NotSlaver, errors.New(t.ErrMsg)
+	}
+	return t.Status, nil
 }
 
 func replyGet(call *Call, err error) ([]byte, int64, uint32, error) {
@@ -825,6 +893,22 @@ func (call *Call) Reply() (interface{}, error) {
 
 	case proto.CmdSlaveOf:
 		var p ctrl.PkgSlaveOf
+		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
+		if err != nil {
+			call.err = err
+			return nil, call.err
+		}
+		return p, nil
+	case proto.CmdMigrate:
+		var p ctrl.PkgMigrate
+		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
+		if err != nil {
+			call.err = err
+			return nil, call.err
+		}
+		return p, nil
+	case proto.CmdMigStatus:
+		var p ctrl.PkgMigStatus
 		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
 		if err != nil {
 			call.err = err

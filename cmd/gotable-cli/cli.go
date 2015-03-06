@@ -18,9 +18,7 @@ import (
 	"fmt"
 	"github.com/stevejiang/gotable/api/go/table"
 	"github.com/stevejiang/gotable/api/go/table/proto"
-	"github.com/stevejiang/gotable/ctrl"
 	"strconv"
-	"strings"
 )
 
 type client struct {
@@ -32,7 +30,7 @@ func newClient() *client {
 	var c = new(client)
 	cli, err := table.Dial("tcp", *host)
 	if err != nil {
-		fmt.Println("dial failed: ", err)
+		fmt.Println("Dial failed: ", err)
 		return nil
 	}
 
@@ -92,60 +90,24 @@ func (c *client) use(args []string) error {
 }
 
 func (c *client) slaveOf(args []string) error {
-	//slaveof ["host [start-end]*"]*
+	//slaveof [host]
 	//Examples:
-	//slaveof "127.0.0.1:6688"
-	//slaveof "127.0.0.1:6688 0-8191"
-	//slaveof "127.0.0.1:6688 0-1203 4096-8191" "127.0.0.1:6689 1024-4095"
-	var err error
-	var mis []ctrl.MasterInfo
-	for i := 0; i < len(args); i++ {
-		var oneHost string
-		oneHost, err = extractQuote(args[i])
-		if err != nil {
-			if len(args) == 1 {
-				oneHost, err = extractString(args[i])
-				if err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		}
-		tokens := strings.Split(oneHost, " ")
-		if len(tokens) == 0 {
-			return fmt.Errorf("empty host")
-		}
-		idx := strings.Index(tokens[0], ":")
-		if idx <= 0 || idx >= len(tokens[0])-1 {
-			return fmt.Errorf("invalid host %s", tokens[0])
-		}
-		if strings.Contains(tokens[0], " \t\r\n") {
-			return fmt.Errorf("invalid host %s", tokens[0])
-		}
-
-		var mi ctrl.MasterInfo
-		mi.Host = tokens[0]
-		for j := 1; j < len(tokens); j++ {
-			ur := strings.Split(tokens[j], "-")
-			if len(ur) != 2 {
-				return fmt.Errorf("invalid unit range %s", tokens[j])
-			}
-			start, err := strconv.Atoi(ur[0])
-			if err != nil || start < 0 || start >= ctrl.TotalUnitNum {
-				return fmt.Errorf("invalid unit range %s", tokens[j])
-			}
-			end, err := strconv.Atoi(ur[1])
-			if err != nil || end < 0 || end >= ctrl.TotalUnitNum {
-				return fmt.Errorf("invalid unit range %s", tokens[j])
-			}
-			mi.Urs = append(mi.Urs, ctrl.UnitRange{uint16(start), uint16(end)})
-		}
-
-		mis = append(mis, mi)
+	//slaveof
+	//slaveof 127.0.0.1:6688
+	if len(args) > 1 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}
 
-	err = c.c.SlaveOf(mis)
+	var host string
+	var err error
+	if len(args) > 0 {
+		host, err = extractString(args[0])
+		if err != nil {
+			return err
+		}
+	}
+
+	err = c.c.SlaveOf(host)
 	if err != nil {
 		return err
 	}

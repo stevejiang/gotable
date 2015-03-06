@@ -49,8 +49,8 @@ func main() {
 		runtime.GOMAXPROCS(*maxProcs)
 	}
 
-	var cliPool = table.NewPool([]table.Addr{{1, "tcp", *host}}, *poolNum)
-	client, err := cliPool.Get(1)
+	var cliPool = table.NewPool([]table.Addr{{"tcp", *host}}, *poolNum)
+	client, err := cliPool.Get()
 	if err != nil {
 		fmt.Printf("Get connection client to host %s failed!\n\n", *host)
 		cliPool.Close()
@@ -107,7 +107,7 @@ func benchmark(cliPool *table.Pool, name string,
 		go func(id int) {
 			defer g.Done()
 
-			client, _ := cliPool.Get(1)
+			client, _ := cliPool.Get()
 			ctx := client.NewContext(0)
 
 			hist := &hists[id]

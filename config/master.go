@@ -20,7 +20,6 @@ import (
 	"github.com/stevejiang/gotable/ctrl"
 	"log"
 	"os"
-	"sort"
 	"sync"
 	"time"
 )
@@ -29,39 +28,25 @@ const (
 	masterConfigFile = "master.conf"
 )
 
-type UnitRangeSlice []ctrl.UnitRange
-
-func (p UnitRangeSlice) Len() int      { return len(p) }
-func (p UnitRangeSlice) Swap(i, j int) { p[i], p[j] = p[j], p[i] }
-func (p UnitRangeSlice) Less(i, j int) bool {
-	if p[i].Start < p[j].Start {
-		return true
-	} else if p[i].Start > p[j].Start {
-		return false
-	} else {
-		return p[i].End < p[j].End
-	}
-}
-
-type MasterElem struct {
-	Id uint16
-	ctrl.MasterInfo
+type MasterInfo struct {
+	MasterAddr string // Master address ip:host
+	SlaverAddr string // This server address ip:host
+	Migration  bool   // true: Migration; false: Normal master/slaver
+	UnitId     uint16 // Only meaningful for migration
+	Status     int    // Status of Slaver/Migration
 }
 
 type MasterEncoding struct {
-	LastTime time.Time
-	LastId   uint16
-	Ms       []MasterElem
+	HasMaster bool      // true: Has master; false: No master/No migration
+	LastTime  time.Time // Last change time
+	MasterInfo
 }
 
 type MasterConfig struct {
 	dir string
 
-	mtx      sync.RWMutex // protects following
-	lastTime time.Time
-	lastId   uint16
-	m1       map[string]uint16
-	m2       map[uint16]ctrl.MasterInfo
+	mtx sync.RWMutex // protects following
+	m   MasterEncoding
 }
 
 func NewMasterConfig(dir string) *MasterConfig {
@@ -73,14 +58,28 @@ func NewMasterConfig(dir string) *MasterConfig {
 
 	mc := new(MasterConfig)
 	mc.dir = dir
-	mc.m1 = make(map[string]uint16)
-	mc.m2 = make(map[uint16]ctrl.MasterInfo)
 
 	err = mc.load(fmt.Sprintf("%s/%s", mc.dir, masterConfigFile))
 	if err != nil {
 		log.Printf("Load master config failed: %s\n", err)
 		return nil
 	}
+
+	mc.mtx.Lock()
+	if mc.m.HasMaster {
+		if mc.m.Migration {
+			// Need to clear old data first
+			if mc.m.Status != ctrl.SlaverClear {
+				mc.m.Status = ctrl.SlaverNeedClear
+			}
+		} else {
+			if mc.m.Status != ctrl.SlaverNeedClear &&
+				mc.m.Status != ctrl.SlaverClear {
+				mc.m.Status = ctrl.SlaverInit
+			}
+		}
+	}
+	mc.mtx.Unlock()
 
 	return mc
 }
@@ -101,51 +100,44 @@ func (mc *MasterConfig) load(confFile string) error {
 		}
 		return err
 	}
-	defer file.Close()
 
 	de := json.NewDecoder(file)
 
-	var me MasterEncoding
-	err = de.Decode(&me)
+	var m MasterEncoding
+	err = de.Decode(&m)
 	if err != nil {
+		file.Close()
 		return err
 	}
+	file.Close()
 
-	var m1 = make(map[string]uint16)
-	var m2 = make(map[uint16]ctrl.MasterInfo)
-	for i := 0; i < len(me.Ms); i++ {
-		m2[me.Ms[i].Id] = me.Ms[i].MasterInfo
-		m1[me.Ms[i].Host] = me.Ms[i].Id
+	// Migration shouldn't be interrupted.
+	// If server restarted, remove migration config.
+	// Administrator should send migrate command again.
+	if m.HasMaster && m.Migration {
+		m.HasMaster = false
+		mc.save(&m)
 	}
 
 	mc.mtx.Lock()
-	mc.lastTime = me.LastTime
-	mc.lastId = me.LastId
-	mc.m1 = m1
-	mc.m2 = m2
+	mc.m = m
 	mc.mtx.Unlock()
 
 	return nil
 }
 
-func (mc *MasterConfig) save(lastTime time.Time, lastId uint16,
-	mmi map[uint16]ctrl.MasterInfo, fileName string) error {
-	file, err := os.Create(fileName)
+func (mc *MasterConfig) save(m *MasterEncoding) error {
+	confFile := fmt.Sprintf("%s/%s", mc.dir, masterConfigFile)
+	tmpFile := fmt.Sprintf("%s.tmp", confFile)
+	file, err := os.Create(tmpFile)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	var me MasterEncoding
-	me.LastTime = lastTime
-	me.LastId = lastId
-	for k, v := range mmi {
-		me.Ms = append(me.Ms, MasterElem{k, v})
-	}
-
 	en := json.NewEncoder(file)
 
-	err = en.Encode(&me)
+	err = en.Encode(m)
 	if err != nil {
 		return err
 	}
@@ -155,114 +147,124 @@ func (mc *MasterConfig) save(lastTime time.Time, lastId uint16,
 		return err
 	}
 
-	return nil
-}
-
-func (mc *MasterConfig) check(mis []ctrl.MasterInfo) error {
-	if len(mis) > ctrl.TotalUnitNum {
-		return fmt.Errorf("number of masters (%d) out of range", len(mis))
-	}
-
-	m1 := make(map[string]struct{})
-	var urs UnitRangeSlice
-	for i := 0; i < len(mis); i++ {
-		if _, ok := m1[mis[i].Host]; ok {
-			return fmt.Errorf("duplicate master host %s", mis[i].Host)
-		}
-		m1[mis[i].Host] = struct{}{}
-		urs = append(urs, mis[i].Urs...)
-	}
-
-	sort.Sort(urs)
-	for i := 0; i < len(urs); i++ {
-		if urs[i].Start > urs[i].End {
-			return fmt.Errorf("invalid unit range [%d, %d]",
-				urs[i].Start, urs[i].End)
-		}
-		if i > 0 && urs[i].Start <= urs[i-1].End {
-			return fmt.Errorf("unit range overlap [%d, %d] and [%d, %d]",
-				urs[i-1].Start, urs[i-1].End, urs[i].Start, urs[i].End)
-		}
-	}
-
-	return nil
-}
-
-func (mc *MasterConfig) Set(mis []ctrl.MasterInfo) error {
-	err := mc.check(mis)
-	if err != nil {
-		return err
-	}
-
 	mc.mtx.Lock()
-	var lastId = mc.lastId
-	mc.mtx.Unlock()
-
-	m1 := make(map[string]uint16)
-	m2 := make(map[uint16]ctrl.MasterInfo)
-	for i := 0; i < len(mis); i++ {
-		if lastId < 65535 {
-			lastId++
-		} else {
-			lastId = 1
-		}
-
-		m1[mis[i].Host] = lastId
-		m2[lastId] = mis[i]
-	}
-
-	confFile := fmt.Sprintf("%s/%s", mc.dir, masterConfigFile)
-	tmpFile := fmt.Sprintf("%s.tmp", confFile)
-	lastTime := time.Now()
-	err = mc.save(lastTime, lastId, m2, tmpFile)
-	if err != nil {
-		return err
-	}
-
-	mc.mtx.Lock()
-	mc.lastTime = lastTime
-	mc.lastId = lastId
-	mc.m1 = m1
-	mc.m2 = m2
+	mc.m = *m
 	os.Rename(tmpFile, confFile)
 	mc.mtx.Unlock()
 
 	return nil
 }
 
-func (mc *MasterConfig) GetId(host string) uint16 {
+func (mc *MasterConfig) SetMaster(masterAddr, slaverAddr string) error {
 	mc.mtx.RLock()
-	id, ok := mc.m1[host]
+	var m = mc.m
 	mc.mtx.RUnlock()
 
-	if ok {
-		return id
+	if m.HasMaster && m.Migration {
+		return fmt.Errorf("server is under migration and cannot change master/slaver")
 	}
 
-	return 0
+	if len(masterAddr) > 0 {
+		m.HasMaster = true
+		m.LastTime = time.Now()
+		m.MasterAddr = masterAddr
+		m.SlaverAddr = slaverAddr
+		m.Migration = false
+		m.UnitId = ctrl.TotalUnitNum // Exceed
+		m.Status = ctrl.SlaverInit
+	} else {
+		m.HasMaster = false
+		m.LastTime = time.Now()
+		m.Status = ctrl.NotSlaver
+	}
+
+	return mc.save(&m)
 }
 
-func (mc *MasterConfig) GetInfo(id uint16) ctrl.MasterInfo {
+func (mc *MasterConfig) SetMigration(masterAddr, slaverAddr string, unitId uint16) error {
 	mc.mtx.RLock()
-	mi, ok := mc.m2[id]
+	var m = mc.m
 	mc.mtx.RUnlock()
 
-	if ok {
-		return mi
+	if m.HasMaster {
+		if !m.Migration {
+			return fmt.Errorf("server is a slaver and cannot start/stop migration")
+		} else if m.Status == ctrl.SlaverClear {
+			return fmt.Errorf("cannot update migration config when clearing data")
+		}
 	}
 
-	return ctrl.MasterInfo{}
+	if len(masterAddr) > 0 {
+		if m.HasMaster && m.Migration {
+			return fmt.Errorf("cannot start more than 1 migration")
+		}
+		if unitId >= ctrl.TotalUnitNum {
+			return fmt.Errorf("migrate unit id out of range")
+		}
+
+		m.HasMaster = true
+		m.LastTime = time.Now()
+		m.MasterAddr = masterAddr
+		m.SlaverAddr = slaverAddr
+		m.Migration = true
+		m.UnitId = unitId
+		m.Status = ctrl.SlaverInit
+	} else {
+		m.HasMaster = false
+		m.LastTime = time.Now()
+		m.Status = ctrl.NotSlaver
+	}
+
+	return mc.save(&m)
 }
 
-func (mc *MasterConfig) GetAllMaster() []ctrl.MasterInfo {
+func (mc *MasterConfig) SetStatus(status int) error {
+	mc.mtx.Lock()
+	if mc.m.HasMaster {
+		mc.m.Status = status
+	}
+	var m = mc.m
+	mc.mtx.Unlock()
+
+	if m.HasMaster {
+		return mc.save(&m)
+	} else {
+		return nil
+	}
+}
+
+func (mc *MasterConfig) Status() int {
+	var st int = ctrl.NotSlaver
 	mc.mtx.RLock()
-	var m2 = mc.m2
+	if mc.m.HasMaster {
+		st = mc.m.Status
+	}
 	mc.mtx.RUnlock()
 
-	var mis []ctrl.MasterInfo
-	for _, v := range m2 {
-		mis = append(mis, v)
-	}
+	return st
+}
 
-	return mis
+func (mc *MasterConfig) GetMaster() MasterInfo {
+	var m MasterInfo
+	mc.mtx.RLock()
+	if mc.m.HasMaster {
+		m = mc.m.MasterInfo
+	}
+	mc.mtx.RUnlock()
+
+	return m
+}
+
+func (mc *MasterConfig) GetMasterUnit() (bool, bool, uint16) {
+	var hasMaster, migration bool
+	var unitId uint16
+	mc.mtx.RLock()
+	if mc.m.HasMaster {
+		hasMaster = true
+		migration = mc.m.Migration
+		unitId = mc.m.UnitId
+	}
+	mc.mtx.RUnlock()
+
+	return hasMaster, migration, unitId
 }

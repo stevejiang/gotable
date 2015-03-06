@@ -24,14 +24,9 @@ import (
 	"github.com/stevejiang/gotable/store"
 	"log"
 	"net"
+	"os"
 	"runtime"
 	"sync"
-)
-
-const (
-	slaverInitMode = iota + 1
-	slaverCleanMode
-	slaverReadyMode
 )
 
 type Server struct {
@@ -40,17 +35,26 @@ type Server struct {
 	mc      *config.MasterConfig
 	reqChan *RequestChan
 
-	rwMtx     sync.RWMutex // protects following
-	slaveMode int
-	sls       []*slaver
+	rwMtx sync.RWMutex // protects following
+	slv   *slaver
 }
 
 func NewServer(conf *config.Config) *Server {
-	var tableDir = fmt.Sprintf("%s/table", conf.Db.Data)
-	var binlogDir = fmt.Sprintf("%s/binlog", conf.Db.Data)
-	var configDir = fmt.Sprintf("%s/config", conf.Db.Data)
+	var tableDir = TableDirName(conf)
+	var binlogDir = BinLogDirName(conf)
+	var configDir = ConfigDirName(conf)
+
+	mc := config.NewMasterConfig(configDir)
+	if mc == nil {
+		return nil
+	}
+	err := clearSlaverOldData(conf, mc)
+	if err != nil {
+		return nil
+	}
 
 	srv := new(Server)
+	srv.mc = mc
 	srv.tbl = store.NewTable(tableDir)
 	if srv.tbl == nil {
 		return nil
@@ -59,11 +63,6 @@ func NewServer(conf *config.Config) *Server {
 	srv.bin = binlog.NewBinLog(binlogDir,
 		conf.Bin.MemSize*1024*1024, conf.Bin.KeepNum)
 	if srv.bin == nil {
-		return nil
-	}
-
-	srv.mc = config.NewMasterConfig(configDir)
-	if srv.mc == nil {
 		return nil
 	}
 
@@ -77,12 +76,54 @@ func NewServer(conf *config.Config) *Server {
 	return srv
 }
 
-func (srv *Server) isMaster() bool {
-	srv.rwMtx.RLock()
-	isMaster := (srv.slaveMode == 0)
-	srv.rwMtx.RUnlock()
+func TableDirName(conf *config.Config) string {
+	return fmt.Sprintf("%s/table", conf.Db.Data)
+}
 
-	return isMaster
+func BinLogDirName(conf *config.Config) string {
+	return fmt.Sprintf("%s/binlog", conf.Db.Data)
+}
+
+func ConfigDirName(conf *config.Config) string {
+	return fmt.Sprintf("%s/config", conf.Db.Data)
+}
+
+func clearSlaverOldData(conf *config.Config, mc *config.MasterConfig) error {
+	var err error
+	m := mc.GetMaster()
+	// Normal slaver
+	if len(m.MasterAddr) > 0 && !m.Migration {
+		// Check whether need to clear old data
+		if m.Status != ctrl.SlaverNeedClear && m.Status != ctrl.SlaverClear {
+			return nil
+		}
+
+		err = mc.SetStatus(ctrl.SlaverClear)
+		if err != nil {
+			return err
+		}
+
+		var binlogDir = BinLogDirName(conf)
+		log.Printf("Delete dir %s\n", binlogDir)
+		err = os.RemoveAll(binlogDir)
+		if err != nil {
+			return err
+		}
+
+		var tableDir = TableDirName(conf)
+		log.Printf("Delete dir %s\n", tableDir)
+		err = os.RemoveAll(tableDir)
+		if err != nil {
+			return err
+		}
+
+		err = mc.SetStatus(ctrl.SlaverInit)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
@@ -97,15 +138,14 @@ func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
 			req.Cli.AddResp(resp)
 		}
 		if write && ok {
-			srv.bin.AddRequest(&binlog.Request{0, 0, req.Pkg})
+			srv.bin.AddRequest(&binlog.Request{0, req.Pkg})
 		}
 	case ClientTypeSlaver:
 		if write && ok {
-			var masterId uint16 = 1
-			srv.bin.AddRequest(&binlog.Request{masterId, req.Seq, req.Pkg})
+			srv.bin.AddRequest(&binlog.Request{req.Seq, req.Pkg})
 		}
 		if req.Cli != nil && !ok && resp.Pkg != nil {
-			req.Cli.AddResp(resp)
+			req.Cli.AddResp(resp) // Only reply error msg
 		}
 	}
 }
@@ -171,10 +211,10 @@ func (srv *Server) set(req *Request) {
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
-	var replication = (ClientTypeSlaver == cliType)
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
 	switch cliType {
 	case ClientTypeNormal:
-		if !srv.isMaster() {
+		if !wa.Check() {
 			srv.replyOneOp(req, table.EcWriteSlaver)
 			return
 		}
@@ -182,7 +222,7 @@ func (srv *Server) set(req *Request) {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
-		resp.Pkg, ok = srv.tbl.Set(&req.PkgArgs, req.Cli, replication)
+		resp.Pkg, ok = srv.tbl.Set(&req.PkgArgs, req.Cli, wa)
 		srv.sendResp(true, ok, req, &resp)
 	case ClientTypeMaster:
 		log.Printf("Slaver SET failed: [%d, %d]\n", req.DbId, req.Seq)
@@ -194,10 +234,10 @@ func (srv *Server) del(req *Request) {
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
-	var replication = (ClientTypeSlaver == cliType)
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
 	switch cliType {
 	case ClientTypeNormal:
-		if !srv.isMaster() {
+		if !wa.Check() {
 			srv.replyOneOp(req, table.EcWriteSlaver)
 			return
 		}
@@ -205,7 +245,7 @@ func (srv *Server) del(req *Request) {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
-		resp.Pkg, ok = srv.tbl.Del(&req.PkgArgs, req.Cli, replication)
+		resp.Pkg, ok = srv.tbl.Del(&req.PkgArgs, req.Cli, wa)
 		srv.sendResp(true, ok, req, &resp)
 	case ClientTypeMaster:
 		log.Printf("Slaver DEL failed: [%d, %d]\n", req.DbId, req.Seq)
@@ -217,10 +257,10 @@ func (srv *Server) incr(req *Request) {
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
-	var replication = (ClientTypeSlaver == cliType)
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
 	switch cliType {
 	case ClientTypeNormal:
-		if !srv.isMaster() {
+		if !wa.Check() {
 			srv.replyOneOp(req, table.EcWriteSlaver)
 			return
 		}
@@ -228,7 +268,7 @@ func (srv *Server) incr(req *Request) {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
-		resp.Pkg, ok = srv.tbl.Incr(&req.PkgArgs, req.Cli, replication)
+		resp.Pkg, ok = srv.tbl.Incr(&req.PkgArgs, req.Cli, wa)
 		srv.sendResp(true, ok, req, &resp)
 	case ClientTypeMaster:
 		log.Printf("Slaver INCR failed: [%d, %d]\n", req.DbId, req.Seq)
@@ -246,10 +286,10 @@ func (srv *Server) mSet(req *Request) {
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
-	var replication = (ClientTypeSlaver == cliType)
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
 	switch cliType {
 	case ClientTypeNormal:
-		if !srv.isMaster() {
+		if !wa.Check() {
 			srv.replyMultiOp(req, table.EcWriteSlaver)
 			return
 		}
@@ -257,7 +297,7 @@ func (srv *Server) mSet(req *Request) {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
-		resp.Pkg, ok = srv.tbl.MSet(&req.PkgArgs, req.Cli, replication)
+		resp.Pkg, ok = srv.tbl.MSet(&req.PkgArgs, req.Cli, wa)
 		srv.sendResp(true, ok, req, &resp)
 	case ClientTypeMaster:
 		log.Printf("Slaver MSET failed: [%d, %d]\n", req.DbId, req.Seq)
@@ -269,10 +309,10 @@ func (srv *Server) mDel(req *Request) {
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
-	var replication = (ClientTypeSlaver == cliType)
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
 	switch cliType {
 	case ClientTypeNormal:
-		if !srv.isMaster() {
+		if !wa.Check() {
 			srv.replyMultiOp(req, table.EcWriteSlaver)
 			return
 		}
@@ -280,7 +320,7 @@ func (srv *Server) mDel(req *Request) {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
-		resp.Pkg, ok = srv.tbl.MDel(&req.PkgArgs, req.Cli, replication)
+		resp.Pkg, ok = srv.tbl.MDel(&req.PkgArgs, req.Cli, wa)
 		srv.sendResp(true, ok, req, &resp)
 	case ClientTypeMaster:
 		log.Printf("Slaver MDEL failed: [%d, %d]\n", req.DbId, req.Seq)
@@ -292,10 +332,10 @@ func (srv *Server) mIncr(req *Request) {
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
-	var replication = (ClientTypeSlaver == cliType)
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
 	switch cliType {
 	case ClientTypeNormal:
-		if !srv.isMaster() {
+		if !wa.Check() {
 			srv.replyMultiOp(req, table.EcWriteSlaver)
 			return
 		}
@@ -303,7 +343,7 @@ func (srv *Server) mIncr(req *Request) {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
-		resp.Pkg, ok = srv.tbl.MIncr(&req.PkgArgs, req.Cli, replication)
+		resp.Pkg, ok = srv.tbl.MIncr(&req.PkgArgs, req.Cli, wa)
 		srv.sendResp(true, ok, req, &resp)
 	case ClientTypeMaster:
 		log.Printf("Slaver MINCR failed: [%d, %d]\n", req.DbId, req.Seq)
@@ -324,14 +364,45 @@ func (srv *Server) sync(req *Request) {
 		resp.Pkg, ok = srv.tbl.Sync(&req.PkgArgs)
 
 		srv.sendResp(true, ok, req, &resp)
-		if !ok && resp.Pkg != nil {
-			req.Cli.AddResp(&resp) // Reply Error msg
-		}
 	case ClientTypeNormal:
 		log.Printf("User cannot send SYNC command\n")
 	case ClientTypeMaster:
-		log.Printf("Slaver sync failed: [%d, %d]\n", req.DbId, req.Seq)
-		req.Cli.Close() // stop full sync
+		log.Printf("Slaver SYNC failed: [%d, %d]\n", req.DbId, req.Seq)
+		req.Cli.Close()
+	}
+}
+
+func (srv *Server) syncStatus(req *Request) {
+	switch req.Cli.ClientType() {
+	case ClientTypeSlaver:
+		var in proto.PkgOneOp
+		_, err := in.Decode(req.Pkg)
+		if err != nil {
+			return
+		}
+
+		rowKey := string(in.RowKey)
+		switch rowKey {
+		case store.KeyFullSyncEnd:
+			srv.mc.SetStatus(ctrl.SlaverIncrSync)
+			log.Printf("Switch sync status to SlaverIncrSync\n")
+		case store.KeyIncrSyncEnd:
+			srv.mc.SetStatus(ctrl.SlaverReady)
+			log.Printf("Switch sync status to SlaverReady")
+		}
+
+		if req.Seq > 0 {
+			in.RowKey = nil // Set it as an empty OP
+			var resp = Response(req.PkgArgs)
+			resp.Pkg = make([]byte, in.Length())
+			in.Encode(resp.Pkg)
+			srv.sendResp(true, true, req, &resp)
+		}
+	case ClientTypeNormal:
+		log.Printf("User cannot send SYNCST command\n")
+	case ClientTypeMaster:
+		log.Printf("Slaver SYNCST failed: [%d, %d]\n", req.DbId, req.Seq)
+		req.Cli.Close()
 	}
 }
 
@@ -341,58 +412,56 @@ func (srv *Server) dump(req *Request) {
 	srv.sendResp(false, true, req, &resp)
 }
 
-func (srv *Server) replyMaster(en *ctrl.Encoder, req *Request, msg string) {
-	var err error
-	pm := ctrl.PkgMaster{}
-	pm.ErrMsg = msg
-	var resp = Response(req.PkgArgs)
-	resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &pm)
-	if err == nil {
-		srv.sendResp(false, true, req, &resp)
-	}
-}
-
-func (srv *Server) newMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
-	var err error
-	if !req.Cli.IsAuth(0) {
-		log.Printf("Not authorized!\n")
-		srv.replyMaster(en, req, "no priviledge")
-		return
-	}
-
+// Normal master
+func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request,
+	p *ctrl.PkgSlaveOf) {
 	switch req.Cli.ClientType() {
 	case ClientTypeNormal:
-		var pm ctrl.PkgMaster
-		err = de.Decode(req.Pkg, nil, &pm)
-		if err != nil {
-			log.Printf("Failed to Decode pkg: %s\n", err)
-			srv.replyMaster(en, req, fmt.Sprintf("decode failed %s", err))
+		if !req.Cli.IsAuth(proto.AdminDbId) {
+			log.Printf("Not authorized!\n")
+			srv.replySlaveOf(en, req, "no priviledge")
 			return
 		}
 
 		req.Cli.SetClientType(ClientTypeMaster) // switch client type
 
 		log.Printf("Receive a slave connection from %s, lastSeq=%d\n",
-			req.Cli.c.RemoteAddr(), pm.LastSeq)
-		for i := 0; i < len(pm.Urs); i++ {
-			log.Printf("Unit Range %d: [%d-%d]\n",
-				i, pm.Urs[i].Start, pm.Urs[i].End)
-		}
+			req.Cli.c.RemoteAddr(), p.LastSeq)
 
-		var ms = newMaster(pm.SlaveAddr, pm.LastSeq, pm.Urs, req.Cli, srv.bin)
-		srv.bin.RegisterMonitor(ms)
-		go ms.goAsync(srv.tbl)
+		ms := NewMaster(p.SlaverAddr, p.LastSeq, false, 0, req.Cli, srv.bin)
+		go ms.GoAsync(srv.tbl)
 	case ClientTypeSlaver:
-		var pm ctrl.PkgMaster
-		err = de.Decode(req.Pkg, nil, &pm)
+		// Get response from master
+		log.Printf("Master failed with msg: %s\n", p.ErrMsg)
+	case ClientTypeMaster:
+		log.Printf("Already master, cannot create master again, close now!\n")
 		req.Cli.Close()
-		if err != nil {
-			log.Printf("Failed to Decode pkg: %s\n", err)
+	}
+}
+
+// Migration master
+func (srv *Server) newMigMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request,
+	p *ctrl.PkgMigrate) {
+	switch req.Cli.ClientType() {
+	case ClientTypeNormal:
+		if !req.Cli.IsAuth(proto.AdminDbId) {
+			log.Printf("Not authorized!\n")
+			srv.replyMigrate(en, req, "no priviledge")
 			return
 		}
-		log.Printf("Master failed with msg: %s\n", pm.ErrMsg)
+
+		req.Cli.SetClientType(ClientTypeMaster) // switch client type
+
+		log.Printf("Receive a migration slave connection from %s(%s)\n",
+			req.Cli.c.RemoteAddr(), p.SlaverAddr)
+
+		ms := NewMaster(p.SlaverAddr, 0, true, p.UnitId, req.Cli, srv.bin)
+		go ms.GoAsync(srv.tbl)
+	case ClientTypeSlaver:
+		// Get response from master
+		log.Printf("Migration master failed with msg: %s\n", p.ErrMsg)
 	case ClientTypeMaster:
-		log.Printf("Already in master status, cannot create master again!\n")
+		log.Printf("Already master, cannot create master again, close now!\n")
 		req.Cli.Close()
 	}
 }
@@ -408,79 +477,227 @@ func (srv *Server) replySlaveOf(en *ctrl.Encoder, req *Request, msg string) {
 	}
 }
 
-func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+func (srv *Server) replyMigrate(en *ctrl.Encoder, req *Request, msg string) {
 	var err error
-	if !req.Cli.IsAuth(0) {
-		log.Printf("Not authorized!\n")
-		srv.replySlaveOf(en, req, "no priviledge")
+	ps := ctrl.PkgMigrate{}
+	ps.ErrMsg = msg
+	var resp = Response(req.PkgArgs)
+	resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &ps)
+	if err == nil {
+		srv.sendResp(false, true, req, &resp)
+	}
+}
+
+func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	var p ctrl.PkgSlaveOf
+	var err = de.Decode(req.Pkg, nil, &p)
+	if err == nil && !p.ClientReq {
+		srv.newNormalMaster(de, en, req, &p)
 		return
 	}
 
 	switch req.Cli.ClientType() {
 	case ClientTypeNormal:
-		var ps ctrl.PkgSlaveOf
-		err = de.Decode(req.Pkg, nil, &ps)
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
-			srv.replySlaveOf(en, req, fmt.Sprintf("decode failed %s", err))
+			srv.replySlaveOf(en, req, fmt.Sprintf("decode failed(%s)", err))
 			return
 		}
 
-		for i := 0; i < len(ps.Mis); i++ {
-			if len(ps.Mis[i].Urs) == 0 {
-				ps.Mis[i].Urs = append(ps.Mis[i].Urs,
-					ctrl.UnitRange{0, uint16(ctrl.TotalUnitNum - 1)})
-			}
+		if !req.Cli.IsAuth(proto.AdminDbId) {
+			log.Printf("Not authorized!\n")
+			srv.replySlaveOf(en, req, "no priviledge")
+			return
 		}
 
-		err = srv.mc.Set(ps.Mis)
+		if len(p.SlaverAddr) == 0 {
+			p.SlaverAddr = req.Cli.LocalAddr().String()
+		}
+		if p.MasterAddr == p.SlaverAddr {
+			log.Printf("Master and slaver address are the same!\n")
+			srv.replyMigrate(en, req, "master and slaver address are the same")
+			return
+		}
+
+		err = srv.mc.SetMaster(p.MasterAddr, p.SlaverAddr)
 		if err != nil {
 			log.Printf("Failed to set config: %s\n", err)
-			srv.replySlaveOf(en, req, fmt.Sprintf("set config failed %s", err))
+			srv.replySlaveOf(en, req, fmt.Sprintf("set config failed(%s)", err))
 			return
 		}
 
 		srv.rwMtx.Lock()
-		sls := srv.sls
-		srv.sls = nil
-		if len(ps.Mis) == 0 {
-			srv.slaveMode = 0
-		} else {
-			srv.slaveMode = slaverInitMode
-		}
+		slv := srv.slv
+		srv.slv = nil
 		srv.rwMtx.Unlock()
 
-		for i := 0; i < len(sls); i++ {
-			sls[i].Close()
+		if len(p.MasterAddr) > 0 {
+			if slv != nil {
+				slv.Close()
+			}
+			srv.connectToMaster(srv.mc)
+		} else {
+			if slv != nil {
+				go slv.DelayClose()
+			}
+			srv.bin.AsMaster()
 		}
 
-		go srv.connectToMaster(ps.Mis)
-
 		srv.replySlaveOf(en, req, "") // Success
-
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeMaster:
-		log.Println("Invalid client type for SlaveOf command")
+		if err != nil {
+			log.Printf("Failed to Decode pkg: %s\n", err)
+		} else {
+			log.Println("Invalid client type %d for SlaveOf command, close now!",
+				req.Cli.ClientType())
+		}
 		req.Cli.Close()
 	}
 }
 
-func (srv *Server) connectToMaster(mis []ctrl.MasterInfo) {
-	// Remove old data
-	//TODO
-
-	// Connect to master
-	var sls []*slaver
-	for i := 0; i < len(mis); i++ {
-		var slv = newSlaver(mis[i], srv.reqChan, srv.bin)
-		go slv.goConnectToMaster()
-		sls = append(sls, slv)
+func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	var p ctrl.PkgMigrate
+	var err = de.Decode(req.Pkg, nil, &p)
+	if err == nil && !p.ClientReq {
+		srv.newMigMaster(de, en, req, &p)
+		return
 	}
 
+	switch req.Cli.ClientType() {
+	case ClientTypeNormal:
+		if err != nil {
+			log.Printf("Failed to Decode pkg: %s\n", err)
+			srv.replyMigrate(en, req, fmt.Sprintf("decode failed(%s)", err))
+			return
+		}
+
+		if !req.Cli.IsAuth(proto.AdminDbId) {
+			log.Printf("Not authorized!\n")
+			srv.replyMigrate(en, req, "no priviledge")
+			return
+		}
+
+		if len(p.SlaverAddr) == 0 {
+			p.SlaverAddr = req.Cli.LocalAddr().String()
+		}
+		if p.MasterAddr == p.SlaverAddr {
+			log.Printf("Master and slaver address are the same!\n")
+			srv.replyMigrate(en, req, "master and slaver address are the same")
+			return
+		}
+
+		err = srv.mc.SetMigration(p.MasterAddr, p.SlaverAddr, p.UnitId)
+		if err != nil {
+			log.Printf("Failed to update migration config: %s\n", err)
+			srv.replyMigrate(en, req,
+				fmt.Sprintf("update migration config failed(%s)", err))
+			return
+		}
+
+		srv.rwMtx.Lock()
+		slv := srv.slv
+		srv.slv = nil
+		srv.rwMtx.Unlock()
+
+		if len(p.MasterAddr) > 0 {
+			if slv != nil {
+				slv.Close()
+			}
+			//TODO: use CmdDelUnit to delete
+			err = srv.deleteMigrationUnit(p.UnitId)
+			if err != nil {
+				log.Printf("Failed to delete migration unit: %s\n", err)
+				srv.replyMigrate(en, req,
+					fmt.Sprintf("failed to delete migration unit(%s)", err))
+				return
+			}
+			srv.connectToMaster(srv.mc)
+		} else {
+			if slv != nil {
+				go slv.DelayClose()
+			}
+			srv.bin.AsMaster()
+		}
+
+		srv.replyMigrate(en, req, "") // Success
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeMaster:
+		if err != nil {
+			log.Printf("Failed to Decode pkg: %s\n", err)
+		} else {
+			log.Println("Invalid client type %d for Migrate command, close now!",
+				req.Cli.ClientType())
+		}
+		req.Cli.Close()
+	}
+}
+
+func (srv *Server) connectToMaster(mc *config.MasterConfig) {
+	srv.bin.AsSlaver()
+
+	var slv = NewSlaver(srv.reqChan, srv.bin, mc)
+	go slv.GoConnectToMaster()
+
 	srv.rwMtx.Lock()
-	srv.sls = sls
+	srv.slv = slv
 	srv.rwMtx.Unlock()
+}
+
+func (srv *Server) deleteMigrationUnit(unitId uint16) error {
+	err := srv.mc.SetStatus(ctrl.SlaverClear)
+	if err != nil {
+		return err
+	}
+
+	err = srv.tbl.DeleteUnit(unitId)
+	if err != nil {
+		return err
+	}
+
+	err = srv.mc.SetStatus(ctrl.SlaverInit)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (srv *Server) migrateStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	switch req.Cli.ClientType() {
+	case ClientTypeNormal:
+		var p ctrl.PkgMigStatus
+		var err = de.Decode(req.Pkg, nil, &p)
+		p.ErrMsg = ""
+		if err != nil {
+			p.ErrMsg = fmt.Sprintf("decode failed %s", err)
+		} else {
+			m := srv.mc.GetMaster()
+			if m.MasterAddr != p.MasterAddr {
+				p.ErrMsg = fmt.Sprintf("master address mismatch (%s, %s)",
+					m.MasterAddr, p.MasterAddr)
+			} else if m.UnitId != p.UnitId {
+				p.ErrMsg = fmt.Sprintf("unit id mismatch (%d, %d)",
+					m.UnitId, p.UnitId)
+			} else {
+				p.Status = m.Status
+			}
+		}
+
+		var resp = Response(req.PkgArgs)
+		resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &p)
+		if err == nil {
+			srv.sendResp(false, true, req, &resp)
+		}
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeMaster:
+		log.Println("Invalid client type %d for MigStatus command, close now!",
+			req.Cli.ClientType())
+		req.Cli.Close()
+	}
 }
 
 func (srv *Server) doProcess(req *Request) {
@@ -552,6 +769,8 @@ func (srv *Server) processSync() {
 					srv.mIncr(req)
 				case proto.CmdSync:
 					srv.sync(req)
+				case proto.CmdSyncSt:
+					srv.syncStatus(req)
 				}
 			}
 		}
@@ -580,10 +799,12 @@ func (srv *Server) processCtrl() {
 		case req := <-srv.reqChan.CtrlReqChan:
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
-				case proto.CmdMaster:
-					srv.newMaster(de, en, req)
 				case proto.CmdSlaveOf:
 					srv.slaveOf(de, en, req)
+				case proto.CmdMigrate:
+					srv.migrate(de, en, req)
+				case proto.CmdMigStatus:
+					srv.migrateStatus(de, en, req)
 				}
 			}
 		}
@@ -629,9 +850,10 @@ func Run(conf *config.Config) {
 
 	log.Printf("GoTable started on %s\n", conf.Db.Host)
 
-	mis := srv.mc.GetAllMaster()
-	if len(mis) > 0 {
-		srv.connectToMaster(mis)
+	// Normal slaver, reconnect to master
+	hasMaster, migration, _ := srv.mc.GetMasterUnit()
+	if hasMaster && !migration {
+		srv.connectToMaster(srv.mc)
 	}
 
 	var authEnabled bool
@@ -642,7 +864,7 @@ func Run(conf *config.Config) {
 
 	for {
 		if c, err := link.Accept(); err == nil {
-			//log.Printf("New connection %s\n", c.RemoteAddr())
+			log.Printf("New connection %s\t%s\n", c.RemoteAddr(), c.LocalAddr())
 
 			cli := NewClient(c, authEnabled)
 			go cli.GoRecvRequest(srv.reqChan)

@@ -59,7 +59,6 @@ type Client struct {
 	// protects following
 	mtx      sync.RWMutex
 	authBM   *util.BitMap
-	ms       *master
 	shutdown bool
 }
 
@@ -75,7 +74,9 @@ func NewClient(conn net.Conn, authEnabled bool) *Client {
 
 func (c *Client) AddResp(resp *Response) {
 	if !c.IsClosed() {
-		defer recover()
+		defer func() {
+			recover()
+		}()
 		c.respChan <- resp
 	}
 }
@@ -94,15 +95,18 @@ func (c *Client) Close() {
 		}
 
 		c.c.Close()
-
-		if c.ms != nil {
-			c.ms.Close()
-			c.ms = nil
-		}
-
-		defer recover()
 		close(c.respChan)
+
+		//log.Printf("Close client %p\n", c)
 	}
+}
+
+func (c *Client) LocalAddr() net.Addr {
+	return c.c.LocalAddr()
+}
+
+func (c *Client) RemoteAddr() net.Addr {
+	return c.c.RemoteAddr()
 }
 
 func (c *Client) IsClosed() bool {
@@ -157,12 +161,6 @@ func (c *Client) SetAuth(dbId uint8) {
 	}
 }
 
-func (c *Client) SetMaster(ms *master) {
-	c.mtx.Lock()
-	c.ms = ms
-	c.mtx.Unlock()
-}
-
 func (c *Client) GoRecvRequest(ch *RequestChan) {
 	var headBuf = make([]byte, proto.HeadSize)
 	var head proto.PkgHead
@@ -206,18 +204,22 @@ func (c *Client) GoRecvRequest(ch *RequestChan) {
 			} else {
 				ch.SyncReqChan <- &req
 			}
+		case proto.CmdSyncSt:
+			fallthrough
 		case proto.CmdSync:
 			if ClientTypeNormal != c.ClientType() {
 				ch.SyncReqChan <- &req
 			}
 		case proto.CmdDump:
 			ch.DumpReqChan <- &req
-		case proto.CmdMaster:
+		case proto.CmdMigStatus:
+			fallthrough
+		case proto.CmdMigrate:
 			fallthrough
 		case proto.CmdSlaveOf:
 			ch.CtrlReqChan <- &req
 		default:
-			log.Printf("Invalid cmd %x\n", head.Cmd)
+			log.Printf("Invalid cmd 0x%X\n", head.Cmd)
 			c.Close()
 			return
 		}
