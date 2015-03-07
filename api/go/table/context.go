@@ -617,7 +617,7 @@ func (c *Context) SlaveOf(host string) error {
 		return err
 	}
 
-	t := r.(ctrl.PkgSlaveOf)
+	t := r.(*ctrl.PkgSlaveOf)
 	if t.ErrMsg != "" {
 		return errors.New(t.ErrMsg)
 	}
@@ -651,7 +651,7 @@ func (c *Context) Migrate(host string, unitId uint16) error {
 		return err
 	}
 
-	t := r.(ctrl.PkgMigrate)
+	t := r.(*ctrl.PkgMigrate)
 	if t.ErrMsg != "" {
 		return errors.New(t.ErrMsg)
 	}
@@ -660,14 +660,14 @@ func (c *Context) Migrate(host string, unitId uint16) error {
 
 // Internal control command.
 // MigStatus reads migration status.
-func (c *Context) MigStatus(host string, unitId uint16) (int, error) {
-	call := c.cli.newCall(proto.CmdMigStatus, nil)
+func (c *Context) SlaverStatus(migration bool, unitId uint16) (int, error) {
+	call := c.cli.newCall(proto.CmdSlaverSt, nil)
 	if call.err != nil {
 		return ctrl.NotSlaver, call.err
 	}
 
-	var p ctrl.PkgMigStatus
-	p.MasterAddr = host
+	var p ctrl.PkgSlaverStatus
+	p.Migration = migration
 	p.UnitId = unitId
 
 	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
@@ -684,11 +684,43 @@ func (c *Context) MigStatus(host string, unitId uint16) (int, error) {
 		return ctrl.NotSlaver, call.err
 	}
 
-	t := r.(ctrl.PkgMigStatus)
+	t := r.(*ctrl.PkgSlaverStatus)
 	if t.ErrMsg != "" {
 		return ctrl.NotSlaver, errors.New(t.ErrMsg)
 	}
 	return t.Status, nil
+}
+
+// Internal control command.
+// DelUnit deletes one unit data.
+func (c *Context) DelUnit(unitId uint16) error {
+	call := c.cli.newCall(proto.CmdDelUnit, nil)
+	if call.err != nil {
+		return call.err
+	}
+
+	var p ctrl.PkgDelUnit
+	p.UnitId = unitId
+
+	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	if err != nil {
+		c.cli.errCall(call, err)
+		return call.err
+	}
+
+	call.pkg = pkg
+	c.cli.sending <- call
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return call.err
+	}
+
+	t := r.(*ctrl.PkgDelUnit)
+	if t.ErrMsg != "" {
+		return errors.New(t.ErrMsg)
+	}
+	return nil
 }
 
 func replyGet(call *Call, err error) ([]byte, int64, uint32, error) {
@@ -890,32 +922,27 @@ func (call *Call) Reply() (interface{}, error) {
 				copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
 		}
 		return r, nil
+	}
 
+	switch call.cmd {
 	case proto.CmdSlaveOf:
-		var p ctrl.PkgSlaveOf
-		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
-		if err != nil {
-			call.err = err
-			return nil, call.err
-		}
-		return p, nil
+		return call.replyInnerCtrl(&ctrl.PkgSlaveOf{})
 	case proto.CmdMigrate:
-		var p ctrl.PkgMigrate
-		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
-		if err != nil {
-			call.err = err
-			return nil, call.err
-		}
-		return p, nil
-	case proto.CmdMigStatus:
-		var p ctrl.PkgMigStatus
-		err := ctrl.NewDecoder().Decode(call.pkg, nil, &p)
-		if err != nil {
-			call.err = err
-			return nil, call.err
-		}
-		return p, nil
+		return call.replyInnerCtrl(&ctrl.PkgMigrate{})
+	case proto.CmdSlaverSt:
+		return call.replyInnerCtrl(&ctrl.PkgSlaverStatus{})
+	case proto.CmdDelUnit:
+		return call.replyInnerCtrl(&ctrl.PkgDelUnit{})
 	}
 
 	return nil, ErrUnknownCmd
+}
+
+func (call *Call) replyInnerCtrl(p interface{}) (interface{}, error) {
+	err := ctrl.NewDecoder().Decode(call.pkg, nil, p)
+	if err != nil {
+		call.err = err
+		return nil, call.err
+	}
+	return p, nil
 }

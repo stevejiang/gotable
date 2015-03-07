@@ -212,7 +212,9 @@ func (c *Client) GoRecvRequest(ch *RequestChan) {
 			}
 		case proto.CmdDump:
 			ch.DumpReqChan <- &req
-		case proto.CmdMigStatus:
+		case proto.CmdDelUnit:
+			fallthrough
+		case proto.CmdSlaverSt:
 			fallthrough
 		case proto.CmdMigrate:
 			fallthrough

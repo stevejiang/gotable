@@ -37,9 +37,9 @@ type MasterInfo struct {
 }
 
 type MasterEncoding struct {
-	HasMaster bool      // true: Has master; false: No master/No migration
-	LastTime  time.Time // Last change time
+	HasMaster bool // true: Has master; false: No master/No migration
 	MasterInfo
+	LastTime time.Time // Last change time
 }
 
 type MasterConfig struct {
@@ -195,7 +195,7 @@ func (mc *MasterConfig) SetMigration(masterAddr, slaverAddr string, unitId uint1
 	}
 
 	if len(masterAddr) > 0 {
-		if m.HasMaster && m.Migration {
+		if m.HasMaster && m.Migration && m.UnitId != unitId {
 			return fmt.Errorf("cannot start more than 1 migration")
 		}
 		if unitId >= ctrl.TotalUnitNum {
@@ -221,16 +221,15 @@ func (mc *MasterConfig) SetMigration(masterAddr, slaverAddr string, unitId uint1
 func (mc *MasterConfig) SetStatus(status int) error {
 	mc.mtx.Lock()
 	if mc.m.HasMaster {
+		if status == ctrl.NotSlaver {
+			mc.m.HasMaster = false
+		}
 		mc.m.Status = status
 	}
 	var m = mc.m
 	mc.mtx.Unlock()
 
-	if m.HasMaster {
-		return mc.save(&m)
-	} else {
-		return nil
-	}
+	return mc.save(&m)
 }
 
 func (mc *MasterConfig) Status() int {
@@ -251,6 +250,10 @@ func (mc *MasterConfig) GetMaster() MasterInfo {
 		m = mc.m.MasterInfo
 	}
 	mc.mtx.RUnlock()
+
+	if len(m.MasterAddr) == 0 {
+		m.Status = ctrl.NotSlaver
+	}
 
 	return m
 }

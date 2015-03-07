@@ -51,12 +51,12 @@ type PkgMigrate struct {
 	ErrMsg     string // error msg, nil means no error
 }
 
-// Get migration status
-type PkgMigStatus struct {
-	MasterAddr string // ip:host
-	UnitId     uint16 // The unit under migration
-	Status     int
-	ErrMsg     string // error msg, nil means no error
+// Get migration/slaver status
+type PkgSlaverStatus struct {
+	Migration bool   // true: Migration status; false: Normal slaver status
+	UnitId    uint16 // The unit under migration
+	Status    int
+	ErrMsg    string // error msg, nil means no error
 }
 
 // Delete unit data

@@ -25,9 +25,7 @@ var (
 	ErrHeadBuf    = errors.New("invalid head buffer size")
 	ErrRowKeyLen  = errors.New("invalid row key length")
 	ErrColKeyLen  = errors.New("invalid col key length")
-	ErrValueLen   = errors.New("invalid value length")
 	ErrKvArrayLen = errors.New("invalid key/value array length")
-	ErrArrayLen   = errors.New("array or slice length out of range")
 )
 
 const (
@@ -54,10 +52,10 @@ const (
 	CmdSyncSt = 0xB1 // Sync status
 
 	// Inner CTRL
-	CmdSlaveOf   = 0xD0
-	CmdMigrate   = 0xD1 // Start/Stop migration
-	CmdMigStatus = 0xD2 // Get migration status
-	CmdDelUnit   = 0xD3 // Delete unit data
+	CmdSlaveOf  = 0xD0
+	CmdMigrate  = 0xD1 // Start/Stop migration
+	CmdSlaverSt = 0xD2 // Get migration/slaver status
+	CmdDelUnit  = 0xD3 // Delete unit data
 )
 
 const (

@@ -31,7 +31,7 @@ const (
 	zopScoreUp = uint64(0x8000000000000000)
 )
 
-// AdminDB keys
+// AdminDB keys, reserved tableId=0(no migration on this table)
 const (
 	KeyFullSyncEnd = "full-sync-end"
 	KeyIncrSyncEnd = "incr-sync-end"
@@ -158,9 +158,11 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
 		// Key not exist
 		kv.SetErrCode(table.EcNotExist)
 	} else {
-		// Key exists, set CtrlValue to make sure replied Value is not nil
-		kv.CtrlFlag |= proto.CtrlValue
+		// Key exists
 		kv.Value, kv.Score = parseRawValue(kv.Value)
+		if len(kv.Value) > 0 {
+			kv.CtrlFlag |= proto.CtrlValue
+		}
 		if kv.Score != 0 {
 			kv.CtrlFlag |= proto.CtrlScore
 		}
@@ -200,16 +202,14 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
-	if !wa.replication {
-		if kv.Cas != 0 {
-			var cas = lck.GetCas(rawKey)
-			if cas != kv.Cas {
-				kv.SetErrCode(table.EcCasNotMatch)
-				return nil
-			}
+	if !wa.replication && kv.Cas != 0 {
+		var cas = lck.GetCas(rawKey)
+		if cas != kv.Cas {
+			kv.SetErrCode(table.EcCasNotMatch)
+			return nil
 		}
-		lck.ClearCas(rawKey)
 	}
+	lck.ClearCas(rawKey)
 
 	var err error
 	if zop {
@@ -224,11 +224,8 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 		if err != nil {
 			kv.SetErrCode(table.EcReadFail)
 			return err
-		} else if oldVal == nil {
-			// Key not exist
-		} else {
-			// Key exists, set CtrlValue to make sure replied Value is not nil
-			kv.CtrlFlag |= proto.CtrlValue
+		} else if oldVal != nil {
+			// Key exists
 			oldVal, oldScore = parseRawValue(oldVal)
 			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
@@ -241,9 +238,8 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
 		tbl.db.Put(scoreKey, getRawValue(kv.Value, 0), wb)
 
-		// Reply old value and score
-		kv.Value = oldVal
-		kv.SetScore(oldScore)
+		kv.SetValue(nil)
+		kv.SetScore(0)
 
 		err = tbl.db.Commit(wb)
 		if err != nil {
@@ -310,16 +306,14 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
-	if !wa.replication {
-		if kv.Cas != 0 {
-			var cas = lck.GetCas(rawKey)
-			if cas != kv.Cas {
-				kv.SetErrCode(table.EcCasNotMatch)
-				return nil
-			}
+	if !wa.replication && kv.Cas != 0 {
+		var cas = lck.GetCas(rawKey)
+		if cas != kv.Cas {
+			kv.SetErrCode(table.EcCasNotMatch)
+			return nil
 		}
-		lck.ClearCas(rawKey)
 	}
+	lck.ClearCas(rawKey)
 
 	var err error
 	if zop {
@@ -334,13 +328,9 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 		if err != nil {
 			kv.SetErrCode(table.EcReadFail)
 			return err
-		} else if oldVal == nil {
-			// Key not exist
 		} else if oldVal != nil {
 			// Key exists
-			kv.CtrlFlag |= proto.CtrlValue
 			oldVal, oldScore = parseRawValue(oldVal)
-
 			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
 			tbl.db.Del(scoreKey, wb)
@@ -348,9 +338,8 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 
 		tbl.db.Del(rawKey, wb)
 
-		// Reply old value and score
-		kv.Value = oldVal
-		kv.SetScore(oldScore)
+		kv.SetValue(nil)
+		kv.SetScore(0)
 
 		err = tbl.db.Commit(wb)
 		if err != nil {
@@ -386,16 +375,14 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 	var lck = tbl.tl.GetLock(rawKey)
 	lck.Lock()
 	defer lck.Unlock()
-	if !wa.replication {
-		if kv.Cas != 0 {
-			var cas = lck.GetCas(rawKey)
-			if cas != kv.Cas {
-				kv.SetErrCode(table.EcCasNotMatch)
-				return nil
-			}
+	if !wa.replication && kv.Cas != 0 {
+		var cas = lck.GetCas(rawKey)
+		if cas != kv.Cas {
+			kv.SetErrCode(table.EcCasNotMatch)
+			return nil
 		}
-		lck.ClearCas(rawKey)
 	}
+	lck.ClearCas(rawKey)
 
 	var err error
 	var newScore = kv.Score
@@ -426,8 +413,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 			kv.RowKey, newScoreColKey(newScore, kv.ColKey))
 		tbl.db.Put(scoreKey, getRawValue(oldVal, 0), wb)
 
-		kv.Value = oldVal
-		kv.CtrlFlag |= proto.CtrlValue
+		kv.SetValue(oldVal)
 		kv.SetScore(newScore)
 
 		err = tbl.db.Commit(wb)
@@ -445,8 +431,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 			newScore += oldScore
 		}
 
-		kv.Value = oldVal
-		kv.CtrlFlag |= proto.CtrlValue
+		kv.SetValue(oldVal)
 		kv.SetScore(newScore)
 
 		err = tbl.db.Put(rawKey, getRawValue(oldVal, newScore), nil)
@@ -533,10 +518,7 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 			log.Printf("setRawKV failed: %s\n", err)
 		}
 	} else {
-		in = proto.PkgOneOp{}
-		in.Cmd = req.Cmd
-		in.DbId = req.DbId
-		in.Seq = req.Seq
+		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
 		in.SetErrCode(table.EcDecodeFail)
 	}
 
@@ -818,7 +800,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 			kv.ColKey = zColKey
 			kv.Value, _ = parseRawValue(it.Value())
 			kv.Score = zScore
-			if kv.Value != nil {
+			if len(kv.Value) > 0 {
 				kv.CtrlFlag |= proto.CtrlValue
 			}
 			if kv.Score != 0 {
@@ -927,7 +909,7 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 			kv.RowKey = in.RowKey
 			kv.ColKey = colKey
 			kv.Value, kv.Score = parseRawValue(it.Value())
-			if kv.Value != nil {
+			if len(kv.Value) > 0 {
 				kv.CtrlFlag |= proto.CtrlValue
 			}
 			if kv.Score != 0 {
@@ -1060,7 +1042,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		kv.TableId = tableId
 		kv.RowKey = rowKey
 		kv.SetColSpace(colSpace)
-		if kv.Value != nil {
+		if len(kv.Value) > 0 {
 			kv.CtrlFlag |= proto.CtrlValue
 		}
 		if kv.Score != 0 {
@@ -1092,9 +1074,12 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 		var it = tbl.db.NewIterator(false)
 		it.Seek(getRawUnitKey(unitId, 0, 0))
 		for count = 0; it.Valid() && count < maxDelNum; it.Next() {
-			curUnitId := parseRawKeyUnitId(it.Key())
+			curUnitId, dbId, tableId := parseRawKeyUnitId(it.Key())
 			if curUnitId != unitId {
 				break
+			}
+			if dbId == proto.AdminDbId && tableId == 0 {
+				continue // Reserved admin table
 			}
 			err := tbl.db.Del(it.Key(), nil)
 			if err != nil {
@@ -1110,13 +1095,30 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 		}
 		if endTimes > 1 {
 			if count > 0 {
-				return errors.New("the deleting unit still has new data written")
+				return errors.New("the unit deleting still has new data written")
 			}
 			return nil
 		}
 	}
 
 	return nil
+}
+
+func (tbl *Table) HasUnitData(unitId uint16) bool {
+	var it = tbl.db.NewIterator(false)
+	defer it.Close()
+
+	for it.Seek(getRawUnitKey(unitId, 0, 0)); it.Valid(); it.Next() {
+		curUnitId, dbId, tableId := parseRawKeyUnitId(it.Key())
+		if curUnitId != unitId {
+			break
+		}
+		if dbId == proto.AdminDbId && tableId == 0 {
+			continue // Reserved admin table
+		}
+		return true
+	}
+	return false
 }
 
 func (tbl *Table) NewIterator(fillCache bool) *Iterator {
@@ -1201,8 +1203,8 @@ func parseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
 	return
 }
 
-func parseRawKeyUnitId(rawKey []byte) uint16 {
-	return binary.BigEndian.Uint16(rawKey)
+func parseRawKeyUnitId(rawKey []byte) (unitId uint16, dbId, tableId uint8) {
+	return binary.BigEndian.Uint16(rawKey), rawKey[2], rawKey[3]
 }
 
 func parseZColKey(colKey []byte) ([]byte, int64) {

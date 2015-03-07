@@ -605,15 +605,17 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 			if slv != nil {
 				slv.Close()
 			}
-			//TODO: use CmdDelUnit to delete
-			err = srv.deleteMigrationUnit(p.UnitId)
-			if err != nil {
-				log.Printf("Failed to delete migration unit: %s\n", err)
-				srv.replyMigrate(en, req,
-					fmt.Sprintf("failed to delete migration unit(%s)", err))
-				return
+			if srv.tbl.HasUnitData(p.UnitId) {
+				err = srv.mc.SetStatus(ctrl.SlaverNeedClear)
+				if err != nil {
+					log.Printf("Failed to set migration status: %s\n", err)
+					srv.replyMigrate(en, req,
+						fmt.Sprintf("failed to set migration status(%s)", err))
+					return
+				}
+			} else {
+				srv.connectToMaster(srv.mc)
 			}
-			srv.connectToMaster(srv.mc)
 		} else {
 			if slv != nil {
 				go slv.DelayClose()
@@ -646,42 +648,31 @@ func (srv *Server) connectToMaster(mc *config.MasterConfig) {
 	srv.rwMtx.Unlock()
 }
 
-func (srv *Server) deleteMigrationUnit(unitId uint16) error {
-	err := srv.mc.SetStatus(ctrl.SlaverClear)
-	if err != nil {
-		return err
-	}
-
-	err = srv.tbl.DeleteUnit(unitId)
-	if err != nil {
-		return err
-	}
-
-	err = srv.mc.SetStatus(ctrl.SlaverInit)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (srv *Server) migrateStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+func (srv *Server) slaverStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 	switch req.Cli.ClientType() {
 	case ClientTypeNormal:
-		var p ctrl.PkgMigStatus
+		var p ctrl.PkgSlaverStatus
 		var err = de.Decode(req.Pkg, nil, &p)
 		p.ErrMsg = ""
 		if err != nil {
 			p.ErrMsg = fmt.Sprintf("decode failed %s", err)
 		} else {
 			m := srv.mc.GetMaster()
-			if m.MasterAddr != p.MasterAddr {
-				p.ErrMsg = fmt.Sprintf("master address mismatch (%s, %s)",
-					m.MasterAddr, p.MasterAddr)
-			} else if m.UnitId != p.UnitId {
-				p.ErrMsg = fmt.Sprintf("unit id mismatch (%d, %d)",
-					m.UnitId, p.UnitId)
-			} else {
+			if len(m.MasterAddr) > 0 {
+				if p.Migration {
+					if !m.Migration {
+						p.ErrMsg = fmt.Sprintf("check migration status on normal slaver")
+					} else if m.UnitId != p.UnitId {
+						p.ErrMsg = fmt.Sprintf("unit id mismatch (%d, %d)",
+							m.UnitId, p.UnitId)
+					}
+				} else {
+					if m.Migration {
+						p.ErrMsg = fmt.Sprintf("check normal slaver status on migration")
+					}
+				}
+			}
+			if len(p.ErrMsg) == 0 {
 				p.Status = m.Status
 			}
 		}
@@ -695,6 +686,65 @@ func (srv *Server) migrateStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Reques
 		fallthrough
 	case ClientTypeMaster:
 		log.Println("Invalid client type %d for MigStatus command, close now!",
+			req.Cli.ClientType())
+		req.Cli.Close()
+	}
+}
+
+func (srv *Server) deleteMigrationUnit(unitId uint16, m config.MasterInfo) error {
+	var match bool
+	if len(m.MasterAddr) > 0 && m.Migration && m.UnitId == unitId {
+		match = true
+	}
+
+	var err error
+	if match {
+		err = srv.mc.SetStatus(ctrl.SlaverClear)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = srv.tbl.DeleteUnit(unitId)
+	if err != nil {
+		return err
+	}
+
+	if match {
+		// Set as NotSlaver, need a new Migrate command
+		err = srv.mc.SetStatus(ctrl.NotSlaver)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (srv *Server) deleteUnit(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	switch req.Cli.ClientType() {
+	case ClientTypeNormal:
+		var p ctrl.PkgDelUnit
+		var err = de.Decode(req.Pkg, nil, &p)
+		p.ErrMsg = ""
+		if err != nil {
+			p.ErrMsg = fmt.Sprintf("decode failed %s", err)
+		} else {
+			err = srv.deleteMigrationUnit(p.UnitId, srv.mc.GetMaster())
+			if err != nil {
+				p.ErrMsg = fmt.Sprintf("delete unit failed %s", err)
+			}
+		}
+
+		var resp = Response(req.PkgArgs)
+		resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &p)
+		if err == nil {
+			srv.sendResp(false, true, req, &resp)
+		}
+	case ClientTypeSlaver:
+		fallthrough
+	case ClientTypeMaster:
+		log.Println("Invalid client type %d for DelUnit command, close now!",
 			req.Cli.ClientType())
 		req.Cli.Close()
 	}
@@ -803,8 +853,10 @@ func (srv *Server) processCtrl() {
 					srv.slaveOf(de, en, req)
 				case proto.CmdMigrate:
 					srv.migrate(de, en, req)
-				case proto.CmdMigStatus:
-					srv.migrateStatus(de, en, req)
+				case proto.CmdSlaverSt:
+					srv.slaverStatus(de, en, req)
+				case proto.CmdDelUnit:
+					srv.deleteUnit(de, en, req)
 				}
 			}
 		}
