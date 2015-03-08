@@ -431,21 +431,18 @@ func extractString(arg string) (string, error) {
 		return arg[1 : len(arg)-1], nil
 	}
 
+	if len(arg) >= 3 && arg[1] == '"' && arg[len(arg)-1] == '"' {
+		if arg[0] != 'q' && arg[0] != 'Q' {
+			return "", fmt.Errorf("invalid string (%s)", arg)
+		}
+
+		var s string
+		_, err := fmt.Sscanf(arg[1:], "%q", &s)
+		if err != nil {
+			return "", err
+		}
+		return s, nil
+	}
+
 	return arg, nil
-}
-
-func extractQuote(arg string) (string, error) {
-	if arg[0] != '\'' && arg[0] != '"' {
-		return "", fmt.Errorf("not start with quote (%s)", arg)
-	}
-
-	if len(arg) < 2 {
-		return "", fmt.Errorf("invalid string (%s)", arg)
-	}
-
-	if arg[0] != arg[len(arg)-1] {
-		return "", fmt.Errorf("invalid string (%s)", arg)
-	}
-
-	return arg[1 : len(arg)-1], nil
 }

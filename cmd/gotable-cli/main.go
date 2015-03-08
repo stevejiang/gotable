@@ -39,7 +39,7 @@ func main() {
 		return
 	}
 
-	re, _ := regexp.Compile(`'[^\'\"]*'|"[^\'\"]*"|[^\s\'\"]+`)
+	re, _ := regexp.Compile(`'[^\'\"]*'|[qQ]?"[^\'\"]*"|[^\s\'\"]+`)
 
 	fmt.Println("Welcome to GoTable.")
 	writeHelp()
@@ -153,7 +153,7 @@ func writeHelp() {
 }
 
 func writeUnrecognized() {
-	fmt.Println("Unrecognized command. Use 'help'.")
+	fmt.Println("Unrecognized command line. Use 'help'.")
 }
 
 func checkError(err error) {
@@ -184,6 +184,9 @@ func fullMatchString(re *regexp.Regexp, s string) []string {
 	var cur int
 	for _, r := range rs {
 		if notWhiteSpace(s, cur, r[0]) {
+			return nil
+		}
+		if cur > 0 && cur == r[0] {
 			return nil
 		}
 		cur = r[1]
