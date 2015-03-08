@@ -107,6 +107,7 @@ func testMGet(tc *table.Context) {
 	mb.Add(1, []byte("row1"), []byte("col2"), 0)
 	mb.Add(1, []byte("row1"), []byte("col1"), 0)
 	mb.Add(1, []byte("row1"), []byte("col3"), 0)
+	mb.Add(1, []byte("row1"), []byte("not"), 0)
 	r, err := tc.MGet(mb)
 	if err != nil {
 		fmt.Printf("Mget failed: %s\n", err)
@@ -115,9 +116,17 @@ func testMGet(tc *table.Context) {
 
 	fmt.Println("MGET result:")
 	for i := 0; i < len(r); i++ {
-		fmt.Printf("[%q\t%q]\t[%d\t%q]\n",
-			r[i].RowKey, r[i].ColKey,
-			r[i].Score, r[i].Value)
+		if r[i].ErrCode < 0 {
+			fmt.Printf("[%q\t%q]\tget failed with error %d!\n",
+				r[i].RowKey, r[i].ColKey, r[i].ErrCode)
+		} else if r[i].ErrCode > 0 {
+			fmt.Printf("[%q\t%q]\tkey not exist!\n",
+				r[i].RowKey, r[i].ColKey)
+		} else {
+			fmt.Printf("[%q\t%q]\t[%d\t%q]\n",
+				r[i].RowKey, r[i].ColKey,
+				r[i].Score, r[i].Value)
+		}
 	}
 }
 
@@ -144,7 +153,8 @@ func testScan(tc *table.Context) {
 func testZScan(tc *table.Context) {
 	err := tc.ZSet(1, []byte("row2"), []byte("000"), []byte("v00"), 10, 0)
 	if err != nil {
-		fmt.Printf("Set failed: %s\n", err)
+		fmt.Printf("ZSet failed: %s\n", err)
+		return
 	}
 
 	var ma table.MSetArgs
@@ -155,7 +165,7 @@ func testZScan(tc *table.Context) {
 	ma.Add(1, []byte("row2"), []byte("005"), []byte("v05"), -5, 0)
 	_, err = tc.ZmSet(ma)
 	if err != nil {
-		fmt.Printf("Mset failed: %s\n", err)
+		fmt.Printf("ZmSet failed: %s\n", err)
 		return
 	}
 

@@ -7,7 +7,7 @@ GoTable is a high performance NoSQL database powered by [Go](http://golang.org/)
 + High performance and easy to scale.
 + Powerful set of APIs: GET, SET, DEL, MGET, MSET, MDEL, SCAN, INCR, DUMP and "Z" APIs.
 + Data storage is not limited by RAM and friendly with SSD.
-+ Transaction support with CAS (compare and save).
++ Transaction support with CAS (compare and switch).
 + Replication.
 + Cluster (To be done ...)
 
@@ -35,6 +35,57 @@ The GoTable binary files are in $GOPATH/bin directory.
 + Linux or MacOS, 64 bit operating system is the best.
 + Go version >= 1.3
 + gcc version >= 4.8.1
+
+## Running GoTable
+
+Please add $GOPATH/bin to PATH environment first.
+To run GoTable in default configuration just type:
+
+	gotable-server
+
+If you want to provide your gotable.conf, you have to run it using an additional parameter (the path of the configuration file):
+
+	gotable-server /path/to/gotable.conf
+
+## Playing with GoTable
+
+You can use gotable-cli to play with GoTable. Start a gotable-server instance, then in another terminal try the following:
+
+	% gotable-cli 
+	gotable@0> set 0 r1 c1 v1
+	OK
+	gotable@0> get 0 r1 c1
+	[0	"v1"]
+	gotable@0> incr 0 r1 c1
+	[1	"v1"]
+	gotable@0> incr 0 r1 c1 4
+	[5	"v1"]
+	gotable@0> zget 0 r1 c1
+	<nil>
+	gotable@0> zset 0 r1 c1 va 11
+	OK
+	gotable@0> zget 0 r1 c1
+	[11	"va"]
+	gotable@0> set 0 r1 c2 v2 2
+	OK
+	gotable@0> scan 0 r1 ""
+	 0) ["r1"	"c1"]	[5	"v1"]
+	 1) ["r1"	"c2"]	[2	"v2"]
+	gotable@0> zscan 0 r1 0 ""
+	 0) ["r1"	11	"c1"]	["va"]
+	gotable@0> zset 0 r1 c2 vb 12
+	OK
+	gotable@0> zscan 0 r1 0 ""
+	 0) ["r1"	11	"c1"]	["va"]
+	 1) ["r1"	12	"c2"]	["vb"]
+	gotable@0> select 1
+	OK
+	gotable@1> get 0 r1 c1
+	<nil>
+	gotable@1> select 0
+	OK
+	gotable@0> get 0 r1 c1
+	[5	"v1"]
 
 ## API Example
 
@@ -65,7 +116,7 @@ In default column space, all colKeys are stored in ASC order. The APIs GET/SET/D
 
 ### "Z" sorted score column space
 
-In "Z" sorted score column space, all colKeys are sorted in ASC order, and also colKeys are sorted by "score" in ASC order. The APIs ZGET/ZSET/ZDEL/ZINCR/ZSCAN take effect in this space. The SCAN API can scan records order by colKey, or order by score+colKey.
+In "Z" sorted score column space, there are two lists for every rowKey. The first list is like the default column space, all colKeys are sorted in ASC order; the second list is order by score, all colKeys are sorted by "score+colKey" in ASC order. The APIs ZGET/ZSET/ZDEL/ZINCR/ZSCAN take effect in this space. The SCAN API can scan records on the two lists, order by colKey or "score+colKey".
 
 ## Performance Benchmark
 

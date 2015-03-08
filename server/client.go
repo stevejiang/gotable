@@ -33,6 +33,7 @@ const (
 
 type Request struct {
 	Cli *Client
+	Slv *slaver
 	store.PkgArgs
 }
 
@@ -135,12 +136,12 @@ func (c *Client) IsAuth(dbId uint8) bool {
 		return false
 	}
 
-	if c.authBM.Get(0) {
+	if c.authBM.Get(proto.AdminDbId) {
 		c.mtx.RUnlock()
 		return true
 	}
 
-	if dbId != 0 && c.authBM.Get(uint(dbId)) {
+	if dbId != proto.AdminDbId && c.authBM.Get(uint(dbId)) {
 		c.mtx.RUnlock()
 		return true
 	}
@@ -161,7 +162,7 @@ func (c *Client) SetAuth(dbId uint8) {
 	}
 }
 
-func (c *Client) GoRecvRequest(ch *RequestChan) {
+func (c *Client) GoRecvRequest(ch *RequestChan, slv *slaver) {
 	var headBuf = make([]byte, proto.HeadSize)
 	var head proto.PkgHead
 	for {
@@ -175,7 +176,7 @@ func (c *Client) GoRecvRequest(ch *RequestChan) {
 		//log.Printf("recv(%s): [0x%X\t%d\t%d]\n",
 		//	c.c.RemoteAddr(), head.Cmd, head.DbId, head.Seq)
 
-		var req = Request{c, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
+		var req = Request{c, slv, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
 
 		switch head.Cmd {
 		case proto.CmdAuth:

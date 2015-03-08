@@ -62,7 +62,7 @@ func (c *client) auth(args []string) error {
 		return err
 	}
 
-	if dbId != 0 && dbId != c.dbId {
+	if dbId != proto.AdminDbId && dbId != c.dbId {
 		c.c = ctx
 		c.dbId = dbId
 	}
@@ -72,7 +72,7 @@ func (c *client) auth(args []string) error {
 }
 
 func (c *client) use(args []string) error {
-	//use <databaseId>
+	//select <databaseId>
 	if len(args) != 1 {
 		return fmt.Errorf("invalid number of arguments (%d)", len(args))
 	}

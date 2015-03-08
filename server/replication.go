@@ -28,10 +28,11 @@ import (
 )
 
 type slaver struct {
-	reqChan *RequestChan
-	bin     *binlog.BinLog
-	mc      *config.MasterConfig
-	mi      config.MasterInfo
+	reqChan  *RequestChan
+	bin      *binlog.BinLog
+	mc       *config.MasterConfig
+	mi       config.MasterInfo
+	adminPwd string
 
 	mtx    sync.Mutex // protects following
 	cli    *Client
@@ -39,12 +40,13 @@ type slaver struct {
 }
 
 func NewSlaver(reqChan *RequestChan, bin *binlog.BinLog,
-	mc *config.MasterConfig) *slaver {
+	mc *config.MasterConfig, adminPwd string) *slaver {
 	var slv = new(slaver)
 	slv.reqChan = reqChan
 	slv.bin = bin
 	slv.mc = mc
 	slv.mi = mc.GetMaster()
+	slv.adminPwd = adminPwd
 
 	return slv
 }
@@ -109,55 +111,102 @@ func (slv *slaver) doConnectToMaster() {
 
 		cli.SetClientType(ClientTypeSlaver)
 
-		go cli.GoRecvRequest(slv.reqChan)
+		go cli.GoRecvRequest(slv.reqChan, slv)
 		go cli.GoSendResponse()
 
-		var resp = &Response{proto.CmdSlaveOf, 0, 0, nil}
-		var en = ctrl.NewEncoder()
-		if slv.mi.Migration {
-			var p ctrl.PkgMigrate
-			p.ClientReq = false
-			p.MasterAddr = slv.mi.MasterAddr
-			p.SlaverAddr = slv.mi.SlaverAddr
-			p.UnitId = slv.mi.UnitId
-
-			resp.Cmd = proto.CmdMigrate
-			resp.Pkg, err = en.Encode(proto.CmdMigrate, 0, 0, &p)
+		if len(slv.adminPwd) == 0 {
+			err = slv.SendSlaveOfToMaster()
 			if err != nil {
-				log.Printf("Fatal Encode error: %s\n", err)
+				log.Printf("SendSlaveOfToMaster failed(%s), close slaver!", err)
+				slv.Close()
 				return
 			}
 		} else {
-			lastSeq, valid := slv.bin.GetMasterSeq()
-			if !valid {
-				slv.mc.SetStatus(ctrl.SlaverNeedClear)
-				// Any better solution?
-				log.Fatalf("Slaver has old data with lastSeq %d, please clear first! "+
-					"(Restart may fix this issue)", lastSeq)
-			}
-
-			var p ctrl.PkgSlaveOf
-			p.ClientReq = false
-			p.MasterAddr = slv.mi.MasterAddr
-			p.SlaverAddr = slv.mi.SlaverAddr
-			p.LastSeq = lastSeq
-			log.Printf("Connect to master %s with lastSeq %d\n",
-				slv.mi.MasterAddr, p.LastSeq)
-
-			resp.Pkg, err = en.Encode(proto.CmdSlaveOf, 0, 0, &p)
+			err = slv.SendAuthToMaster()
 			if err != nil {
-				log.Printf("Fatal Encode error: %s\n", err)
+				log.Printf("SendAuthToMaster failed(%s), close slaver!", err)
+				slv.Close()
 				return
 			}
 		}
-
-		cli.AddResp(resp)
-		slv.mc.SetStatus(ctrl.SlaverFullSync)
 
 		for !cli.IsClosed() {
 			time.Sleep(time.Second)
 		}
 	}
+}
+
+func (slv *slaver) SendSlaveOfToMaster() error {
+	var cli = slv.cli
+	if cli == nil {
+		return nil
+	}
+
+	var err error
+	var resp = &Response{proto.CmdSlaveOf, 0, 0, nil}
+	var en = ctrl.NewEncoder()
+	if slv.mi.Migration {
+		var p ctrl.PkgMigrate
+		p.ClientReq = false
+		p.MasterAddr = slv.mi.MasterAddr
+		p.SlaverAddr = slv.mi.SlaverAddr
+		p.UnitId = slv.mi.UnitId
+
+		resp.Cmd = proto.CmdMigrate
+		resp.Pkg, err = en.Encode(proto.CmdMigrate, 0, 0, &p)
+		if err != nil {
+			return err
+		}
+	} else {
+		lastSeq, valid := slv.bin.GetMasterSeq()
+		if !valid {
+			slv.mc.SetStatus(ctrl.SlaverNeedClear)
+			// Any better solution?
+			log.Fatalf("Slaver has old data with lastSeq %d, please clear first! "+
+				"(Restart may fix this issue)", lastSeq)
+		}
+
+		var p ctrl.PkgSlaveOf
+		p.ClientReq = false
+		p.MasterAddr = slv.mi.MasterAddr
+		p.SlaverAddr = slv.mi.SlaverAddr
+		p.LastSeq = lastSeq
+		log.Printf("Connect to master %s with lastSeq %d\n",
+			slv.mi.MasterAddr, p.LastSeq)
+
+		resp.Pkg, err = en.Encode(proto.CmdSlaveOf, 0, 0, &p)
+		if err != nil {
+			return err
+		}
+	}
+
+	cli.AddResp(resp)
+	return slv.mc.SetStatus(ctrl.SlaverFullSync)
+}
+
+func (slv *slaver) SendAuthToMaster() error {
+	var cli = slv.cli
+	if cli == nil {
+		return nil
+	}
+	if len(slv.adminPwd) == 0 {
+		return nil
+	}
+
+	var p proto.PkgOneOp
+	p.DbId = proto.AdminDbId
+	p.Cmd = proto.CmdAuth
+	p.RowKey = []byte(slv.adminPwd)
+
+	var resp = &Response{proto.CmdAuth, 0, 0, nil}
+	resp.Pkg = make([]byte, p.Length())
+	_, err := p.Encode(resp.Pkg)
+	if err != nil {
+		return err
+	}
+
+	cli.AddResp(resp)
+	return nil
 }
 
 type master struct {

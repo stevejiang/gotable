@@ -53,11 +53,7 @@ func (c *Context) Auth(password string) error {
 	}
 
 	_, err = (<-call.Done).Reply()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 func (c *Context) Ping() error {
@@ -70,11 +66,20 @@ func (c *Context) Ping() error {
 	return err
 }
 
+// Get value&score of the key in default column space.
+// Parameter cas is Compare And Switch, 2 means read data on master and return
+// a new cas, 1 means read data on master machine but without a new cas, 0 means
+// read data on any machine without a new cas. On cluter mode, routing to master
+// machine is automatically, but on a normal master/slaver mode it should be done
+// manually. If cas 1&2 sent to a slaver machine, error will be returned.
+// Return value nil means key not exist.
 func (c *Context) Get(tableId uint8, rowKey, colKey []byte, cas uint32) (
 	value []byte, score int64, casReply uint32, err error) {
 	return replyGet(c.GoGet(tableId, rowKey, colKey, cas, nil))
 }
 
+// Get value&score of the key in "Z" sorted score column space.
+// Request and return parameters have the same meaning as the Get API.
 func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte, cas uint32) (
 	value []byte, score int64, newCas uint32, err error) {
 	return replyGet(c.GoZGet(tableId, rowKey, colKey, cas, nil))
@@ -659,7 +664,7 @@ func (c *Context) Migrate(host string, unitId uint16) error {
 }
 
 // Internal control command.
-// MigStatus reads migration status.
+// SlaverStatus reads migration/slaver status.
 func (c *Context) SlaverStatus(migration bool, unitId uint16) (int, error) {
 	call := c.cli.newCall(proto.CmdSlaverSt, nil)
 	if call.err != nil {

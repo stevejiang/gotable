@@ -446,8 +446,8 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 
 func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 	var in proto.PkgOneOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -473,8 +473,8 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 
 func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
 	var in proto.PkgMultiOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -527,8 +527,8 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 
 func (tbl *Table) Set(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -557,8 +557,8 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool
 
 func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -590,8 +590,8 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 func (tbl *Table) Del(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -620,8 +620,8 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool
 
 func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -653,8 +653,8 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 func (tbl *Table) Incr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -683,8 +683,8 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 func (tbl *Table) MIncr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		in.ErrCode = table.EcDecodeFail
 	}
 	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
@@ -822,8 +822,8 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 	out.Seq = req.Seq
 
 	var in proto.PkgScanReq
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		return errorHandle(&out, table.EcDecodeFail)
 	}
 
@@ -934,8 +934,8 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	out.Seq = req.Seq
 
 	var in proto.PkgDumpReq
-	_, err := in.Decode(req.Pkg)
-	if err != nil {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
 		return errorHandle(&out, table.EcDecodeFail)
 	}
 

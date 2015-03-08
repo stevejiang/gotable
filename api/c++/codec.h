@@ -189,5 +189,5 @@ struct PkgDumpResp : public PkgMultiOp {
 	int encode(char* pkg, int len);
 };
 
-}
+}  // namespace gotable
 #endif

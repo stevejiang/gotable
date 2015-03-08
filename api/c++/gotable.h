@@ -218,7 +218,7 @@ public:
 			bool asc, int num, ScanReply* reply);
 	int zScan(uint8_t tableId, const string& rowKey, const string& colKey, int64_t score,
 			bool asc, bool orderByScore, int num, ScanReply* reply);
-	int zScanStart(uint8_t tableId, const string& rowKey, const string& colKey,
+	int zScanStart(uint8_t tableId, const string& rowKey,
 			bool asc, bool orderByScore, int num, ScanReply* reply);
 	int scanMore(const ScanReply& last, ScanReply* reply);
 
@@ -262,5 +262,5 @@ private:
 	char     buf[4096];
 };
 
-}
+}  // namespace gotable
 #endif

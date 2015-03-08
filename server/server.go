@@ -32,6 +32,7 @@ import (
 type Server struct {
 	tbl     *store.Table
 	bin     *binlog.BinLog
+	conf    *config.Config
 	mc      *config.MasterConfig
 	reqChan *RequestChan
 
@@ -54,6 +55,7 @@ func NewServer(conf *config.Config) *Server {
 	}
 
 	srv := new(Server)
+	srv.conf = conf
 	srv.mc = mc
 	srv.tbl = store.NewTable(tableDir)
 	if srv.tbl == nil {
@@ -190,9 +192,43 @@ func (srv *Server) replyMultiOp(req *Request, errCode int8) {
 }
 
 func (srv *Server) auth(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Auth(&req.PkgArgs, req.Cli)
-	srv.sendResp(false, true, req, &resp)
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+
+	switch cliType {
+	case ClientTypeNormal:
+		var resp = Response(req.PkgArgs)
+		resp.Pkg = srv.tbl.Auth(&req.PkgArgs, req.Cli)
+		srv.sendResp(false, true, req, &resp)
+	case ClientTypeSlaver:
+		var in proto.PkgOneOp
+		_, err := in.Decode(req.Pkg)
+		if err != nil {
+			log.Printf("Decode failed for auth reply(%s), close slaver!\n", err)
+		} else if in.ErrCode != 0 {
+			log.Printf("Auth failed (%d), close slaver!\n", in.ErrCode)
+		}
+		if err != nil || in.ErrCode != 0 {
+			if req.Slv != nil {
+				req.Slv.Close()
+			} else {
+				req.Cli.Close()
+			}
+			return
+		}
+		if req.Slv != nil {
+			err = req.Slv.SendSlaveOfToMaster()
+			if err != nil {
+				log.Printf("SendSlaveOfToMaster failed(%s), close slaver!\n", err)
+				req.Slv.Close()
+			}
+		}
+	case ClientTypeMaster:
+		log.Printf("Invalid client type %d for AUTH cmd, close now!\n", cliType)
+		req.Cli.Close()
+	}
 }
 
 func (srv *Server) ping(req *Request) {
@@ -357,7 +393,11 @@ func (srv *Server) scan(req *Request) {
 }
 
 func (srv *Server) sync(req *Request) {
-	switch req.Cli.ClientType() {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+	switch cliType {
 	case ClientTypeSlaver:
 		var resp = Response(req.PkgArgs)
 		var ok bool
@@ -373,7 +413,11 @@ func (srv *Server) sync(req *Request) {
 }
 
 func (srv *Server) syncStatus(req *Request) {
-	switch req.Cli.ClientType() {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+	switch cliType {
 	case ClientTypeSlaver:
 		var in proto.PkgOneOp
 		_, err := in.Decode(req.Pkg)
@@ -415,7 +459,11 @@ func (srv *Server) dump(req *Request) {
 // Normal master
 func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request,
 	p *ctrl.PkgSlaveOf) {
-	switch req.Cli.ClientType() {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+	switch cliType {
 	case ClientTypeNormal:
 		if !req.Cli.IsAuth(proto.AdminDbId) {
 			log.Printf("Not authorized!\n")
@@ -432,7 +480,12 @@ func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Requ
 		go ms.GoAsync(srv.tbl)
 	case ClientTypeSlaver:
 		// Get response from master
-		log.Printf("Master failed with msg: %s\n", p.ErrMsg)
+		log.Printf("Master failed(%s), close slaver!\n", p.ErrMsg)
+		if req.Slv != nil {
+			req.Slv.Close()
+		} else {
+			req.Cli.Close()
+		}
 	case ClientTypeMaster:
 		log.Printf("Already master, cannot create master again, close now!\n")
 		req.Cli.Close()
@@ -442,7 +495,11 @@ func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Requ
 // Migration master
 func (srv *Server) newMigMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request,
 	p *ctrl.PkgMigrate) {
-	switch req.Cli.ClientType() {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+	switch cliType {
 	case ClientTypeNormal:
 		if !req.Cli.IsAuth(proto.AdminDbId) {
 			log.Printf("Not authorized!\n")
@@ -489,6 +546,11 @@ func (srv *Server) replyMigrate(en *ctrl.Encoder, req *Request, msg string) {
 }
 
 func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+
 	var p ctrl.PkgSlaveOf
 	var err = de.Decode(req.Pkg, nil, &p)
 	if err == nil && !p.ClientReq {
@@ -496,7 +558,7 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 		return
 	}
 
-	switch req.Cli.ClientType() {
+	switch cliType {
 	case ClientTypeNormal:
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
@@ -551,13 +613,18 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 			log.Printf("Failed to Decode pkg: %s\n", err)
 		} else {
 			log.Println("Invalid client type %d for SlaveOf command, close now!",
-				req.Cli.ClientType())
+				cliType)
 		}
 		req.Cli.Close()
 	}
 }
 
 func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+
 	var p ctrl.PkgMigrate
 	var err = de.Decode(req.Pkg, nil, &p)
 	if err == nil && !p.ClientReq {
@@ -565,7 +632,7 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 		return
 	}
 
-	switch req.Cli.ClientType() {
+	switch cliType {
 	case ClientTypeNormal:
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
@@ -631,7 +698,7 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 			log.Printf("Failed to Decode pkg: %s\n", err)
 		} else {
 			log.Println("Invalid client type %d for Migrate command, close now!",
-				req.Cli.ClientType())
+				cliType)
 		}
 		req.Cli.Close()
 	}
@@ -640,7 +707,7 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 func (srv *Server) connectToMaster(mc *config.MasterConfig) {
 	srv.bin.AsSlaver()
 
-	var slv = NewSlaver(srv.reqChan, srv.bin, mc)
+	var slv = NewSlaver(srv.reqChan, srv.bin, mc, srv.conf.Auth.AdminPwd)
 	go slv.GoConnectToMaster()
 
 	srv.rwMtx.Lock()
@@ -649,7 +716,12 @@ func (srv *Server) connectToMaster(mc *config.MasterConfig) {
 }
 
 func (srv *Server) slaverStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
-	switch req.Cli.ClientType() {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+
+	switch cliType {
 	case ClientTypeNormal:
 		var p ctrl.PkgSlaverStatus
 		var err = de.Decode(req.Pkg, nil, &p)
@@ -686,7 +758,7 @@ func (srv *Server) slaverStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request
 		fallthrough
 	case ClientTypeMaster:
 		log.Println("Invalid client type %d for MigStatus command, close now!",
-			req.Cli.ClientType())
+			cliType)
 		req.Cli.Close()
 	}
 }
@@ -722,7 +794,12 @@ func (srv *Server) deleteMigrationUnit(unitId uint16, m config.MasterInfo) error
 }
 
 func (srv *Server) deleteUnit(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
-	switch req.Cli.ClientType() {
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+
+	switch cliType {
 	case ClientTypeNormal:
 		var p ctrl.PkgDelUnit
 		var err = de.Decode(req.Pkg, nil, &p)
@@ -745,7 +822,7 @@ func (srv *Server) deleteUnit(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) 
 		fallthrough
 	case ClientTypeMaster:
 		log.Println("Invalid client type %d for DelUnit command, close now!",
-			req.Cli.ClientType())
+			cliType)
 		req.Cli.Close()
 	}
 }
@@ -864,6 +941,8 @@ func (srv *Server) processCtrl() {
 }
 
 func Run(conf *config.Config) {
+	log.SetFlags(log.Flags() | log.Lshortfile)
+
 	var srv = NewServer(conf)
 	if srv == nil {
 		log.Fatalln("Failed to create new server.")
@@ -916,10 +995,10 @@ func Run(conf *config.Config) {
 
 	for {
 		if c, err := link.Accept(); err == nil {
-			log.Printf("New connection %s\t%s\n", c.RemoteAddr(), c.LocalAddr())
+			//log.Printf("New connection %s\t%s\n", c.RemoteAddr(), c.LocalAddr())
 
 			cli := NewClient(c, authEnabled)
-			go cli.GoRecvRequest(srv.reqChan)
+			go cli.GoRecvRequest(srv.reqChan, nil)
 			go cli.GoSendResponse()
 		}
 	}

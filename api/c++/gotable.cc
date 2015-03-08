@@ -309,6 +309,13 @@ int Client::ping() {
 static inline int replyGet(string* value, int64_t* score, uint32_t* cas, PkgOneOp* reply) {
 	// failed
 	if(reply->kv.errCode < 0) {
+		if(value != NULL) {
+			value->clear();
+		}
+
+		if(score != NULL) {
+			*score = 0;
+		}
 		return reply->kv.errCode;
 	}
 
@@ -317,7 +324,7 @@ static inline int replyGet(string* value, int64_t* score, uint32_t* cas, PkgOneO
 	}
 
 	if(score != NULL) {
-		*score =reply->kv.score;
+		*score = reply->kv.score;
 	}
 
 	if(cas != NULL && *cas > 1) {
@@ -640,7 +647,7 @@ int Client::zScan(uint8_t tableId, const string& rowKey, const string& colKey, i
 	return replyScan(reply, p);
 }
 
-int Client::zScanStart(uint8_t tableId, const string& rowKey, const string& colKey,
+int Client::zScanStart(uint8_t tableId, const string& rowKey,
 			bool asc, bool orderByScore, int num, ScanReply* reply) {
 	string pkg;
 	PkgScanResp p;
@@ -681,7 +688,7 @@ int Client::doDump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 	PkgDumpReq p;
 	p.seq = seq;
 	p.dbId = dbId;
-	p.cmd = CmdScan;
+	p.cmd = CmdDump;
 	if(oneTable) {
 		p.pkgFlag |= FlagOneTable;
 	}
