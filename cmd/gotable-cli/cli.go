@@ -19,6 +19,7 @@ import (
 	"github.com/stevejiang/gotable/api/go/table"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"strconv"
+	"time"
 )
 
 type client struct {
@@ -113,6 +114,22 @@ func (c *client) slaveOf(args []string) error {
 	}
 
 	fmt.Println("OK")
+	return nil
+}
+
+func (c *client) ping() error {
+	// ping
+	start := time.Now()
+
+	err := c.c.Ping()
+	if err != nil {
+		return err
+	}
+
+	elapsed := time.Since(start)
+
+	fmt.Printf("PONG: %.2fms\n", float64(elapsed)/1e6)
+
 	return nil
 }
 

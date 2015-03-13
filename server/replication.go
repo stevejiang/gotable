@@ -144,7 +144,6 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 
 	var err error
 	var resp = &Response{proto.CmdSlaveOf, 0, 0, nil}
-	var en = ctrl.NewEncoder()
 	if slv.mi.Migration {
 		var p ctrl.PkgMigrate
 		p.ClientReq = false
@@ -153,7 +152,7 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 		p.UnitId = slv.mi.UnitId
 
 		resp.Cmd = proto.CmdMigrate
-		resp.Pkg, err = en.Encode(proto.CmdMigrate, 0, 0, &p)
+		resp.Pkg, err = ctrl.Encode(proto.CmdMigrate, 0, 0, &p)
 		if err != nil {
 			return err
 		}
@@ -174,7 +173,7 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 		log.Printf("Connect to master %s with lastSeq %d\n",
 			slv.mi.MasterAddr, p.LastSeq)
 
-		resp.Pkg, err = en.Encode(proto.CmdSlaveOf, 0, 0, &p)
+		resp.Pkg, err = ctrl.Encode(proto.CmdSlaveOf, 0, 0, &p)
 		if err != nil {
 			return err
 		}
@@ -284,6 +283,7 @@ func (ms *master) NewLogComming() {
 		ms.syncChan <- struct{}{}
 	}
 }
+
 func (ms *master) syncStatus(key string, lastSeq uint64) {
 	var p proto.PkgOneOp
 	p.Cmd = proto.CmdSyncSt
@@ -320,7 +320,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 	var it = tbl.NewIterator(false)
 	rwMtx.Unlock()
 
-	defer it.Close()
+	defer it.Destroy()
 
 	// Full sync
 	var one proto.PkgOneOp
@@ -452,7 +452,6 @@ func (ms *master) GoAsync(tbl *store.Table) {
 }
 
 func (ms *master) convertMigPkg(pkg []byte, head *proto.PkgHead) ([]byte, error) {
-	//TODO: check key unit for migration
 	_, err := head.Decode(pkg)
 	if err != nil {
 		return nil, err

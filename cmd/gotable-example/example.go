@@ -266,7 +266,7 @@ func testPing(tc *table.Context) {
 
 	elapsed := time.Since(start)
 
-	fmt.Printf("Ping succeed: %.2f ms\n", float64(elapsed)/1e6)
+	fmt.Printf("Ping succeed: %.2fms\n", float64(elapsed)/1e6)
 }
 
 func testDump(tc *table.Context) {

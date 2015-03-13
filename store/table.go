@@ -61,18 +61,22 @@ type Table struct {
 	authPwd []string
 }
 
-func NewTable(tableDir string) *Table {
+func NewTable(tableDir string, maxOpenFiles int,
+	writeBufSize int, cacheSize int64) *Table {
 	os.MkdirAll(tableDir, os.ModeDir|os.ModePerm)
 
 	tbl := new(Table)
 	tbl.tl = NewTableLock()
 
-	tbl.db = NewTableDB()
-	err := tbl.db.Open(tableDir, true)
+	tbl.db = NewDB()
+	err := tbl.db.Open(tableDir, true, maxOpenFiles, writeBufSize, cacheSize)
 	if err != nil {
 		log.Println("Open DB failed: ", err)
 		return nil
 	}
+
+	log.Printf("Open DB with maxOpenFiles %d, writeBufSize %dMB, cacheSize %dMB\n",
+		maxOpenFiles, writeBufSize/1048576, cacheSize/1048576)
 
 	return tbl
 }
@@ -139,7 +143,7 @@ func (tbl *Table) Auth(req *PkgArgs, au Authorize) []byte {
 	return replyHandle(&in)
 }
 
-func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
+func (tbl *Table) getKV(rOpt *ReadOptions, zop bool, dbId uint8,
 	kv *proto.KeyValue) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
@@ -150,7 +154,7 @@ func (tbl *Table) getKV(srOpt *SnapReadOptions, zop bool, dbId uint8,
 	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
 
 	var err error
-	kv.Value, err = tbl.db.Get(srOpt, rawKey)
+	kv.Value, err = tbl.db.Get(rOpt, rawKey)
 	if err != nil {
 		kv.SetErrCode(table.EcReadFail)
 		return err
@@ -215,7 +219,7 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 	if zop {
 		if wb == nil {
 			wb = tbl.db.NewWriteBatch()
-			defer wb.Close()
+			defer wb.Destroy()
 		}
 
 		var oldVal []byte
@@ -269,7 +273,7 @@ func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValue) error {
 
 	if zop {
 		var wb = tbl.db.NewWriteBatch()
-		defer wb.Close()
+		defer wb.Destroy()
 
 		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
 
@@ -319,7 +323,7 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 	if zop {
 		if wb == nil {
 			wb = tbl.db.NewWriteBatch()
-			defer wb.Close()
+			defer wb.Destroy()
 		}
 
 		var oldVal []byte
@@ -391,7 +395,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 	if zop {
 		if wb == nil {
 			wb = tbl.db.NewWriteBatch()
-			defer wb.Close()
+			defer wb.Destroy()
 		}
 
 		oldVal, err = tbl.db.Get(nil, rawKey)
@@ -485,11 +489,11 @@ func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
 	}
 
 	if in.ErrCode == 0 {
-		var srOpt = tbl.db.NewSnapReadOptions()
-		defer srOpt.Release()
+		var rOpt = tbl.db.NewReadOptions(true)
+		defer rOpt.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.getKV(srOpt, zop, in.DbId, &in.Kvs[i])
+			err = tbl.getKV(rOpt, zop, in.DbId, &in.Kvs[i])
 			if err != nil {
 				log.Printf("getKV failed: %s\n", err)
 				break
@@ -570,7 +574,7 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 	if in.ErrCode == 0 {
 		var wb = tbl.db.NewWriteBatch()
-		defer wb.Close()
+		defer wb.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
@@ -633,7 +637,7 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 	if in.ErrCode == 0 {
 		var wb = tbl.db.NewWriteBatch()
-		defer wb.Close()
+		defer wb.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
@@ -696,7 +700,7 @@ func (tbl *Table) MIncr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bo
 
 	if in.ErrCode == 0 {
 		var wb = tbl.db.NewWriteBatch()
-		defer wb.Close()
+		defer wb.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
@@ -723,8 +727,8 @@ func iterMove(it *Iterator, asc bool) {
 }
 
 func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
-	var it = tbl.db.NewIterator(true)
-	defer it.Close()
+	var it = tbl.db.NewIterator(nil)
+	defer it.Destroy()
 
 	var scanAsc = (in.PkgFlag&proto.FlagAscending != 0)
 	var startSeek = (in.PkgFlag&proto.FlagStart != 0)
@@ -846,8 +850,8 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 	if in.ColSpace == proto.ColSpaceScore2 {
 		scanColSpace = proto.ColSpaceScore2
 	}
-	var it = tbl.db.NewIterator(true)
-	defer it.Close()
+	var it = tbl.db.NewIterator(nil)
+	defer it.Destroy()
 
 	var scanAsc = (in.PkgFlag&proto.FlagAscending != 0)
 	var startSeek = (in.PkgFlag&proto.FlagStart != 0)
@@ -954,8 +958,11 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	}
 
 	var onlyOneTable = (out.PkgFlag&proto.FlagOneTable != 0)
-	var it = tbl.db.NewIterator(false)
-	defer it.Close()
+	var rOpt = tbl.db.NewReadOptions(false)
+	rOpt.SetFillCache(false)
+	defer rOpt.Destroy()
+	var it = tbl.db.NewIterator(rOpt)
+	defer it.Destroy()
 
 	if len(in.RowKey) == 0 {
 		it.Seek(getRawUnitKey(in.StartUnitId, in.DbId, in.TableId))
@@ -1068,10 +1075,14 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 }
 
 func (tbl *Table) DeleteUnit(unitId uint16) error {
+	var rOpt = tbl.db.NewReadOptions(false)
+	rOpt.SetFillCache(false)
+	defer rOpt.Destroy()
+
 	const maxDelNum = 1000000
 	var count, endTimes int
 	for {
-		var it = tbl.db.NewIterator(false)
+		var it = tbl.db.NewIterator(rOpt)
 		it.Seek(getRawUnitKey(unitId, 0, 0))
 		for count = 0; it.Valid() && count < maxDelNum; it.Next() {
 			curUnitId, dbId, tableId := parseRawKeyUnitId(it.Key())
@@ -1083,12 +1094,12 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 			}
 			err := tbl.db.Del(it.Key(), nil)
 			if err != nil {
-				it.Close()
+				it.Destroy()
 				return err
 			}
 			count++
 		}
-		it.Close()
+		it.Destroy()
 
 		if count < maxDelNum {
 			endTimes++
@@ -1105,8 +1116,11 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 }
 
 func (tbl *Table) HasUnitData(unitId uint16) bool {
-	var it = tbl.db.NewIterator(false)
-	defer it.Close()
+	var rOpt = tbl.db.NewReadOptions(false)
+	rOpt.SetFillCache(false)
+	defer rOpt.Destroy()
+	var it = tbl.db.NewIterator(rOpt)
+	defer it.Destroy()
 
 	for it.Seek(getRawUnitKey(unitId, 0, 0)); it.Valid(); it.Next() {
 		curUnitId, dbId, tableId := parseRawKeyUnitId(it.Key())
@@ -1122,7 +1136,14 @@ func (tbl *Table) HasUnitData(unitId uint16) bool {
 }
 
 func (tbl *Table) NewIterator(fillCache bool) *Iterator {
-	return tbl.db.NewIterator(fillCache)
+	if fillCache {
+		return tbl.db.NewIterator(nil)
+	} else {
+		var rOpt = tbl.db.NewReadOptions(false)
+		rOpt.SetFillCache(false)
+		defer rOpt.Destroy()
+		return tbl.db.NewIterator(rOpt)
+	}
 }
 
 func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgOneOp) (uint16, bool) {

@@ -68,7 +68,7 @@ func main() {
 		var cmd = strings.ToLower(fields[0])
 		switch cmd {
 		case "ping":
-			fallthrough
+			checkError(cli.ping())
 		case "get":
 			checkError(cli.get(false, fields[1:]))
 		case "set":
@@ -145,6 +145,7 @@ func writeHelp() {
 	fmt.Println(" zscan <tableId> <rowKey> <score> <colKey> [num]")
 	fmt.Println("                            zscan columns of rowKey in ASC order by score")
 	fmt.Println("slaveof [host]              be slave of master host ip:port")
+	fmt.Println("  ping                      ping server")
 	fmt.Println(" clear                      clear the screen")
 	fmt.Println("  quit                      exit")
 	fmt.Println("")

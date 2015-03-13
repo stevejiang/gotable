@@ -608,7 +608,7 @@ func (c *Context) SlaveOf(host string) error {
 	p.ClientReq = true
 	p.MasterAddr = host
 
-	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return err
@@ -642,7 +642,7 @@ func (c *Context) Migrate(host string, unitId uint16) error {
 	p.MasterAddr = host
 	p.UnitId = unitId
 
-	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return err
@@ -675,7 +675,7 @@ func (c *Context) SlaverStatus(migration bool, unitId uint16) (int, error) {
 	p.Migration = migration
 	p.UnitId = unitId
 
-	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return ctrl.NotSlaver, call.err
@@ -707,7 +707,7 @@ func (c *Context) DelUnit(unitId uint16) error {
 	var p ctrl.PkgDelUnit
 	p.UnitId = unitId
 
-	pkg, err := ctrl.NewEncoder().Encode(call.cmd, c.dbId, call.seq, &p)
+	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
 		c.cli.errCall(call, err)
 		return call.err
@@ -944,7 +944,7 @@ func (call *Call) Reply() (interface{}, error) {
 }
 
 func (call *Call) replyInnerCtrl(p interface{}) (interface{}, error) {
-	err := ctrl.NewDecoder().Decode(call.pkg, nil, p)
+	err := ctrl.Decode(call.pkg, nil, p)
 	if err != nil {
 		call.err = err
 		return nil, call.err

@@ -31,9 +31,9 @@ var (
 	cliNum   = flag.Int("c", 50, "Number of parallel clients")
 	reqNum   = flag.Int("n", 100000, "Total number of requests")
 	dataSize = flag.Int("d", 8, "Data size of SET/MSET value in bytes")
-	testCase = flag.String("t", "set,get", "Comma separated list of tests: "+
-		"set,get,zset,zget,scan,zscan,incr,zincr")
-	rangeNum    = flag.Int("range", 100, "Scan/MGet/Mset range number")
+	testCase = flag.String("t", "set,get", "Test cases: "+
+		"set,get,zset,zget,scan,zscan,incr,zincr,mset,zmset,mget,zmget")
+	rangeNum    = flag.Int("range", 10, "Scan/MGet/Mset range number")
 	histogram   = flag.Int("histogram", 0, "Print histogram of operation timings")
 	verbose     = flag.Int("v", 0, "Verbose mode, if enabled it will slow down the test")
 	poolNum     = flag.Int("pool", 5, "Max number of pool connections")
@@ -63,21 +63,29 @@ func main() {
 	for _, t := range tests {
 		switch t {
 		case "get":
-			benchGet(cliPool)
-		case "set":
-			benchSet(cliPool)
-		case "incr":
-			benchIncr(cliPool)
+			benchGet(cliPool, false)
 		case "zget":
-			benchZGet(cliPool)
+			benchGet(cliPool, true)
+		case "set":
+			benchSet(cliPool, false)
 		case "zset":
-			benchZSet(cliPool)
+			benchSet(cliPool, true)
+		case "incr":
+			benchIncr(cliPool, false)
 		case "zincr":
-			benchZIncr(cliPool)
+			benchIncr(cliPool, true)
 		case "scan":
-			benchScan(cliPool)
+			benchScan(cliPool, false)
 		case "zscan":
-			benchZScan(cliPool)
+			benchScan(cliPool, true)
+		case "mset":
+			benchMSet(cliPool, false)
+		case "zmset":
+			benchMSet(cliPool, true)
+		case "mget":
+			benchMGet(cliPool, false)
+		case "zmget":
+			benchMGet(cliPool, true)
 		default:
 			fmt.Printf("Unknown test case: %s\n", t)
 		}
@@ -165,108 +173,135 @@ func benchmark(cliPool *table.Pool, name string,
 	}
 }
 
-func benchSet(cliPool *table.Pool) {
+func benchSet(cliPool *table.Pool, zop bool) {
 	var op = func(v int, c *table.Context, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
 		copy(value, key)
 
-		set(c, false, rowKey, colKey, value, int64(-v))
+		set(c, zop, rowKey, colKey, value, int64(-v))
 
 		for i := 0; i < len(key) && i < len(value); i++ {
 			value[i] = 'x'
 		}
 	}
 
-	benchmark(cliPool, "SET", op)
+	if zop {
+		benchmark(cliPool, "ZSET", op)
+	} else {
+		benchmark(cliPool, "SET", op)
+	}
 }
 
-func benchZSet(cliPool *table.Pool) {
+func benchGet(cliPool *table.Pool, zop bool) {
 	var op = func(v int, c *table.Context, keyBuf, value []byte) {
 		key := strconv.AppendInt(keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
-		copy(value, key)
 
-		set(c, true, rowKey, colKey, value, int64(-v))
+		get(c, zop, rowKey, colKey)
+	}
 
-		for i := 0; i < len(key) && i < len(value); i++ {
+	if zop {
+		benchmark(cliPool, "ZGET", op)
+	} else {
+		benchmark(cliPool, "GET", op)
+	}
+}
+
+func benchIncr(cliPool *table.Pool, zop bool) {
+	var op = func(v int, c *table.Context, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+		var colKey = key[len(key)-3:]
+
+		incr(c, zop, rowKey, colKey, 1)
+	}
+
+	if zop {
+		benchmark(cliPool, "ZINCR", op)
+	} else {
+		benchmark(cliPool, "INCR", op)
+	}
+}
+
+func benchScan(cliPool *table.Pool, zop bool) {
+	var startScore int64
+	if zop {
+		startScore = -500000000
+	}
+
+	var op = func(v int, c *table.Context, keyBuf, value []byte) {
+		key := strconv.AppendInt(keyBuf, int64(v), 10)
+		var rowKey = key[0 : len(key)-3]
+
+		scan(c, zop, rowKey, nil, startScore, *rangeNum)
+	}
+
+	if zop {
+		benchmark(cliPool, fmt.Sprintf("ZSCAN %d", *rangeNum), op)
+	} else {
+		benchmark(cliPool, fmt.Sprintf("SCAN %d", *rangeNum), op)
+	}
+}
+
+func benchMSet(cliPool *table.Pool, zop bool) {
+	var colKeys = make([][]byte, *rangeNum)
+	for i := 0; i < *rangeNum; i++ {
+		colKeys[i] = []byte(fmt.Sprintf("%03d", i))
+	}
+
+	var op = func(v int, c *table.Context, keyBuf, value []byte) {
+		var rowKey = strconv.AppendInt(keyBuf, int64(v), 10)
+		copy(value, rowKey)
+
+		var ma table.MSetArgs
+		for i := 0; i < len(colKeys); i++ {
+			ma.Add(0, rowKey, colKeys[i], value, int64(v*1000+i), 0)
+		}
+
+		mSet(c, zop, ma)
+
+		for i := 0; i < len(rowKey) && i < len(value); i++ {
 			value[i] = 'x'
 		}
 	}
 
-	benchmark(cliPool, "ZSET", op)
+	if zop {
+		benchmark(cliPool, fmt.Sprintf("ZMSET %d", *rangeNum), op)
+	} else {
+		benchmark(cliPool, fmt.Sprintf("MSET %d", *rangeNum), op)
+	}
 }
 
-func benchGet(cliPool *table.Pool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
-		var rowKey = key[0 : len(key)-3]
-		var colKey = key[len(key)-3:]
-
-		get(c, false, rowKey, colKey)
+func benchMGet(cliPool *table.Pool, zop bool) {
+	var colKeys = make([][]byte, *rangeNum)
+	for i := 0; i < *rangeNum; i++ {
+		colKeys[i] = []byte(fmt.Sprintf("%03d", i))
 	}
 
-	benchmark(cliPool, "GET", op)
-}
-
-func benchZGet(cliPool *table.Pool) {
 	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
-		var rowKey = key[0 : len(key)-3]
-		var colKey = key[len(key)-3:]
+		var rowKey = strconv.AppendInt(keyBuf, int64(v), 10)
+		copy(value, rowKey)
 
-		get(c, true, rowKey, colKey)
+		var ma table.MGetArgs
+		for i := 0; i < len(colKeys); i++ {
+			ma.Add(0, rowKey, colKeys[i], 0)
+		}
+
+		mGet(c, zop, ma)
+
+		for i := 0; i < len(rowKey) && i < len(value); i++ {
+			value[i] = 'x'
+		}
 	}
 
-	benchmark(cliPool, "ZGET", op)
-}
-
-func benchIncr(cliPool *table.Pool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
-		var rowKey = key[0 : len(key)-3]
-		var colKey = key[len(key)-3:]
-
-		incr(c, false, rowKey, colKey, 1)
+	if zop {
+		benchmark(cliPool, fmt.Sprintf("ZMGET %d", *rangeNum), op)
+	} else {
+		benchmark(cliPool, fmt.Sprintf("MGET %d", *rangeNum), op)
 	}
-
-	benchmark(cliPool, "INCR", op)
-}
-
-func benchZIncr(cliPool *table.Pool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
-		var rowKey = key[0 : len(key)-3]
-		var colKey = key[len(key)-3:]
-
-		incr(c, true, rowKey, colKey, 1)
-	}
-
-	benchmark(cliPool, "ZINCR", op)
-}
-
-func benchScan(cliPool *table.Pool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
-		var rowKey = key[0 : len(key)-3]
-
-		scan(c, false, rowKey, nil, 0, *rangeNum)
-	}
-
-	benchmark(cliPool, fmt.Sprintf("SCAN %d", *rangeNum), op)
-}
-
-func benchZScan(cliPool *table.Pool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
-		var rowKey = key[0 : len(key)-3]
-
-		scan(c, true, rowKey, nil, -500000000, *rangeNum)
-	}
-
-	benchmark(cliPool, fmt.Sprintf("ZSCAN %d", *rangeNum), op)
 }
 
 func set(c *table.Context, zop bool, rowKey, colKey, value []byte, score int64) {
@@ -341,6 +376,49 @@ func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num in
 	if *verbose != 0 {
 		for i := 0; i < len(r.Kvs); i++ {
 			var one = r.Kvs[i]
+			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
+				one.RowKey, one.ColKey, one.Score, one.Value)
+		}
+	}
+}
+
+func mSet(c *table.Context, zop bool, ma table.MSetArgs) {
+	var err error
+	if zop {
+		_, err = c.ZmSet(ma)
+	} else {
+		_, err = c.MSet(ma)
+	}
+	if err != nil {
+		fmt.Printf("MSet failed: %s\n", err)
+		os.Exit(1)
+	}
+
+	if *verbose != 0 {
+		for i := 0; i < len(ma); i++ {
+			var one = ma[i]
+			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
+				one.RowKey, one.ColKey, one.Score, one.Value)
+		}
+	}
+}
+
+func mGet(c *table.Context, zop bool, ma table.MGetArgs) {
+	var err error
+	var r []table.GetReply
+	if zop {
+		r, err = c.ZmGet(ma)
+	} else {
+		r, err = c.MGet(ma)
+	}
+	if err != nil {
+		fmt.Printf("MGet failed: %s\n", err)
+		os.Exit(1)
+	}
+
+	if *verbose != 0 {
+		for i := 0; i < len(r); i++ {
+			var one = r[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
 				one.RowKey, one.ColKey, one.Score, one.Value)
 		}

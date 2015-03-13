@@ -19,22 +19,22 @@ package store
 import "C"
 
 import (
-	"fmt"
+	"errors"
 	"unsafe"
 )
 
 type DB struct {
 	db   *C.rocksdb_t
 	opt  *C.rocksdb_options_t
-	rOpt *C.rocksdb_readoptions_t
+	rOpt *C.rocksdb_readoptions_t // fill cache by default
 	wOpt *C.rocksdb_writeoptions_t
 }
 
 type Iterator struct {
-	iter *C.rocksdb_iterator_t
+	it *C.rocksdb_iterator_t
 }
 
-type SnapReadOptions struct {
+type ReadOptions struct {
 	rOpt *C.rocksdb_readoptions_t
 	snap *C.rocksdb_snapshot_t
 	db   *C.rocksdb_t
@@ -44,7 +44,7 @@ type WriteBatch struct {
 	batch *C.rocksdb_writebatch_t
 }
 
-func NewTableDB() *DB {
+func NewDB() *DB {
 	db := new(DB)
 
 	return db
@@ -55,25 +55,27 @@ func (db *DB) Close() {
 		C.rocksdb_close(db.db)
 		db.db = nil
 
-		C.rocksdb_options_destroy(db.opt)
-		C.rocksdb_readoptions_destroy(db.rOpt)
-		C.rocksdb_writeoptions_destroy(db.wOpt)
+		if db.opt != nil {
+			C.rocksdb_options_destroy(db.opt)
+		}
+		if db.rOpt != nil {
+			C.rocksdb_readoptions_destroy(db.rOpt)
+		}
+		if db.wOpt != nil {
+			C.rocksdb_writeoptions_destroy(db.wOpt)
+		}
 	}
 }
 
-func (db *DB) Open(name string, createIfMissing bool) error {
-	var errStr *C.char
-
+func (db *DB) Open(name string, createIfMissing bool, maxOpenFiles int,
+	writeBufSize int, cacheSize int64) error {
 	db.opt = C.rocksdb_options_create()
-	C.rocksdb_options_set_create_if_missing(db.opt,
-		boolToUchar(createIfMissing))
-	C.rocksdb_options_set_write_buffer_size(db.opt, 1024*1024*64)
+	C.rocksdb_options_set_create_if_missing(db.opt, boolToUchar(createIfMissing))
+	C.rocksdb_options_set_write_buffer_size(db.opt, C.size_t(writeBufSize))
+	C.rocksdb_options_set_max_open_files(db.opt, C.int(maxOpenFiles))
 
-	var block_cache = C.rocksdb_cache_create_lru(1024 * 1024 * 64)
-	var block_cache_compressed = C.rocksdb_cache_create_lru(1024 * 1024 * 64)
 	var block_based_table_options = C.rocksdb_block_based_options_create()
-	C.rocksdb_block_based_options_set_block_cache_compressed(
-		block_based_table_options, block_cache_compressed)
+	var block_cache = C.rocksdb_cache_create_lru(C.size_t(cacheSize))
 	C.rocksdb_block_based_options_set_block_cache(
 		block_based_table_options, block_cache)
 	C.rocksdb_options_set_block_based_table_factory(
@@ -82,10 +84,11 @@ func (db *DB) Open(name string, createIfMissing bool) error {
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))
 
+	var errStr *C.char
 	db.db = C.rocksdb_open(db.opt, cname, &errStr)
 	if errStr != nil {
 		defer C.free(unsafe.Pointer(errStr))
-		return fmt.Errorf(C.GoString(errStr))
+		return errors.New(C.GoString(errStr))
 	}
 
 	db.rOpt = C.rocksdb_readoptions_create()
@@ -105,20 +108,21 @@ func (db *DB) Put(rawKey, value []byte, wb *WriteBatch) error {
 
 	if wb == nil {
 		var errStr *C.char
-		C.rocksdb_put(db.db, db.wOpt, ck, C.size_t(len(rawKey)), cv, C.size_t(len(value)),
-			&errStr)
+		C.rocksdb_put(db.db, db.wOpt, ck, C.size_t(len(rawKey)), cv,
+			C.size_t(len(value)), &errStr)
 		if errStr != nil {
 			defer C.free(unsafe.Pointer(errStr))
-			return fmt.Errorf(C.GoString(errStr))
+			return errors.New(C.GoString(errStr))
 		}
 	} else {
-		C.rocksdb_writebatch_put(wb.batch, ck, C.size_t(len(rawKey)), cv, C.size_t(len(value)))
+		C.rocksdb_writebatch_put(wb.batch, ck, C.size_t(len(rawKey)), cv,
+			C.size_t(len(value)))
 	}
 
 	return nil
 }
 
-func (db *DB) Get(opt *SnapReadOptions, rawKey []byte) ([]byte, error) {
+func (db *DB) Get(opt *ReadOptions, rawKey []byte) ([]byte, error) {
 	var ck = (*C.char)(unsafe.Pointer(&rawKey[0]))
 
 	var rOpt = db.rOpt
@@ -133,7 +137,7 @@ func (db *DB) Get(opt *SnapReadOptions, rawKey []byte) ([]byte, error) {
 	var err error
 	if errStr != nil {
 		defer C.free(unsafe.Pointer(errStr))
-		err = fmt.Errorf(C.GoString(errStr))
+		err = errors.New(C.GoString(errStr))
 	}
 
 	if cv != nil {
@@ -152,7 +156,7 @@ func (db *DB) Del(rawKey []byte, wb *WriteBatch) error {
 		C.rocksdb_delete(db.db, db.wOpt, ck, C.size_t(len(rawKey)), &errStr)
 		if errStr != nil {
 			defer C.free(unsafe.Pointer(errStr))
-			return fmt.Errorf(C.GoString(errStr))
+			return errors.New(C.GoString(errStr))
 		}
 	} else {
 		C.rocksdb_writebatch_delete(wb.batch, ck, C.size_t(len(rawKey)))
@@ -161,17 +165,22 @@ func (db *DB) Del(rawKey []byte, wb *WriteBatch) error {
 	return nil
 }
 
-func (db *DB) NewSnapReadOptions() *SnapReadOptions {
-	var opt = new(SnapReadOptions)
+func (db *DB) NewReadOptions(createSnapshot bool) *ReadOptions {
+	var opt = new(ReadOptions)
 	opt.rOpt = C.rocksdb_readoptions_create()
-	opt.snap = C.rocksdb_create_snapshot(db.db)
-	C.rocksdb_readoptions_set_snapshot(opt.rOpt, opt.snap)
-	opt.db = db.db
+	if createSnapshot {
+		opt.snap = C.rocksdb_create_snapshot(db.db)
+		C.rocksdb_readoptions_set_snapshot(opt.rOpt, opt.snap)
+		opt.db = db.db
+	}
 	return opt
 }
 
-// Release snapshot
-func (opt *SnapReadOptions) Release() {
+func (opt *ReadOptions) SetFillCache(fillCache bool) {
+	C.rocksdb_readoptions_set_fill_cache(opt.rOpt, boolToUchar(fillCache))
+}
+
+func (opt *ReadOptions) Destroy() {
 	if opt.rOpt != nil {
 		C.rocksdb_readoptions_destroy(opt.rOpt)
 		opt.rOpt = nil
@@ -180,9 +189,8 @@ func (opt *SnapReadOptions) Release() {
 	if opt.snap != nil {
 		C.rocksdb_release_snapshot(opt.db, opt.snap)
 		opt.snap = nil
+		opt.db = nil
 	}
-
-	opt.db = nil
 }
 
 func (db *DB) NewWriteBatch() *WriteBatch {
@@ -196,56 +204,45 @@ func (db *DB) Commit(wb *WriteBatch) error {
 		C.rocksdb_writebatch_clear(wb.batch)
 		if errStr != nil {
 			defer C.free(unsafe.Pointer(errStr))
-			return fmt.Errorf(C.GoString(errStr))
+			return errors.New(C.GoString(errStr))
 		}
 	}
 
 	return nil
 }
 
-func (wb *WriteBatch) Close() {
+func (wb *WriteBatch) Destroy() {
 	if wb.batch != nil {
 		C.rocksdb_writebatch_destroy(wb.batch)
 		wb.batch = nil
 	}
 }
 
-func (db *DB) NewIterator(fillCache bool) *Iterator {
-	var iter = new(Iterator)
-	var scanOpt = C.rocksdb_readoptions_create()
-	defer C.rocksdb_readoptions_destroy(scanOpt)
-
-	C.rocksdb_readoptions_set_fill_cache(scanOpt, boolToUchar(fillCache))
-	iter.iter = C.rocksdb_create_iterator(db.db, scanOpt)
-
-	return iter
-}
-
-func (db *DB) NewIteratorSnap(opt *SnapReadOptions) *Iterator {
-	var iter = new(Iterator)
-
-	if opt != nil {
-		iter.iter = C.rocksdb_create_iterator(db.db, opt.rOpt)
-	} else {
-		return db.NewIterator(true)
+func (db *DB) NewIterator(opt *ReadOptions) *Iterator {
+	var rOpt = db.rOpt
+	if opt != nil && opt.rOpt != nil {
+		rOpt = opt.rOpt
 	}
 
+	var iter = new(Iterator)
+	iter.it = C.rocksdb_create_iterator(db.db, rOpt)
+
 	return iter
 }
 
-func (iter *Iterator) Close() {
-	if iter.iter != nil {
-		C.rocksdb_iter_destroy(iter.iter)
-		iter.iter = nil
+func (iter *Iterator) Destroy() {
+	if iter.it != nil {
+		C.rocksdb_iter_destroy(iter.it)
+		iter.it = nil
 	}
 }
 
 func (iter *Iterator) SeekToFirst() {
-	C.rocksdb_iter_seek_to_first(iter.iter)
+	C.rocksdb_iter_seek_to_first(iter.it)
 }
 
 func (iter *Iterator) SeekToLast() {
-	C.rocksdb_iter_seek_to_last(iter.iter)
+	C.rocksdb_iter_seek_to_last(iter.it)
 }
 
 func (iter *Iterator) Seek(key []byte) {
@@ -253,39 +250,30 @@ func (iter *Iterator) Seek(key []byte) {
 	if len(key) > 0 {
 		ck = (*C.char)(unsafe.Pointer(&key[0]))
 	}
-	C.rocksdb_iter_seek(iter.iter, ck, C.size_t(len(key)))
+	C.rocksdb_iter_seek(iter.it, ck, C.size_t(len(key)))
 }
 
 func (iter *Iterator) Next() {
-	C.rocksdb_iter_next(iter.iter)
+	C.rocksdb_iter_next(iter.it)
 }
 
 func (iter *Iterator) Prev() {
-	C.rocksdb_iter_prev(iter.iter)
+	C.rocksdb_iter_prev(iter.it)
 }
 
 func (iter *Iterator) Valid() bool {
-	return C.rocksdb_iter_valid(iter.iter) != 0
+	return C.rocksdb_iter_valid(iter.it) != 0
 }
-
-/*
-func (iter *Iterator) Key() (unitId uint16, dbId uint8, key TableKey) {
-	var keyLen C.size_t
-	var ck = C.rocksdb_iter_key(iter.iter, &keyLen)
-	var rawKey = C.GoBytes(unsafe.Pointer(ck), C.int(keyLen))
-	return ParseRawKey(rawKey)
-}
-*/
 
 func (iter *Iterator) Key() []byte {
 	var keyLen C.size_t
-	var ck = C.rocksdb_iter_key(iter.iter, &keyLen)
+	var ck = C.rocksdb_iter_key(iter.it, &keyLen)
 	return C.GoBytes(unsafe.Pointer(ck), C.int(keyLen))
 }
 
 func (iter *Iterator) Value() []byte {
 	var valueLen C.size_t
-	var value = C.rocksdb_iter_value(iter.iter, &valueLen)
+	var value = C.rocksdb_iter_value(iter.it, &valueLen)
 	return C.GoBytes(unsafe.Pointer(value), C.int(valueLen))
 }
 

@@ -27,6 +27,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"syscall"
 )
 
 type Server struct {
@@ -49,6 +50,7 @@ func NewServer(conf *config.Config) *Server {
 	if mc == nil {
 		return nil
 	}
+
 	err := clearSlaverOldData(conf, mc)
 	if err != nil {
 		return nil
@@ -57,7 +59,8 @@ func NewServer(conf *config.Config) *Server {
 	srv := new(Server)
 	srv.conf = conf
 	srv.mc = mc
-	srv.tbl = store.NewTable(tableDir)
+	srv.tbl = store.NewTable(tableDir, getMaxOpenFiles(),
+		conf.Db.WriteBufSize, conf.Db.CacheSize)
 	if srv.tbl == nil {
 		return nil
 	}
@@ -126,6 +129,20 @@ func clearSlaverOldData(conf *config.Config, mc *config.MasterConfig) error {
 	}
 
 	return nil
+}
+
+func getMaxOpenFiles() int {
+	var rlim syscall.Rlimit
+	var err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rlim)
+	if err == nil && rlim.Cur < rlim.Max {
+		rlim.Cur = rlim.Max
+		syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rlim)
+	}
+	var maxOpenFiles = 1024
+	if maxOpenFiles < int(rlim.Cur) {
+		maxOpenFiles = int(rlim.Cur)
+	}
+	return maxOpenFiles
 }
 
 func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
@@ -457,8 +474,7 @@ func (srv *Server) dump(req *Request) {
 }
 
 // Normal master
-func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request,
-	p *ctrl.PkgSlaveOf) {
+func (srv *Server) newNormalMaster(req *Request, p *ctrl.PkgSlaveOf) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
@@ -467,7 +483,7 @@ func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Requ
 	case ClientTypeNormal:
 		if !req.Cli.IsAuth(proto.AdminDbId) {
 			log.Printf("Not authorized!\n")
-			srv.replySlaveOf(en, req, "no priviledge")
+			srv.replySlaveOf(req, "no priviledge")
 			return
 		}
 
@@ -493,8 +509,7 @@ func (srv *Server) newNormalMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Requ
 }
 
 // Migration master
-func (srv *Server) newMigMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request,
-	p *ctrl.PkgMigrate) {
+func (srv *Server) newMigMaster(req *Request, p *ctrl.PkgMigrate) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
@@ -503,7 +518,7 @@ func (srv *Server) newMigMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request
 	case ClientTypeNormal:
 		if !req.Cli.IsAuth(proto.AdminDbId) {
 			log.Printf("Not authorized!\n")
-			srv.replyMigrate(en, req, "no priviledge")
+			srv.replyMigrate(req, "no priviledge")
 			return
 		}
 
@@ -516,45 +531,50 @@ func (srv *Server) newMigMaster(de *ctrl.Decoder, en *ctrl.Encoder, req *Request
 		go ms.GoAsync(srv.tbl)
 	case ClientTypeSlaver:
 		// Get response from master
-		log.Printf("Migration master failed with msg: %s\n", p.ErrMsg)
+		log.Printf("Master failed(%s), close slaver!\n", p.ErrMsg)
+		if req.Slv != nil {
+			req.Slv.Close()
+		} else {
+			req.Cli.Close()
+		}
 	case ClientTypeMaster:
 		log.Printf("Already master, cannot create master again, close now!\n")
 		req.Cli.Close()
 	}
 }
 
-func (srv *Server) replySlaveOf(en *ctrl.Encoder, req *Request, msg string) {
+func (srv *Server) replySlaveOf(req *Request, msg string) {
 	var err error
 	ps := ctrl.PkgSlaveOf{}
 	ps.ErrMsg = msg
 	var resp = Response(req.PkgArgs)
-	resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &ps)
+	resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &ps)
 	if err == nil {
 		srv.sendResp(false, true, req, &resp)
 	}
 }
 
-func (srv *Server) replyMigrate(en *ctrl.Encoder, req *Request, msg string) {
+func (srv *Server) replyMigrate(req *Request, msg string) {
 	var err error
 	ps := ctrl.PkgMigrate{}
 	ps.ErrMsg = msg
 	var resp = Response(req.PkgArgs)
-	resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &ps)
+	resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &ps)
 	if err == nil {
 		srv.sendResp(false, true, req, &resp)
 	}
 }
 
-func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+func (srv *Server) slaveOf(req *Request) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
 
 	var p ctrl.PkgSlaveOf
-	var err = de.Decode(req.Pkg, nil, &p)
+	var err = ctrl.Decode(req.Pkg, nil, &p)
 	if err == nil && !p.ClientReq {
-		srv.newNormalMaster(de, en, req, &p)
+		srv.newNormalMaster(req, &p)
 		return
 	}
 
@@ -562,13 +582,13 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 	case ClientTypeNormal:
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
-			srv.replySlaveOf(en, req, fmt.Sprintf("decode failed(%s)", err))
+			srv.replySlaveOf(req, fmt.Sprintf("decode failed(%s)", err))
 			return
 		}
 
 		if !req.Cli.IsAuth(proto.AdminDbId) {
 			log.Printf("Not authorized!\n")
-			srv.replySlaveOf(en, req, "no priviledge")
+			srv.replySlaveOf(req, "no priviledge")
 			return
 		}
 
@@ -577,14 +597,14 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 		}
 		if p.MasterAddr == p.SlaverAddr {
 			log.Printf("Master and slaver address are the same!\n")
-			srv.replyMigrate(en, req, "master and slaver address are the same")
+			srv.replyMigrate(req, "master and slaver address are the same")
 			return
 		}
 
 		err = srv.mc.SetMaster(p.MasterAddr, p.SlaverAddr)
 		if err != nil {
 			log.Printf("Failed to set config: %s\n", err)
-			srv.replySlaveOf(en, req, fmt.Sprintf("set config failed(%s)", err))
+			srv.replySlaveOf(req, fmt.Sprintf("set config failed(%s)", err))
 			return
 		}
 
@@ -605,7 +625,7 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 			srv.bin.AsMaster()
 		}
 
-		srv.replySlaveOf(en, req, "") // Success
+		srv.replySlaveOf(req, "") // Success
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeMaster:
@@ -619,16 +639,16 @@ func (srv *Server) slaveOf(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 	}
 }
 
-func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+func (srv *Server) migrate(req *Request) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
 	}
 
 	var p ctrl.PkgMigrate
-	var err = de.Decode(req.Pkg, nil, &p)
+	var err = ctrl.Decode(req.Pkg, nil, &p)
 	if err == nil && !p.ClientReq {
-		srv.newMigMaster(de, en, req, &p)
+		srv.newMigMaster(req, &p)
 		return
 	}
 
@@ -636,13 +656,13 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 	case ClientTypeNormal:
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
-			srv.replyMigrate(en, req, fmt.Sprintf("decode failed(%s)", err))
+			srv.replyMigrate(req, fmt.Sprintf("decode failed(%s)", err))
 			return
 		}
 
 		if !req.Cli.IsAuth(proto.AdminDbId) {
 			log.Printf("Not authorized!\n")
-			srv.replyMigrate(en, req, "no priviledge")
+			srv.replyMigrate(req, "no priviledge")
 			return
 		}
 
@@ -651,14 +671,14 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 		}
 		if p.MasterAddr == p.SlaverAddr {
 			log.Printf("Master and slaver address are the same!\n")
-			srv.replyMigrate(en, req, "master and slaver address are the same")
+			srv.replyMigrate(req, "master and slaver address are the same")
 			return
 		}
 
 		err = srv.mc.SetMigration(p.MasterAddr, p.SlaverAddr, p.UnitId)
 		if err != nil {
 			log.Printf("Failed to update migration config: %s\n", err)
-			srv.replyMigrate(en, req,
+			srv.replyMigrate(req,
 				fmt.Sprintf("update migration config failed(%s)", err))
 			return
 		}
@@ -676,7 +696,7 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 				err = srv.mc.SetStatus(ctrl.SlaverNeedClear)
 				if err != nil {
 					log.Printf("Failed to set migration status: %s\n", err)
-					srv.replyMigrate(en, req,
+					srv.replyMigrate(req,
 						fmt.Sprintf("failed to set migration status(%s)", err))
 					return
 				}
@@ -690,7 +710,7 @@ func (srv *Server) migrate(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
 			srv.bin.AsMaster()
 		}
 
-		srv.replyMigrate(en, req, "") // Success
+		srv.replyMigrate(req, "") // Success
 	case ClientTypeSlaver:
 		fallthrough
 	case ClientTypeMaster:
@@ -715,7 +735,7 @@ func (srv *Server) connectToMaster(mc *config.MasterConfig) {
 	srv.rwMtx.Unlock()
 }
 
-func (srv *Server) slaverStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+func (srv *Server) slaverStatus(req *Request) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
@@ -724,7 +744,7 @@ func (srv *Server) slaverStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request
 	switch cliType {
 	case ClientTypeNormal:
 		var p ctrl.PkgSlaverStatus
-		var err = de.Decode(req.Pkg, nil, &p)
+		var err = ctrl.Decode(req.Pkg, nil, &p)
 		p.ErrMsg = ""
 		if err != nil {
 			p.ErrMsg = fmt.Sprintf("decode failed %s", err)
@@ -750,7 +770,7 @@ func (srv *Server) slaverStatus(de *ctrl.Decoder, en *ctrl.Encoder, req *Request
 		}
 
 		var resp = Response(req.PkgArgs)
-		resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &p)
+		resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &p)
 		if err == nil {
 			srv.sendResp(false, true, req, &resp)
 		}
@@ -793,7 +813,7 @@ func (srv *Server) deleteMigrationUnit(unitId uint16, m config.MasterInfo) error
 	return nil
 }
 
-func (srv *Server) deleteUnit(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) {
+func (srv *Server) deleteUnit(req *Request) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
@@ -802,7 +822,7 @@ func (srv *Server) deleteUnit(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) 
 	switch cliType {
 	case ClientTypeNormal:
 		var p ctrl.PkgDelUnit
-		var err = de.Decode(req.Pkg, nil, &p)
+		var err = ctrl.Decode(req.Pkg, nil, &p)
 		p.ErrMsg = ""
 		if err != nil {
 			p.ErrMsg = fmt.Sprintf("decode failed %s", err)
@@ -814,7 +834,7 @@ func (srv *Server) deleteUnit(de *ctrl.Decoder, en *ctrl.Encoder, req *Request) 
 		}
 
 		var resp = Response(req.PkgArgs)
-		resp.Pkg, err = en.Encode(req.Cmd, req.DbId, req.Seq, &p)
+		resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &p)
 		if err == nil {
 			srv.sendResp(false, true, req, &resp)
 		}
@@ -919,21 +939,19 @@ func (srv *Server) processDump() {
 }
 
 func (srv *Server) processCtrl() {
-	var de = ctrl.NewDecoder()
-	var en = ctrl.NewEncoder()
 	for {
 		select {
 		case req := <-srv.reqChan.CtrlReqChan:
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
 				case proto.CmdSlaveOf:
-					srv.slaveOf(de, en, req)
+					srv.slaveOf(req)
 				case proto.CmdMigrate:
-					srv.migrate(de, en, req)
+					srv.migrate(req)
 				case proto.CmdSlaverSt:
-					srv.slaverStatus(de, en, req)
+					srv.slaverStatus(req)
 				case proto.CmdDelUnit:
-					srv.deleteUnit(de, en, req)
+					srv.deleteUnit(req)
 				}
 			}
 		}
@@ -949,30 +967,26 @@ func Run(conf *config.Config) {
 		return
 	}
 
+	go srv.bin.GoWriteBinLog()
+
 	var totalProcNum = runtime.NumCPU() * 2
 	var writeProcNum = totalProcNum / 4
 	var readProcNum = totalProcNum - writeProcNum
 	if writeProcNum < 2 {
 		writeProcNum = 2
 	}
-	var syncProcNum = 1 // Use 1 goroutine to make sure data consistency
-
 	for i := 0; i < readProcNum; i++ {
 		go srv.processRead()
 	}
 	for i := 0; i < writeProcNum; i++ {
 		go srv.processWrite()
 	}
-	for i := 0; i < syncProcNum; i++ {
-		go srv.processSync()
-	}
+	go srv.processSync() // Use 1 goroutine to make sure data consistency
 	go srv.processDump()
 	go srv.processCtrl()
 
-	go srv.bin.GoWriteBinLog()
-
-	log.Printf("Goroutine distribution: read %d, write %d, sync %d, %s\n",
-		readProcNum, writeProcNum, syncProcNum, "dump 1, ctrl 1")
+	log.Printf("Goroutine distribution: read %d, write %d, %s\n",
+		readProcNum, writeProcNum, "sync 1, dump 1, ctrl 1")
 
 	link, err := net.Listen("tcp", conf.Db.Host)
 	if err != nil {

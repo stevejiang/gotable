@@ -59,13 +59,12 @@ const (
 )
 
 const (
-	AdminDbId    = 255
-	HeadSize     = 14
-	MaxUint8     = 255
-	MaxUint16    = 65535
-	MaxRowKeyLen = 255
-	MaxValueLen  = 512 * 1024
-	MaxPkgLen    = 1024 * 1024
+	AdminDbId   = 255
+	HeadSize    = 14
+	MaxUint8    = 255
+	MaxUint16   = 65535
+	MaxValueLen = 1024 * 1024     // 1MB
+	MaxPkgLen   = 1024 * 1024 * 2 // 2MB
 )
 
 type PkgEncoding interface {

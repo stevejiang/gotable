@@ -219,17 +219,26 @@ func (mc *MasterConfig) SetMigration(masterAddr, slaverAddr string, unitId uint1
 }
 
 func (mc *MasterConfig) SetStatus(status int) error {
+	var changed bool
 	mc.mtx.Lock()
 	if mc.m.HasMaster {
 		if status == ctrl.NotSlaver {
 			mc.m.HasMaster = false
+			changed = true
 		}
-		mc.m.Status = status
+		if mc.m.Status != status {
+			mc.m.Status = status
+			changed = true
+		}
 	}
 	var m = mc.m
 	mc.mtx.Unlock()
 
-	return mc.save(&m)
+	if changed {
+		return mc.save(&m)
+	} else {
+		return nil
+	}
 }
 
 func (mc *MasterConfig) Status() int {
