@@ -266,6 +266,10 @@ void testDump(Client* cli) {
 
 int main(int argc, char** argv) {
 	Client* cli = Client::Dial("127.0.0.1", 6688);
+	if(cli == NULL) {
+		printf("Failed to connect to gotable server!\n");
+		return 1;
+	}
 	cli->select(1);
 
 	testGet(cli);

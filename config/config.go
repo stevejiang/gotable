@@ -32,6 +32,7 @@ type database struct {
 	MaxCpuNum    int   `toml:"max_cpu_num"`
 	WriteBufSize int   `toml:"write_buffer_size"`
 	CacheSize    int64 `toml:"cache_size"`
+	Compression  string
 }
 
 type binlog struct {
@@ -71,6 +72,7 @@ host = "0.0.0.0:6688"
 data = "data"
 write_buffer_size = 67108864
 cache_size = 67108864
+compression = "snappy"
 
 [binlog]
 memory_size = 8

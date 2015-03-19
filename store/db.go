@@ -24,10 +24,12 @@ import (
 )
 
 type DB struct {
-	db   *C.rocksdb_t
-	opt  *C.rocksdb_options_t
-	rOpt *C.rocksdb_readoptions_t // fill cache by default
-	wOpt *C.rocksdb_writeoptions_t
+	db    *C.rocksdb_t
+	opt   *C.rocksdb_options_t
+	rOpt  *C.rocksdb_readoptions_t // fill cache by default
+	wOpt  *C.rocksdb_writeoptions_t
+	cache *C.rocksdb_cache_t
+	fp    *C.rocksdb_filterpolicy_t
 }
 
 type Iterator struct {
@@ -64,22 +66,30 @@ func (db *DB) Close() {
 		if db.wOpt != nil {
 			C.rocksdb_writeoptions_destroy(db.wOpt)
 		}
+		if db.cache != nil {
+			C.rocksdb_cache_destroy(db.cache)
+		}
+		if db.fp != nil {
+			C.rocksdb_filterpolicy_destroy(db.fp)
+		}
 	}
 }
 
 func (db *DB) Open(name string, createIfMissing bool, maxOpenFiles int,
-	writeBufSize int, cacheSize int64) error {
+	writeBufSize int, cacheSize int64, compression int) error {
 	db.opt = C.rocksdb_options_create()
 	C.rocksdb_options_set_create_if_missing(db.opt, boolToUchar(createIfMissing))
 	C.rocksdb_options_set_write_buffer_size(db.opt, C.size_t(writeBufSize))
 	C.rocksdb_options_set_max_open_files(db.opt, C.int(maxOpenFiles))
+	C.rocksdb_options_set_compression(db.opt, C.int(compression))
 
-	var block_based_table_options = C.rocksdb_block_based_options_create()
-	var block_cache = C.rocksdb_cache_create_lru(C.size_t(cacheSize))
-	C.rocksdb_block_based_options_set_block_cache(
-		block_based_table_options, block_cache)
-	C.rocksdb_options_set_block_based_table_factory(
-		db.opt, block_based_table_options)
+	var block_options = C.rocksdb_block_based_options_create()
+	db.cache = C.rocksdb_cache_create_lru(C.size_t(cacheSize))
+	C.rocksdb_block_based_options_set_block_cache(block_options, db.cache)
+	db.fp = C.rocksdb_filterpolicy_create_bloom(10)
+	C.rocksdb_block_based_options_set_filter_policy(block_options, db.fp)
+
+	C.rocksdb_options_set_block_based_table_factory(db.opt, block_options)
 
 	cname := C.CString(name)
 	defer C.free(unsafe.Pointer(cname))

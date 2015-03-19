@@ -36,14 +36,16 @@ enum {
 	EcAuthFailed  = -61, // Authorize failed
 	EcNoPrivilege = -62, // No access privilege
 	EcWriteSlaver = -63, // Can NOT write slaver directly
-	EcReadFail    = -64, // Read failed
-	EcWriteFail   = -65, // Write failed
-	EcDecodeFail  = -66, // Decode request PKG failed
-	EcInvDbId     = -67, // Invalid DB ID (cannot be 255)
-	EcInvRowKey   = -68, // RowKey length should be [1 ~ 255]
-	EcInvValue    = -69, // Value length should be [0 ~ 512KB]
-	EcInvScanNum  = -70, // Scan request number out of range
-	EcScanEnded   = -71, // Already scan/dump to end
+	EcSlaverCas   = -64, // Invalid CAS on slaver for GET/MGET (cannot be 0)
+	EcReadFail    = -65, // Read failed
+	EcWriteFail   = -66, // Write failed
+	EcDecodeFail  = -67, // Decode request PKG failed
+	EcInvDbId     = -68, // Invalid DB ID (cannot be 255)
+	EcInvRowKey   = -69, // RowKey length should be [1 ~ 255]
+	EcInvValue    = -70, // Value length should be [0 ~ 1MB]
+	EcInvPkgLen   = -71, // Pkg length should be less than 2MB
+	EcInvScanNum  = -72, // Scan request number out of range
+	EcScanEnded   = -73, // Already scan/dump to end
 };
 
 struct GetArgs {
@@ -59,7 +61,7 @@ struct GetArgs {
 };
 
 struct GetReply {
-	uint8_t errCode; // Error Code Replied
+	int8_t  errCode; // Error Code Replied
 	uint8_t tableId;
 	string  rowKey;
 	string  colKey;
@@ -87,7 +89,7 @@ struct SetArgs {
 };
 
 struct SetReply {
-	uint8_t errCode; // Error Code Replied
+	int8_t  errCode; // Error Code Replied
 	uint8_t tableId;
 	string  rowKey;
 	string  colKey;
@@ -183,6 +185,7 @@ public:
 	void close();
 
 	void select(uint8_t dbId);
+	uint8_t databaseId();
 	int auth(const char* password);
 	int ping();
 

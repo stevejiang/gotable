@@ -37,6 +37,15 @@ const (
 	KeyIncrSyncEnd = "incr-sync-end"
 )
 
+const (
+	kNoCompression     = 0x0
+	kSnappyCompression = 0x1
+	kZlibCompression   = 0x2
+	kBZip2Compression  = 0x3
+	kLZ4Compression    = 0x4
+	kLZ4HCCompression  = 0x5
+)
+
 type PkgArgs struct {
 	Cmd  uint8
 	DbId uint8
@@ -62,21 +71,40 @@ type Table struct {
 }
 
 func NewTable(tableDir string, maxOpenFiles int,
-	writeBufSize int, cacheSize int64) *Table {
+	writeBufSize int, cacheSize int64, compression string) *Table {
 	os.MkdirAll(tableDir, os.ModeDir|os.ModePerm)
+
+	var comp int = kNoCompression
+	switch compression {
+	case "no":
+		comp = kNoCompression
+	case "snappy":
+		comp = kSnappyCompression
+	case "zlib":
+		comp = kZlibCompression
+	case "bzip2":
+		comp = kBZip2Compression
+	case "lz4":
+		comp = kLZ4Compression
+	case "lz4hc":
+		comp = kLZ4HCCompression
+	default:
+		compression = "no"
+	}
 
 	tbl := new(Table)
 	tbl.tl = NewTableLock()
 
 	tbl.db = NewDB()
-	err := tbl.db.Open(tableDir, true, maxOpenFiles, writeBufSize, cacheSize)
+	err := tbl.db.Open(tableDir, true, maxOpenFiles, writeBufSize, cacheSize, comp)
 	if err != nil {
 		log.Println("Open DB failed: ", err)
 		return nil
 	}
 
-	log.Printf("Open DB with maxOpenFiles %d, writeBufSize %dMB, cacheSize %dMB\n",
-		maxOpenFiles, writeBufSize/1048576, cacheSize/1048576)
+	log.Printf("Open DB with maxOpenFiles %d, writeBufSize %dMB, cacheSize %dMB, "+
+		"compression(%s, %d)\n",
+		maxOpenFiles, writeBufSize/1048576, cacheSize/1048576, compression, comp)
 
 	return tbl
 }
@@ -144,8 +172,13 @@ func (tbl *Table) Auth(req *PkgArgs, au Authorize) []byte {
 }
 
 func (tbl *Table) getKV(rOpt *ReadOptions, zop bool, dbId uint8,
-	kv *proto.KeyValue) error {
+	kv *proto.KeyValue, wa *WriteAccess) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
+
+	if kv.Cas > 0 && !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
+		kv.SetErrCode(table.EcSlaverCas)
+		return nil
+	}
 
 	var rawColSpace uint8 = proto.ColSpaceDefault
 	if zop {
@@ -196,6 +229,10 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 		kv.SetErrCode(table.EcInvValue)
 		return nil
 	}
+	if !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
+		kv.SetErrCode(table.EcWriteSlaver)
+		return nil
+	}
 
 	var rawColSpace uint8 = proto.ColSpaceDefault
 	if zop {
@@ -242,9 +279,6 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
 		tbl.db.Put(scoreKey, getRawValue(kv.Value, 0), wb)
 
-		kv.SetValue(nil)
-		kv.SetScore(0)
-
 		err = tbl.db.Commit(wb)
 		if err != nil {
 			kv.SetErrCode(table.EcWriteFail)
@@ -257,6 +291,9 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 			return err
 		}
 	}
+
+	kv.SetValue(nil)
+	kv.SetScore(0)
 
 	return nil
 }
@@ -301,6 +338,15 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 	kv *proto.KeyValue, wa *WriteAccess) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
+	if len(kv.RowKey) == 0 {
+		kv.SetErrCode(table.EcInvRowKey)
+		return nil
+	}
+	if !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
+		kv.SetErrCode(table.EcWriteSlaver)
+		return nil
+	}
+
 	var rawColSpace uint8 = proto.ColSpaceDefault
 	if zop {
 		rawColSpace = proto.ColSpaceScore2
@@ -342,9 +388,6 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 
 		tbl.db.Del(rawKey, wb)
 
-		kv.SetValue(nil)
-		kv.SetScore(0)
-
 		err = tbl.db.Commit(wb)
 		if err != nil {
 			kv.SetErrCode(table.EcWriteFail)
@@ -358,6 +401,9 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 		}
 	}
 
+	kv.SetValue(nil)
+	kv.SetScore(0)
+
 	return nil
 }
 
@@ -367,6 +413,10 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 
 	if len(kv.RowKey) == 0 {
 		kv.SetErrCode(table.EcInvRowKey)
+		return nil
+	}
+	if !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
+		kv.SetErrCode(table.EcWriteSlaver)
 		return nil
 	}
 
@@ -448,7 +498,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 	return nil
 }
 
-func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
+func (tbl *Table) Get(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 	var in proto.PkgOneOp
 	n, err := in.Decode(req.Pkg)
 	if err != nil || n != len(req.Pkg) {
@@ -463,7 +513,7 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 
 	if in.ErrCode == 0 {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
-		err = tbl.getKV(nil, zop, in.DbId, &in.KeyValue)
+		err = tbl.getKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		if err != nil {
 			log.Printf("getKV failed: %s\n", err)
 		}
@@ -475,7 +525,7 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize) []byte {
 	return replyHandle(&in)
 }
 
-func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
+func (tbl *Table) MGet(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 	var in proto.PkgMultiOp
 	n, err := in.Decode(req.Pkg)
 	if err != nil || n != len(req.Pkg) {
@@ -493,7 +543,7 @@ func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
 		defer rOpt.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.getKV(rOpt, zop, in.DbId, &in.Kvs[i])
+			err = tbl.getKV(rOpt, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("getKV failed: %s\n", err)
 				break
@@ -503,7 +553,7 @@ func (tbl *Table) MGet(req *PkgArgs, au Authorize) []byte {
 		in.Kvs = nil
 	}
 
-	return replyHandle(&in)
+	return replyMulti(&in)
 }
 
 func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
@@ -589,7 +639,7 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 		in.Kvs = nil
 	}
 
-	return replyHandle(&in), table.EcOk == in.ErrCode
+	return replyMulti(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) Del(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
@@ -652,7 +702,7 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 		in.Kvs = nil
 	}
 
-	return replyHandle(&in), table.EcOk == in.ErrCode
+	return replyMulti(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) Incr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
@@ -715,7 +765,7 @@ func (tbl *Table) MIncr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bo
 		in.Kvs = nil
 	}
 
-	return replyHandle(&in), table.EcOk == in.ErrCode
+	return replyMulti(&in), table.EcOk == in.ErrCode
 }
 
 func iterMove(it *Iterator, asc bool) {
@@ -759,6 +809,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 	out.PkgFlag |= proto.FlagEnd
 	var first = true
 	var scanNum = int(in.Num)
+	var pkgLen = proto.HeadSize + 1000
 	for i := 0; it.Valid() && i < scanNum+1; iterMove(it, scanAsc) {
 		_, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if dbId != in.DbId || tableId != in.TableId ||
@@ -811,6 +862,12 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 				kv.CtrlFlag |= proto.CtrlScore
 			}
 			out.Kvs = append(out.Kvs, kv)
+
+			pkgLen += kv.Length()
+			if pkgLen > proto.MaxPkgLen/2 {
+				out.PkgFlag &^= proto.FlagEnd
+				break
+			}
 		} else {
 			out.PkgFlag &^= proto.FlagEnd
 			break
@@ -879,6 +936,7 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 	out.PkgFlag |= proto.FlagEnd
 	var first = true
 	var scanNum = int(in.Num)
+	var pkgLen = proto.HeadSize + 1000
 	for i := 0; it.Valid() && i < scanNum+1; iterMove(it, scanAsc) {
 		_, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if dbId != in.DbId || tableId != in.TableId ||
@@ -921,6 +979,12 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 			}
 
 			out.Kvs = append(out.Kvs, kv)
+
+			pkgLen += kv.Length()
+			if pkgLen > proto.MaxPkgLen/2 {
+				out.PkgFlag &^= proto.FlagEnd
+				break
+			}
 		} else {
 			out.PkgFlag &^= proto.FlagEnd
 			break
@@ -984,9 +1048,10 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		}
 	}
 
-	const maxScanNum = 20
+	const maxScanNum = 1000
 	const maxTryUnitNum = 10
 	var triedUnitNum = 0
+	var pkgLen = proto.HeadSize + 1000
 	for it.Valid() && len(out.Kvs) < maxScanNum {
 		unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if unitId < in.StartUnitId || unitId > in.EndUnitId {
@@ -1059,6 +1124,13 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		out.Kvs = append(out.Kvs, kv)
 		out.LastUnitId = unitId
 		out.PkgFlag &^= proto.FlagUnitStart
+
+		pkgLen += kv.Length()
+		if pkgLen > proto.MaxPkgLen/2 {
+			out.PkgFlag &^= proto.FlagEnd
+			break
+		}
+
 		it.Next()
 	}
 
@@ -1320,6 +1392,22 @@ func errorHandle(out proto.PkgResponse, errCode int8) []byte {
 
 func replyHandle(out proto.PkgResponse) []byte {
 	var pkg = make([]byte, out.Length())
+	_, err := out.Encode(pkg)
+	if err != nil {
+		log.Fatalf("Encode failed: %s\n", err)
+	}
+	return pkg
+}
+
+func replyMulti(out *proto.PkgMultiOp) []byte {
+	var pkgLen = out.Length()
+	if pkgLen > proto.MaxPkgLen {
+		out.Kvs = nil
+		out.SetErrCode(table.EcInvPkgLen)
+		pkgLen = out.Length()
+	}
+
+	var pkg = make([]byte, pkgLen)
 	_, err := out.Encode(pkg)
 	if err != nil {
 		log.Fatalf("Encode failed: %s\n", err)

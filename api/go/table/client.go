@@ -45,12 +45,14 @@ var (
 	ErrAuthFailed  = initErr(EcAuthFailed, "authorize failed")
 	ErrNoPrivilege = initErr(EcNoPrivilege, "no access privilege")
 	ErrWriteSlaver = initErr(EcWriteSlaver, "can not write slaver directly")
+	ErrSlaverCas   = initErr(EcSlaverCas, "invalid cas on slaver")
 	ErrReadFail    = initErr(EcReadFail, "read failed")
 	ErrWriteFail   = initErr(EcWriteFail, "write failed")
 	ErrDecodeFail  = initErr(EcDecodeFail, "decode request pkg failed")
 	ErrInvDbId     = initErr(EcInvDbId, "can not use admin db")
 	ErrInvRowKey   = initErr(EcInvRowKey, "row key length out of range")
 	ErrInvValue    = initErr(EcInvValue, "value length out of range")
+	ErrInvPkgLen   = initErr(EcInvPkgLen, "pkg length out of range")
 	ErrInvScanNum  = initErr(EcInvScanNum, "scan request number out of range")
 	ErrScanEnded   = initErr(EcScanEnded, "already scan/dump to end")
 )
@@ -65,14 +67,16 @@ const (
 	EcAuthFailed  = -61 // Authorize failed
 	EcNoPrivilege = -62 // No access privilege
 	EcWriteSlaver = -63 // Can NOT write slaver directly
-	EcReadFail    = -64 // Read failed
-	EcWriteFail   = -65 // Write failed
-	EcDecodeFail  = -66 // Decode request PKG failed
-	EcInvDbId     = -67 // Invalid DB ID (cannot be 255)
-	EcInvRowKey   = -68 // RowKey length should be [1 ~ 255]
-	EcInvValue    = -69 // Value length should be [0 ~ 512KB]
-	EcInvScanNum  = -70 // Scan request number out of range
-	EcScanEnded   = -71 // Already scan/dump to end
+	EcSlaverCas   = -64 // Invalid CAS on slaver for GET/MGET (cannot be 0)
+	EcReadFail    = -65 // Read failed
+	EcWriteFail   = -66 // Write failed
+	EcDecodeFail  = -67 // Decode request PKG failed
+	EcInvDbId     = -68 // Invalid DB ID (cannot be 255)
+	EcInvRowKey   = -69 // RowKey length should be [1 ~ 255]
+	EcInvValue    = -70 // Value length should be [0 ~ 1MB]
+	EcInvPkgLen   = -71 // Pkg length should be less than 2MB
+	EcInvScanNum  = -72 // Scan request number out of range
+	EcScanEnded   = -73 // Already scan/dump to end
 )
 
 var tableErrors = make([]error, 256)

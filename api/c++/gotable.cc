@@ -47,6 +47,10 @@ void Client::select(uint8_t dbId) {
 	this->dbId = dbId;
 }
 
+uint8_t Client::databaseId() {
+	return dbId;
+}
+
 Client* Client::Dial(const char* ip, int port) {
 	int s, rv;
 	char sPort[16];
@@ -69,17 +73,17 @@ Client* Client::Dial(const char* ip, int port) {
 		}
 	}
 
-    for (p = servinfo; p != NULL; p = p->ai_next) {
-        if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
-            continue;
+	for (p = servinfo; p != NULL; p = p->ai_next) {
+		if ((s = socket(p->ai_family,p->ai_socktype,p->ai_protocol)) == -1)
+			continue;
 
-        if (connect(s, p->ai_addr, p->ai_addrlen) == -1) {
-        	::close(s);
-        	continue;
-        }
+		if (connect(s, p->ai_addr, p->ai_addrlen) == -1) {
+			::close(s);
+			continue;
+		}
 
-        return new Client(s);
-    }
+		return new Client(s);
+	}
 
 	return NULL;
 }
@@ -112,6 +116,10 @@ int Client::doOneOp(bool zop, uint8_t cmd, uint8_t tableId,
 	}
 
 	int pkgLen = p.length();
+	if(pkgLen > MaxPkgLen) {
+		return EcInvPkgLen;
+	}
+
 	pkg.resize(pkgLen);
 	int n = p.encode((char*)pkg.data(), pkgLen);
 	if(n < 0) {
@@ -235,6 +243,10 @@ int Client::doMultiOp(bool zop, uint8_t cmd, const vector<T>& args,
 	}
 
 	int pkgLen = p.length();
+	if(pkgLen > MaxPkgLen) {
+		return EcInvPkgLen;
+	}
+
 	pkg.resize(pkgLen);
 	int n = p.encode((char*)pkg.data(), pkgLen);
 	if(n < 0) {
@@ -557,6 +569,10 @@ int Client::doScan(bool zop, uint8_t tableId, const string& rowKey, const string
 	}
 
 	int pkgLen = p.length();
+	if(pkgLen > MaxPkgLen) {
+		return EcInvPkgLen;
+	}
+
 	pkg.resize(pkgLen);
 	int n = p.encode((char*)pkg.data(), pkgLen);
 	if(n < 0) {
@@ -701,6 +717,10 @@ int Client::doDump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 	p.kv.setScore(score);
 
 	int pkgLen = p.length();
+	if(pkgLen > MaxPkgLen) {
+		return EcInvPkgLen;
+	}
+	
 	pkg.resize(pkgLen);
 	int n = p.encode((char*)pkg.data(), pkgLen);
 	if(n < 0) {

@@ -60,7 +60,7 @@ func NewServer(conf *config.Config) *Server {
 	srv.conf = conf
 	srv.mc = mc
 	srv.tbl = store.NewTable(tableDir, getMaxOpenFiles(),
-		conf.Db.WriteBufSize, conf.Db.CacheSize)
+		conf.Db.WriteBufSize, conf.Db.CacheSize, conf.Db.Compression)
 	if srv.tbl == nil {
 		return nil
 	}
@@ -145,7 +145,7 @@ func getMaxOpenFiles() int {
 	return maxOpenFiles
 }
 
-func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
+func (srv *Server) sendResp(write, ok bool, req *Request, pkg []byte) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
@@ -153,8 +153,8 @@ func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
 
 	switch cliType {
 	case ClientTypeNormal:
-		if req.Cli != nil {
-			req.Cli.AddResp(resp)
+		if req.Cli != nil && pkg != nil {
+			req.Cli.AddResp(pkg)
 		}
 		if write && ok {
 			srv.bin.AddRequest(&binlog.Request{0, req.Pkg})
@@ -163,8 +163,8 @@ func (srv *Server) sendResp(write, ok bool, req *Request, resp *Response) {
 		if write && ok {
 			srv.bin.AddRequest(&binlog.Request{req.Seq, req.Pkg})
 		}
-		if req.Cli != nil && !ok && resp.Pkg != nil {
-			req.Cli.AddResp(resp) // Only reply error msg
+		if req.Cli != nil && pkg != nil && !ok {
+			req.Cli.AddResp(pkg) // Only reply error msg
 		}
 	}
 }
@@ -185,9 +185,7 @@ func (srv *Server) replyOneOp(req *Request, errCode int8) {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
 
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = pkg
-	srv.sendResp(false, true, req, &resp)
+	srv.sendResp(false, true, req, pkg)
 }
 
 func (srv *Server) replyMultiOp(req *Request, errCode int8) {
@@ -203,9 +201,7 @@ func (srv *Server) replyMultiOp(req *Request, errCode int8) {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
 
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = pkg
-	srv.sendResp(false, true, req, &resp)
+	srv.sendResp(false, true, req, pkg)
 }
 
 func (srv *Server) auth(req *Request) {
@@ -216,9 +212,8 @@ func (srv *Server) auth(req *Request) {
 
 	switch cliType {
 	case ClientTypeNormal:
-		var resp = Response(req.PkgArgs)
-		resp.Pkg = srv.tbl.Auth(&req.PkgArgs, req.Cli)
-		srv.sendResp(false, true, req, &resp)
+		var pkg = srv.tbl.Auth(&req.PkgArgs, req.Cli)
+		srv.sendResp(false, true, req, pkg)
 	case ClientTypeSlaver:
 		var in proto.PkgOneOp
 		_, err := in.Decode(req.Pkg)
@@ -249,14 +244,18 @@ func (srv *Server) auth(req *Request) {
 }
 
 func (srv *Server) ping(req *Request) {
-	var resp = Response(req.PkgArgs)
-	srv.sendResp(false, true, req, &resp)
+	srv.sendResp(false, true, req, req.Pkg)
 }
 
 func (srv *Server) get(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Get(&req.PkgArgs, req.Cli)
-	srv.sendResp(false, true, req, &resp)
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
+
+	var pkg = srv.tbl.Get(&req.PkgArgs, req.Cli, wa)
+	srv.sendResp(false, true, req, pkg)
 }
 
 func (srv *Server) set(req *Request) {
@@ -273,10 +272,8 @@ func (srv *Server) set(req *Request) {
 		}
 		fallthrough
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.Set(&req.PkgArgs, req.Cli, wa)
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.Set(&req.PkgArgs, req.Cli, wa)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeMaster:
 		log.Printf("Slaver SET failed: [%d, %d]\n", req.DbId, req.Seq)
 	}
@@ -296,10 +293,8 @@ func (srv *Server) del(req *Request) {
 		}
 		fallthrough
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.Del(&req.PkgArgs, req.Cli, wa)
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.Del(&req.PkgArgs, req.Cli, wa)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeMaster:
 		log.Printf("Slaver DEL failed: [%d, %d]\n", req.DbId, req.Seq)
 	}
@@ -319,19 +314,22 @@ func (srv *Server) incr(req *Request) {
 		}
 		fallthrough
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.Incr(&req.PkgArgs, req.Cli, wa)
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.Incr(&req.PkgArgs, req.Cli, wa)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeMaster:
 		log.Printf("Slaver INCR failed: [%d, %d]\n", req.DbId, req.Seq)
 	}
 }
 
 func (srv *Server) mGet(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.MGet(&req.PkgArgs, req.Cli)
-	srv.sendResp(false, true, req, &resp)
+	var cliType uint32 = ClientTypeNormal
+	if req.Cli != nil {
+		cliType = req.Cli.ClientType()
+	}
+	var wa = store.NewWriteAccess(ClientTypeSlaver == cliType, srv.mc)
+
+	var pkg = srv.tbl.MGet(&req.PkgArgs, req.Cli, wa)
+	srv.sendResp(false, true, req, pkg)
 }
 
 func (srv *Server) mSet(req *Request) {
@@ -348,10 +346,8 @@ func (srv *Server) mSet(req *Request) {
 		}
 		fallthrough
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.MSet(&req.PkgArgs, req.Cli, wa)
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.MSet(&req.PkgArgs, req.Cli, wa)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeMaster:
 		log.Printf("Slaver MSET failed: [%d, %d]\n", req.DbId, req.Seq)
 	}
@@ -371,10 +367,8 @@ func (srv *Server) mDel(req *Request) {
 		}
 		fallthrough
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.MDel(&req.PkgArgs, req.Cli, wa)
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.MDel(&req.PkgArgs, req.Cli, wa)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeMaster:
 		log.Printf("Slaver MDEL failed: [%d, %d]\n", req.DbId, req.Seq)
 	}
@@ -394,19 +388,16 @@ func (srv *Server) mIncr(req *Request) {
 		}
 		fallthrough
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.MIncr(&req.PkgArgs, req.Cli, wa)
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.MIncr(&req.PkgArgs, req.Cli, wa)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeMaster:
 		log.Printf("Slaver MINCR failed: [%d, %d]\n", req.DbId, req.Seq)
 	}
 }
 
 func (srv *Server) scan(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Scan(&req.PkgArgs, req.Cli)
-	srv.sendResp(false, true, req, &resp)
+	var pkg = srv.tbl.Scan(&req.PkgArgs, req.Cli)
+	srv.sendResp(false, true, req, pkg)
 }
 
 func (srv *Server) sync(req *Request) {
@@ -416,15 +407,13 @@ func (srv *Server) sync(req *Request) {
 	}
 	switch cliType {
 	case ClientTypeSlaver:
-		var resp = Response(req.PkgArgs)
-		var ok bool
-		resp.Pkg, ok = srv.tbl.Sync(&req.PkgArgs)
-
-		srv.sendResp(true, ok, req, &resp)
+		pkg, ok := srv.tbl.Sync(&req.PkgArgs)
+		srv.sendResp(true, ok, req, pkg)
 	case ClientTypeNormal:
-		log.Printf("User cannot send SYNC command\n")
+		log.Printf("User cannot send SYNC command, close now!\n")
+		req.Cli.Close()
 	case ClientTypeMaster:
-		log.Printf("Slaver SYNC failed: [%d, %d]\n", req.DbId, req.Seq)
+		log.Printf("Slaver SYNC failed: [%d, %d], close now!\n", req.DbId, req.Seq)
 		req.Cli.Close()
 	}
 }
@@ -454,10 +443,9 @@ func (srv *Server) syncStatus(req *Request) {
 
 		if req.Seq > 0 {
 			in.RowKey = nil // Set it as an empty OP
-			var resp = Response(req.PkgArgs)
-			resp.Pkg = make([]byte, in.Length())
-			in.Encode(resp.Pkg)
-			srv.sendResp(true, true, req, &resp)
+			var pkg = make([]byte, in.Length())
+			in.Encode(pkg)
+			srv.sendResp(true, true, req, pkg)
 		}
 	case ClientTypeNormal:
 		log.Printf("User cannot send SYNCST command\n")
@@ -468,9 +456,8 @@ func (srv *Server) syncStatus(req *Request) {
 }
 
 func (srv *Server) dump(req *Request) {
-	var resp = Response(req.PkgArgs)
-	resp.Pkg = srv.tbl.Dump(&req.PkgArgs, req.Cli)
-	srv.sendResp(false, true, req, &resp)
+	var pkg = srv.tbl.Dump(&req.PkgArgs, req.Cli)
+	srv.sendResp(false, true, req, pkg)
 }
 
 // Normal master
@@ -544,24 +531,20 @@ func (srv *Server) newMigMaster(req *Request, p *ctrl.PkgMigrate) {
 }
 
 func (srv *Server) replySlaveOf(req *Request, msg string) {
-	var err error
 	ps := ctrl.PkgSlaveOf{}
 	ps.ErrMsg = msg
-	var resp = Response(req.PkgArgs)
-	resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &ps)
+	pkg, err := ctrl.Encode(req.Cmd, req.DbId, req.Seq, &ps)
 	if err == nil {
-		srv.sendResp(false, true, req, &resp)
+		srv.sendResp(false, true, req, pkg)
 	}
 }
 
 func (srv *Server) replyMigrate(req *Request, msg string) {
-	var err error
 	ps := ctrl.PkgMigrate{}
 	ps.ErrMsg = msg
-	var resp = Response(req.PkgArgs)
-	resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &ps)
+	pkg, err := ctrl.Encode(req.Cmd, req.DbId, req.Seq, &ps)
 	if err == nil {
-		srv.sendResp(false, true, req, &resp)
+		srv.sendResp(false, true, req, pkg)
 	}
 }
 
@@ -769,10 +752,9 @@ func (srv *Server) slaverStatus(req *Request) {
 			}
 		}
 
-		var resp = Response(req.PkgArgs)
-		resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &p)
+		pkg, err := ctrl.Encode(req.Cmd, req.DbId, req.Seq, &p)
 		if err == nil {
-			srv.sendResp(false, true, req, &resp)
+			srv.sendResp(false, true, req, pkg)
 		}
 	case ClientTypeSlaver:
 		fallthrough
@@ -833,10 +815,9 @@ func (srv *Server) deleteUnit(req *Request) {
 			}
 		}
 
-		var resp = Response(req.PkgArgs)
-		resp.Pkg, err = ctrl.Encode(req.Cmd, req.DbId, req.Seq, &p)
+		pkg, err := ctrl.Encode(req.Cmd, req.DbId, req.Seq, &p)
 		if err == nil {
-			srv.sendResp(false, true, req, &resp)
+			srv.sendResp(false, true, req, pkg)
 		}
 	case ClientTypeSlaver:
 		fallthrough
@@ -847,39 +828,23 @@ func (srv *Server) deleteUnit(req *Request) {
 	}
 }
 
-func (srv *Server) doProcess(req *Request) {
-	switch req.Cmd {
-	case proto.CmdAuth:
-		srv.auth(req)
-	case proto.CmdPing:
-		srv.ping(req)
-	case proto.CmdGet:
-		srv.get(req)
-	case proto.CmdSet:
-		srv.set(req)
-	case proto.CmdDel:
-		srv.del(req)
-	case proto.CmdIncr:
-		srv.incr(req)
-	case proto.CmdMGet:
-		srv.mGet(req)
-	case proto.CmdMSet:
-		srv.mSet(req)
-	case proto.CmdMDel:
-		srv.mDel(req)
-	case proto.CmdMIncr:
-		srv.mIncr(req)
-	case proto.CmdScan:
-		srv.scan(req)
-	}
-}
-
 func (srv *Server) processRead() {
 	for {
 		select {
 		case req := <-srv.reqChan.ReadReqChan:
 			if !req.Cli.IsClosed() {
-				srv.doProcess(req)
+				switch req.Cmd {
+				case proto.CmdAuth:
+					srv.auth(req)
+				case proto.CmdPing:
+					srv.ping(req)
+				case proto.CmdGet:
+					srv.get(req)
+				case proto.CmdMGet:
+					srv.mGet(req)
+				case proto.CmdScan:
+					srv.scan(req)
+				}
 			}
 		}
 	}
@@ -890,7 +855,20 @@ func (srv *Server) processWrite() {
 		select {
 		case req := <-srv.reqChan.WriteReqChan:
 			if !req.Cli.IsClosed() {
-				srv.doProcess(req)
+				switch req.Cmd {
+				case proto.CmdSet:
+					srv.set(req)
+				case proto.CmdDel:
+					srv.del(req)
+				case proto.CmdIncr:
+					srv.incr(req)
+				case proto.CmdMSet:
+					srv.mSet(req)
+				case proto.CmdMDel:
+					srv.mDel(req)
+				case proto.CmdMIncr:
+					srv.mIncr(req)
+				}
 			}
 		}
 	}

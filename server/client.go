@@ -19,6 +19,7 @@ import (
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/store"
 	"github.com/stevejiang/gotable/util"
+	"io"
 	"log"
 	"net"
 	"sync"
@@ -37,8 +38,6 @@ type Request struct {
 	store.PkgArgs
 }
 
-type Response store.PkgArgs
-
 type RequestChan struct {
 	WriteReqChan chan *Request
 	ReadReqChan  chan *Request
@@ -50,7 +49,7 @@ type RequestChan struct {
 type Client struct {
 	c           net.Conn
 	r           *bufio.Reader
-	respChan    chan *Response
+	respChan    chan []byte
 	authEnabled bool
 
 	// atomic
@@ -67,18 +66,18 @@ func NewClient(conn net.Conn, authEnabled bool) *Client {
 	var c = new(Client)
 	c.c = conn
 	c.r = bufio.NewReader(conn)
-	c.respChan = make(chan *Response, 64)
+	c.respChan = make(chan []byte, 64)
 	c.authEnabled = authEnabled
 	atomic.StoreUint32(&c.cliType, ClientTypeNormal)
 	return c
 }
 
-func (c *Client) AddResp(resp *Response) {
+func (c *Client) AddResp(pkg []byte) {
 	if !c.IsClosed() {
 		defer func() {
 			recover()
 		}()
-		c.respChan <- resp
+		c.respChan <- pkg
 	}
 }
 
@@ -168,7 +167,9 @@ func (c *Client) GoRecvRequest(ch *RequestChan, slv *slaver) {
 	for {
 		pkg, err := proto.ReadPkg(c.r, headBuf, &head, nil)
 		if err != nil {
-			//log.Printf("ReadPkg failed: %s\n", err)
+			if err != io.EOF && err != io.ErrUnexpectedEOF {
+				log.Printf("ReadPkg failed: %s, close client!\n", err)
+			}
 			c.Close()
 			return
 		}
@@ -233,7 +234,7 @@ func (c *Client) GoSendResponse() {
 	var err error
 	for {
 		select {
-		case resp, ok := <-c.respChan:
+		case pkg, ok := <-c.respChan:
 			if !ok {
 				//log.Printf("channel closed %p\n", c)
 				return
@@ -242,7 +243,7 @@ func (c *Client) GoSendResponse() {
 			if err == nil && !c.IsClosed() {
 				//log.Printf("send(%s): [0x%X\t%d\t%d]\n",
 				//	c.c.RemoteAddr(), resp.Cmd, resp.DbId, resp.Seq)
-				_, err = c.c.Write(resp.Pkg)
+				_, err = c.c.Write(pkg)
 				if err != nil {
 					c.Close()
 				}

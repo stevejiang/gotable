@@ -136,9 +136,14 @@ func (a MIncrArgs) toKV(kv []proto.KeyValue) {
 	}
 }
 
+var emptyBytes = make([]byte, 0)
+
 func copyBytes(in []byte) []byte {
 	if in == nil {
 		return nil
+	}
+	if len(in) == 0 {
+		return emptyBytes
 	}
 	var out = make([]byte, len(in))
 	copy(out, in)

@@ -360,7 +360,13 @@ func (c *Context) goOneOp(zop bool, cmd, tableId uint8,
 		p.PkgFlag |= proto.FlagZop
 	}
 
-	call.pkg = make([]byte, p.Length())
+	var pkgLen = p.Length()
+	if pkgLen > proto.MaxPkgLen {
+		c.cli.errCall(call, ErrInvPkgLen)
+		return call, call.err
+	}
+
+	call.pkg = make([]byte, pkgLen)
 	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
@@ -438,7 +444,13 @@ func (c *Context) goMultiOp(zop bool, args multiArgs, cmd uint8,
 	p.Kvs = make([]proto.KeyValue, args.length())
 	args.toKV(p.Kvs)
 
-	call.pkg = make([]byte, p.Length())
+	var pkgLen = p.Length()
+	if pkgLen > proto.MaxPkgLen {
+		c.cli.errCall(call, ErrInvPkgLen)
+		return call, call.err
+	}
+
+	call.pkg = make([]byte, pkgLen)
 	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
@@ -521,7 +533,13 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 		}
 	}
 
-	call.pkg = make([]byte, p.Length())
+	var pkgLen = p.Length()
+	if pkgLen > proto.MaxPkgLen {
+		c.cli.errCall(call, ErrInvPkgLen)
+		return call, call.err
+	}
+
+	call.pkg = make([]byte, pkgLen)
 	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
@@ -581,7 +599,13 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	p.SetColSpace(colSpace)
 	p.SetScore(score)
 
-	call.pkg = make([]byte, p.Length())
+	var pkgLen = p.Length()
+	if pkgLen > proto.MaxPkgLen {
+		c.cli.errCall(call, ErrInvPkgLen)
+		return call, call.err
+	}
+
+	call.pkg = make([]byte, pkgLen)
 	_, err := p.Encode(call.pkg)
 	if err != nil {
 		c.cli.errCall(call, err)
@@ -596,9 +620,12 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	return call, nil
 }
 
+// Inner control context
+type CtrlContext Context
+
 // Internal control command.
 // SlaveOf can change the replication settings of a slave on the fly.
-func (c *Context) SlaveOf(host string) error {
+func (c *CtrlContext) SlaveOf(host string) error {
 	call := c.cli.newCall(proto.CmdSlaveOf, nil)
 	if call.err != nil {
 		return call.err
@@ -631,7 +658,7 @@ func (c *Context) SlaveOf(host string) error {
 
 // Internal control command.
 // Migrate moves one unit data to another server on the fly.
-func (c *Context) Migrate(host string, unitId uint16) error {
+func (c *CtrlContext) Migrate(host string, unitId uint16) error {
 	call := c.cli.newCall(proto.CmdMigrate, nil)
 	if call.err != nil {
 		return call.err
@@ -665,7 +692,7 @@ func (c *Context) Migrate(host string, unitId uint16) error {
 
 // Internal control command.
 // SlaverStatus reads migration/slaver status.
-func (c *Context) SlaverStatus(migration bool, unitId uint16) (int, error) {
+func (c *CtrlContext) SlaverStatus(migration bool, unitId uint16) (int, error) {
 	call := c.cli.newCall(proto.CmdSlaverSt, nil)
 	if call.err != nil {
 		return ctrl.NotSlaver, call.err
@@ -698,7 +725,7 @@ func (c *Context) SlaverStatus(migration bool, unitId uint16) (int, error) {
 
 // Internal control command.
 // DelUnit deletes one unit data.
-func (c *Context) DelUnit(unitId uint16) error {
+func (c *CtrlContext) DelUnit(unitId uint16) error {
 	call := c.cli.newCall(proto.CmdDelUnit, nil)
 	if call.err != nil {
 		return call.err
@@ -739,13 +766,7 @@ func replyGet(call *Call, err error) ([]byte, int64, uint32, error) {
 	}
 
 	a := r.(GetReply)
-	var value []byte
-	if a.Value != nil {
-		value = make([]byte, len(a.Value))
-		copy(value, a.Value)
-	}
-
-	return value, a.Score, a.Cas, nil
+	return a.Value, a.Score, a.Cas, nil
 }
 
 func replySet(call *Call, err error) error {
@@ -767,14 +788,8 @@ func replyIncr(call *Call, err error) ([]byte, int64, error) {
 		return nil, 0, err
 	}
 
-	var value []byte
 	var a = r.(IncrReply)
-	if a.Value != nil {
-		value = make([]byte, len(a.Value))
-		copy(value, a.Value)
-	}
-
-	return value, a.Score, nil
+	return a.Value, a.Score, nil
 }
 
 func replyScan(call *Call, err error) (ScanReply, error) {
@@ -897,9 +912,13 @@ func (call *Call) Reply() (interface{}, error) {
 		r.ctx = call.ctx.(scanContext)
 		r.End = (p.PkgFlag&proto.FlagEnd != 0)
 		r.Kvs = make([]ScanKV, len(p.Kvs))
+		var rowKey []byte
 		for i := 0; i < len(p.Kvs); i++ {
-			r.Kvs[i] = ScanKV{p.Kvs[i].TableId, copyBytes(p.Kvs[i].RowKey),
-				copyBytes(p.Kvs[i].ColKey), copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
+			if i == 0 {
+				rowKey = copyBytes(p.Kvs[i].RowKey)
+			}
+			r.Kvs[i] = ScanKV{p.Kvs[i].TableId, rowKey, copyBytes(p.Kvs[i].ColKey),
+				copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
 		}
 		return r, nil
 

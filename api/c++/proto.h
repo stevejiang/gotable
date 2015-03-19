@@ -54,10 +54,8 @@ enum {
 	HeadSize     = 14,
 	MaxUint8     = 255,
 	MaxUint16    = 65535,
-	MaxRowKeyLen = 255,
-	MaxColKeyLen = 65500,
-	MaxValueLen  = 512 * 1024,
-	MaxPkgLen    = 1024 * 1024,
+	MaxValueLen  = 1024 * 1024,     // 1MB
+	MaxPkgLen    = 1024 * 1024 * 2, // 2MB
 };
 
 // cCmd+cDbId+ddwSeq+dwPkgLen+sBody

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"github.com/stevejiang/gotable/api/go/table"
 	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/config"
 	"os"
 	"sync"
 	"testing"
@@ -42,11 +43,15 @@ func getTestTable() *Table {
 	f := func() {
 		tblDir := "/tmp/test_gotable/table"
 		os.RemoveAll(tblDir)
-		testTbl = NewTable(tblDir)
+		testTbl = NewTable(tblDir, 1024, 1024*1024, 1024*1024, "snappy")
 	}
 
 	testTblOnce.Do(f)
 	return testTbl
+}
+
+func getTestWA() *WriteAccess {
+	return NewWriteAccess(false, &config.MasterConfig{})
 }
 
 func TestTable(t *testing.T) {
@@ -73,7 +78,7 @@ func TestTableSet(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth, false)
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth, getTestWA())
 	if !ok {
 		t.Fatalf("Table Set failed")
 	}
@@ -87,7 +92,7 @@ func TestTableSet(t *testing.T) {
 	if out.ErrCode != 0 {
 		t.Fatalf("Failed with ErrCode %d", out.ErrCode)
 	}
-	if out.Value != nil || out.Score != 0 || out.Cas != 0 {
+	if len(out.Value) != 0 || out.Score != 0 || out.Cas != 0 {
 		t.Fatalf("Invalid default values")
 	}
 	if out.Seq != in.Seq || out.DbId != in.DbId || out.TableId != in.TableId {
@@ -160,7 +165,7 @@ func TestTableSetCas(t *testing.T) {
 		t.Fatalf("Encode failed: ", err)
 	}
 
-	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth, false)
+	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, testAuth, getTestWA())
 	if ok {
 		t.Fatalf("Table Set should fail")
 	}
@@ -237,7 +242,7 @@ func TestTableGetCas(t *testing.T) {
 	}
 
 	var ok bool
-	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, testAuth, false)
+	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, testAuth, getTestWA())
 	if !ok {
 		t.Fatalf("Table Set failed")
 	}
@@ -253,7 +258,7 @@ func TestTableGetCas(t *testing.T) {
 	}
 
 	// Set again
-	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, testAuth, false)
+	pkg, ok = testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg1}, testAuth, getTestWA())
 	if ok {
 		t.Fatalf("Table Set should fail since cas is cleared")
 	}

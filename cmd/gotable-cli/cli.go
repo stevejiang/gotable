@@ -108,7 +108,8 @@ func (c *client) slaveOf(args []string) error {
 		}
 	}
 
-	err = c.c.SlaveOf(host)
+	var cc = table.CtrlContext(*c.c)
+	err = cc.SlaveOf(host)
 	if err != nil {
 		return err
 	}

@@ -143,7 +143,7 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 	}
 
 	var err error
-	var resp = &Response{proto.CmdSlaveOf, 0, 0, nil}
+	var pkg []byte
 	if slv.mi.Migration {
 		var p ctrl.PkgMigrate
 		p.ClientReq = false
@@ -151,8 +151,7 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 		p.SlaverAddr = slv.mi.SlaverAddr
 		p.UnitId = slv.mi.UnitId
 
-		resp.Cmd = proto.CmdMigrate
-		resp.Pkg, err = ctrl.Encode(proto.CmdMigrate, 0, 0, &p)
+		pkg, err = ctrl.Encode(proto.CmdMigrate, 0, 0, &p)
 		if err != nil {
 			return err
 		}
@@ -173,13 +172,13 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 		log.Printf("Connect to master %s with lastSeq %d\n",
 			slv.mi.MasterAddr, p.LastSeq)
 
-		resp.Pkg, err = ctrl.Encode(proto.CmdSlaveOf, 0, 0, &p)
+		pkg, err = ctrl.Encode(proto.CmdSlaveOf, 0, 0, &p)
 		if err != nil {
 			return err
 		}
 	}
 
-	cli.AddResp(resp)
+	cli.AddResp(pkg)
 	return slv.mc.SetStatus(ctrl.SlaverFullSync)
 }
 
@@ -197,14 +196,13 @@ func (slv *slaver) SendAuthToMaster() error {
 	p.Cmd = proto.CmdAuth
 	p.RowKey = []byte(slv.adminPwd)
 
-	var resp = &Response{proto.CmdAuth, 0, 0, nil}
-	resp.Pkg = make([]byte, p.Length())
-	_, err := p.Encode(resp.Pkg)
+	var pkg = make([]byte, p.Length())
+	_, err := p.Encode(pkg)
 	if err != nil {
 		return err
 	}
 
-	cli.AddResp(resp)
+	cli.AddResp(pkg)
 	return nil
 }
 
@@ -292,7 +290,7 @@ func (ms *master) syncStatus(key string, lastSeq uint64) {
 	p.RowKey = []byte(key)
 	var pkg = make([]byte, p.Length())
 	p.Encode(pkg)
-	ms.cli.AddResp(&Response{p.Cmd, p.DbId, p.Seq, pkg})
+	ms.cli.AddResp(pkg)
 }
 
 func (ms *master) fullSync(tbl *store.Table) uint64 {
@@ -352,7 +350,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 		one.Seq = 0
 		var pkg = make([]byte, one.Length())
 		one.Encode(pkg)
-		ms.cli.AddResp(&Response{one.Cmd, one.DbId, one.Seq, pkg})
+		ms.cli.AddResp(pkg)
 	}
 
 	// Tell slaver full sync finished
@@ -388,7 +386,6 @@ func (ms *master) GoAsync(tbl *store.Table) {
 	var isReady bool
 	var readyCount int64
 	var head proto.PkgHead
-	var lastResp *Response
 	var tick = time.Tick(time.Second)
 	for {
 		select {
@@ -426,8 +423,7 @@ func (ms *master) GoAsync(tbl *store.Table) {
 					continue
 				}
 
-				lastResp = &Response{head.Cmd, head.DbId, head.Seq, pkg}
-				ms.cli.AddResp(lastResp)
+				ms.cli.AddResp(pkg)
 			}
 
 		case <-tick:
@@ -443,10 +439,6 @@ func (ms *master) GoAsync(tbl *store.Table) {
 			}
 
 			ms.NewLogComming()
-			if lastResp != nil {
-				//log.Printf("Sync seq=%d\n", lastResp.Seq)
-				lastResp = nil
-			}
 		}
 	}
 }

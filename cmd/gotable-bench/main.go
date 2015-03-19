@@ -35,8 +35,9 @@ var (
 		"set,get,zset,zget,scan,zscan,incr,zincr,mset,zmset,mget,zmget")
 	rangeNum    = flag.Int("range", 10, "Scan/MGet/Mset range number")
 	histogram   = flag.Int("histogram", 0, "Print histogram of operation timings")
+	pipeline    = flag.Int("P", 0, "Pipeline number")
 	verbose     = flag.Int("v", 0, "Verbose mode, if enabled it will slow down the test")
-	poolNum     = flag.Int("pool", 5, "Max number of pool connections")
+	poolNum     = flag.Int("pool", 10, "Max number of pool connections")
 	maxProcs    = flag.Int("cpu", runtime.NumCPU(), "Go Max Procs")
 	profileport = flag.String("profileport", "", "Profile port, such as 8080")
 )
@@ -92,12 +93,39 @@ func main() {
 	}
 }
 
-func benchmark(cliPool *table.Pool, name string,
-	op func(v int, client *table.Context, keyBuf, value []byte)) {
-	var g sync.WaitGroup
-	g.Add(*cliNum)
+type OpParam struct {
+	c      *table.Context
+	done   chan *table.Call
+	keyBuf []byte
+	value  []byte
+}
 
-	var numChan = make(chan int, 10000)
+func NewOpParam(id int, cliPool *table.Pool) *OpParam {
+	var p = new(OpParam)
+	client, _ := cliPool.Get()
+	p.c = client.NewContext(0)
+
+	if *pipeline > 0 {
+		p.done = make(chan *table.Call, *pipeline)
+	}
+
+	p.keyBuf = make([]byte, 0, 64)
+	p.value = make([]byte, *dataSize)
+	for i := 0; i < *dataSize; i++ {
+		p.value[i] = 'x'
+	}
+
+	return p
+}
+
+func (p *OpParam) ResetValue(cutLen int) {
+	for i := 0; i < cutLen && i < len(p.value); i++ {
+		p.value[i] = 'x'
+	}
+}
+
+func benchmark(cliPool *table.Pool, name string, op func(v int, p *OpParam)) {
+	var numChan = make(chan int, 100000)
 	go func() {
 		var n = *reqNum + 1000
 		for i := 1000; i < n; i++ {
@@ -107,55 +135,17 @@ func benchmark(cliPool *table.Pool, name string,
 		close(numChan)
 	}()
 
-	var recordHist = (*histogram != 0)
-	var hists = make([]Histogram, *cliNum)
+	var hists []Histogram
+	if *histogram != 0 && *pipeline <= 0 {
+		hists = make([]Histogram, *cliNum)
+	}
+
+	var g sync.WaitGroup
+	g.Add(*cliNum)
 
 	start := time.Now()
 	for i := 0; i < *cliNum; i++ {
-		go func(id int) {
-			defer g.Done()
-
-			client, _ := cliPool.Get()
-			ctx := client.NewContext(0)
-
-			hist := &hists[id]
-			hist.Clear()
-
-			// don't share across goroutines
-			var keyBuf = make([]byte, 0, 64)
-			var value = make([]byte, *dataSize)
-			for i := 0; i < *dataSize; i++ {
-				value[i] = 'x'
-			}
-
-			var opStart time.Time
-			for {
-				select {
-				case v, ok := <-numChan:
-					if !ok {
-						client.Close()
-						return
-					}
-
-					if recordHist {
-						opStart = time.Now()
-					}
-
-					op(v, ctx, keyBuf, value)
-
-					if recordHist {
-						d := time.Since(opStart)
-						hist.Add(float64(d / 1000))
-					}
-
-					if v%10000 == 0 && v > 0 {
-						elapsed := time.Since(start)
-						speed := float64(v+1) * 1e9 / float64(elapsed)
-						fmt.Printf("%-10s : %9.1f op/s    \r", name, speed)
-					}
-				}
-			}
-		}(i)
+		go benchClient(i, cliPool, name, &g, numChan, start, hists, op)
 	}
 
 	g.Wait()
@@ -164,7 +154,7 @@ func benchmark(cliPool *table.Pool, name string,
 	speed := float64(*reqNum) * 1e9 / float64(elapsed)
 	fmt.Printf("%-10s : %9.1f op/s\n", name, speed)
 
-	if recordHist {
+	if hists != nil {
 		var hist = hists[0]
 		for i := 1; i < len(hists); i++ {
 			hist.Merge(&hists[i])
@@ -173,18 +163,72 @@ func benchmark(cliPool *table.Pool, name string,
 	}
 }
 
+func benchClient(id int, cliPool *table.Pool, name string, g *sync.WaitGroup,
+	numChan <-chan int, start time.Time, hists []Histogram, op func(v int, p *OpParam)) {
+	defer g.Done()
+
+	var hist *Histogram
+	if hists != nil {
+		hist = &hists[id]
+		hist.Clear()
+	}
+
+	var p = NewOpParam(id, cliPool)
+	var pipeReqNum int
+	var opStart time.Time
+	for {
+		select {
+		case v, ok := <-numChan:
+			if !ok {
+				if p.done != nil {
+					for i := 0; i < pipeReqNum; i++ {
+						<-p.done
+					}
+				}
+				p.c.Client().Close()
+				return
+			}
+
+			if hist != nil {
+				opStart = time.Now()
+			}
+
+			op(v, p) // Handle OP
+
+			if p.done != nil {
+				pipeReqNum++
+				if pipeReqNum >= *pipeline {
+					for i := 0; i < pipeReqNum; i++ {
+						<-p.done
+					}
+					pipeReqNum = 0
+				}
+			}
+
+			if hist != nil {
+				d := time.Since(opStart)
+				hist.Add(float64(d / 1000))
+			}
+
+			if v%10000 == 0 && v > 0 {
+				elapsed := time.Since(start)
+				speed := float64(v+1) * 1e9 / float64(elapsed)
+				fmt.Printf("%-10s : %9.1f op/s    \r", name, speed)
+			}
+		}
+	}
+}
+
 func benchSet(cliPool *table.Pool, zop bool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
+	var op = func(v int, p *OpParam) {
+		key := strconv.AppendInt(p.keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
-		copy(value, key)
+		copy(p.value, key)
 
-		set(c, zop, rowKey, colKey, value, int64(-v))
+		set(p.c, p.done, zop, rowKey, colKey, p.value, int64(-v))
 
-		for i := 0; i < len(key) && i < len(value); i++ {
-			value[i] = 'x'
-		}
+		p.ResetValue(len(key))
 	}
 
 	if zop {
@@ -195,12 +239,12 @@ func benchSet(cliPool *table.Pool, zop bool) {
 }
 
 func benchGet(cliPool *table.Pool, zop bool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
+	var op = func(v int, p *OpParam) {
+		key := strconv.AppendInt(p.keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
 
-		get(c, zop, rowKey, colKey)
+		get(p.c, p.done, zop, rowKey, colKey)
 	}
 
 	if zop {
@@ -211,12 +255,12 @@ func benchGet(cliPool *table.Pool, zop bool) {
 }
 
 func benchIncr(cliPool *table.Pool, zop bool) {
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
+	var op = func(v int, p *OpParam) {
+		key := strconv.AppendInt(p.keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 		var colKey = key[len(key)-3:]
 
-		incr(c, zop, rowKey, colKey, 1)
+		incr(p.c, p.done, zop, rowKey, colKey, 1)
 	}
 
 	if zop {
@@ -232,11 +276,11 @@ func benchScan(cliPool *table.Pool, zop bool) {
 		startScore = -500000000
 	}
 
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		key := strconv.AppendInt(keyBuf, int64(v), 10)
+	var op = func(v int, p *OpParam) {
+		key := strconv.AppendInt(p.keyBuf, int64(v), 10)
 		var rowKey = key[0 : len(key)-3]
 
-		scan(c, zop, rowKey, nil, startScore, *rangeNum)
+		scan(p.c, p.done, zop, rowKey, nil, startScore, *rangeNum)
 	}
 
 	if zop {
@@ -252,20 +296,18 @@ func benchMSet(cliPool *table.Pool, zop bool) {
 		colKeys[i] = []byte(fmt.Sprintf("%03d", i))
 	}
 
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		var rowKey = strconv.AppendInt(keyBuf, int64(v), 10)
-		copy(value, rowKey)
+	var op = func(v int, p *OpParam) {
+		var rowKey = strconv.AppendInt(p.keyBuf, int64(v), 10)
+		copy(p.value, rowKey)
 
 		var ma table.MSetArgs
 		for i := 0; i < len(colKeys); i++ {
-			ma.Add(0, rowKey, colKeys[i], value, int64(v*1000+i), 0)
+			ma.Add(0, rowKey, colKeys[i], p.value, int64(v*1000+i), 0)
 		}
 
-		mSet(c, zop, ma)
+		mSet(p.c, p.done, zop, ma)
 
-		for i := 0; i < len(rowKey) && i < len(value); i++ {
-			value[i] = 'x'
-		}
+		p.ResetValue(len(rowKey))
 	}
 
 	if zop {
@@ -281,20 +323,15 @@ func benchMGet(cliPool *table.Pool, zop bool) {
 		colKeys[i] = []byte(fmt.Sprintf("%03d", i))
 	}
 
-	var op = func(v int, c *table.Context, keyBuf, value []byte) {
-		var rowKey = strconv.AppendInt(keyBuf, int64(v), 10)
-		copy(value, rowKey)
+	var op = func(v int, p *OpParam) {
+		var rowKey = strconv.AppendInt(p.keyBuf, int64(v), 10)
 
 		var ma table.MGetArgs
 		for i := 0; i < len(colKeys); i++ {
 			ma.Add(0, rowKey, colKeys[i], 0)
 		}
 
-		mGet(c, zop, ma)
-
-		for i := 0; i < len(rowKey) && i < len(value); i++ {
-			value[i] = 'x'
-		}
+		mGet(p.c, p.done, zop, ma)
 	}
 
 	if zop {
@@ -304,76 +341,111 @@ func benchMGet(cliPool *table.Pool, zop bool) {
 	}
 }
 
-func set(c *table.Context, zop bool, rowKey, colKey, value []byte, score int64) {
+func set(c *table.Context, done chan *table.Call, zop bool,
+	rowKey, colKey, value []byte, score int64) {
 	var err error
 	if zop {
-		err = c.ZSet(0, rowKey, colKey, value, score, 0)
+		if done == nil {
+			err = c.ZSet(0, rowKey, colKey, value, score, 0)
+		} else {
+			_, err = c.GoZSet(0, rowKey, colKey, value, score, 0, done)
+		}
 	} else {
-		err = c.Set(0, rowKey, colKey, value, score, 0)
+		if done == nil {
+			err = c.Set(0, rowKey, colKey, value, score, 0)
+		} else {
+			_, err = c.GoSet(0, rowKey, colKey, value, score, 0, done)
+		}
 	}
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	if *verbose != 0 {
+	if *verbose != 0 && done == nil {
 		fmt.Printf("rowKey: %2s, colKey: %s\n", string(rowKey), string(colKey))
 	}
 }
 
-func get(c *table.Context, zop bool, rowKey, colKey []byte) {
+func get(c *table.Context, done chan *table.Call, zop bool, rowKey, colKey []byte) {
 	var err error
 	var value []byte
 	var score int64
 	if zop {
-		value, score, _, err = c.ZGet(0, rowKey, colKey, 0)
+		if done == nil {
+			value, score, _, err = c.ZGet(0, rowKey, colKey, 0)
+		} else {
+			_, err = c.GoZGet(0, rowKey, colKey, 0, done)
+		}
 	} else {
-		value, score, _, err = c.Get(0, rowKey, colKey, 0)
+		if done == nil {
+			value, score, _, err = c.Get(0, rowKey, colKey, 0)
+		} else {
+			_, err = c.GoGet(0, rowKey, colKey, 0, done)
+		}
 	}
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	if *verbose != 0 {
+	if *verbose != 0 && done == nil {
 		fmt.Printf("rowKey: %2s, colKey: %s, value: %s, score:%d\n",
 			string(rowKey), string(colKey), string(value), score)
 	}
 }
 
-func incr(c *table.Context, zop bool, rowKey, colKey []byte, score int64) {
+func incr(c *table.Context, done chan *table.Call, zop bool,
+	rowKey, colKey []byte, score int64) {
 	var err error
 	var value []byte
 	if zop {
-		value, score, err = c.ZIncr(0, rowKey, colKey, score, 0)
+		if done == nil {
+			value, score, err = c.ZIncr(0, rowKey, colKey, score, 0)
+		} else {
+			_, err = c.GoZIncr(0, rowKey, colKey, score, 0, done)
+		}
 	} else {
-		value, score, err = c.Incr(0, rowKey, colKey, score, 0)
+		if done == nil {
+			value, score, err = c.Incr(0, rowKey, colKey, score, 0)
+		} else {
+			_, err = c.GoIncr(0, rowKey, colKey, score, 0, done)
+		}
 	}
 	if err != nil {
 		fmt.Printf("Incr failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	if *verbose != 0 {
+	if *verbose != 0 && done == nil {
 		fmt.Printf("rowKey: %2s, colKey: %s, value: %s, score:%d\n",
 			string(rowKey), string(colKey), string(value), score)
 	}
 }
 
-func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num int) {
+func scan(c *table.Context, done chan *table.Call, zop bool,
+	rowKey, colKey []byte, score int64, num int) {
 	var err error
 	var r table.ScanReply
 	if zop {
-		r, err = c.ZScan(0, rowKey, colKey, score, true, true, num)
+		if done == nil {
+			r, err = c.ZScan(0, rowKey, colKey, score, true, true, num)
+		} else {
+			_, err = c.GoZScan(0, rowKey, colKey, score, true, true, num, done)
+		}
 	} else {
-		r, err = c.Scan(0, rowKey, colKey, true, num)
+		if done == nil {
+			r, err = c.Scan(0, rowKey, colKey, true, num)
+		} else {
+			_, err = c.GoScan(0, rowKey, colKey, true, num, done)
+		}
 	}
 	if err != nil {
 		fmt.Printf("Scan failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	if *verbose != 0 {
+	if *verbose != 0 && done == nil {
 		for i := 0; i < len(r.Kvs); i++ {
 			var one = r.Kvs[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
@@ -382,19 +454,27 @@ func scan(c *table.Context, zop bool, rowKey, colKey []byte, score int64, num in
 	}
 }
 
-func mSet(c *table.Context, zop bool, ma table.MSetArgs) {
+func mSet(c *table.Context, done chan *table.Call, zop bool, ma table.MSetArgs) {
 	var err error
 	if zop {
-		_, err = c.ZmSet(ma)
+		if done == nil {
+			_, err = c.ZmSet(ma)
+		} else {
+			_, err = c.GoZmSet(ma, done)
+		}
 	} else {
-		_, err = c.MSet(ma)
+		if done == nil {
+			_, err = c.MSet(ma)
+		} else {
+			_, err = c.GoMSet(ma, done)
+		}
 	}
 	if err != nil {
 		fmt.Printf("MSet failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	if *verbose != 0 {
+	if *verbose != 0 && done == nil {
 		for i := 0; i < len(ma); i++ {
 			var one = ma[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
@@ -403,20 +483,28 @@ func mSet(c *table.Context, zop bool, ma table.MSetArgs) {
 	}
 }
 
-func mGet(c *table.Context, zop bool, ma table.MGetArgs) {
+func mGet(c *table.Context, done chan *table.Call, zop bool, ma table.MGetArgs) {
 	var err error
 	var r []table.GetReply
 	if zop {
-		r, err = c.ZmGet(ma)
+		if done == nil {
+			r, err = c.ZmGet(ma)
+		} else {
+			_, err = c.GoZmGet(ma, done)
+		}
 	} else {
-		r, err = c.MGet(ma)
+		if done == nil {
+			r, err = c.MGet(ma)
+		} else {
+			_, err = c.GoMGet(ma, done)
+		}
 	}
 	if err != nil {
 		fmt.Printf("MGet failed: %s\n", err)
 		os.Exit(1)
 	}
 
-	if *verbose != 0 {
+	if *verbose != 0 && done == nil {
 		for i := 0; i < len(r); i++ {
 			var one = r[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
