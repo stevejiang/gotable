@@ -34,9 +34,7 @@ type Monitor interface {
 }
 
 const (
-	memBinLogSize  = 1024 * 1024 * 8
-	keepBinFileNum = 5
-	MinNormalSeq   = uint64(1000000000000000000)
+	MinNormalSeq = uint64(1000000000000000000)
 )
 
 type fileInfo struct {
@@ -80,34 +78,35 @@ type BinLog struct {
 }
 
 func NewBinLog(dir string, memSize, keepNum int) *BinLog {
-	err := os.MkdirAll(dir, os.ModeDir|os.ModePerm)
-	if err != nil {
-		log.Printf("Invalid binlog directory (%s): %s\n", dir, err)
-		return nil
-	}
-
 	var bin = new(BinLog)
 	bin.dir = dir
-
+	bin.memSize = memSize
+	bin.keepNum = keepNum
 	bin.reqChan = make(chan *Request, 10000)
 
 	bin.hasMaster = false // No master
 	bin.msChanged = true
 	bin.logSeq = MinNormalSeq // Master server seq start from here
-	bin.memlog = make([]byte, memBinLogSize)
+	bin.memlog = make([]byte, memSize)
 
-	err = bin.init()
+	var err = bin.init()
 	if err != nil {
-		log.Printf("Init binlog failed: %s\n", err)
+		log.Printf("BinLog init failed: %s\n", err)
 		return nil
 	}
 
-	log.Printf("Last binlog: fileIdx %d, logSeq %d\n", bin.fileIdx, bin.logSeq)
+	log.Printf("BinLog fileIdx %d, logSeq %d, memSize %dMB, keepNum %d\n",
+		bin.fileIdx, bin.logSeq, memSize/1024/1024, keepNum)
 
 	return bin
 }
 
 func (bin *BinLog) init() error {
+	err := os.MkdirAll(bin.dir, os.ModeDir|os.ModePerm)
+	if err != nil {
+		return err
+	}
+
 	idxs, err := bin.loadAllFilesIndex()
 	if err != nil {
 		return err
@@ -204,9 +203,9 @@ func (bin *BinLog) GetSeqFileName(fileIdx uint64) string {
 }
 
 func (bin *BinLog) GoWriteBinLog() {
-	var lastReq *Request
-	var tick = time.Tick(1e9)
 	var ms []Monitor
+	var last1, last2 *Request
+	var tick = time.Tick(time.Second)
 	for {
 		select {
 		case req, ok := <-bin.reqChan:
@@ -235,16 +234,22 @@ func (bin *BinLog) GoWriteBinLog() {
 			proto.OverWriteSeq(req.Pkg, bin.logSeq)
 			bin.doWrite(req, bin.logSeq)
 
-			lastReq = req
+			last1 = req
 
 		case <-tick:
 			if bin.binBufW != nil {
 				bin.binBufW.Flush()
 			}
-			if lastReq != nil {
-				log.Printf("Write binlog: seq=%d, masterSeq=%d\n",
-					bin.logSeq, lastReq.MasterSeq)
-				lastReq = nil
+
+			if last1 == nil {
+				if last2 != nil {
+					log.Printf("Write binlog: seq=%d, masterSeq=%d\n",
+						bin.logSeq, last2.MasterSeq)
+					last2 = nil
+				}
+			} else {
+				last2 = last1
+				last1 = nil
 			}
 		}
 	}
@@ -311,7 +316,7 @@ func (bin *BinLog) selectDelBinLogFiles() []uint64 {
 		}
 	}
 	var delPivot = -1
-	for i := 0; i < len(bin.infos)-keepBinFileNum; i++ {
+	for i := 0; i < len(bin.infos)-bin.keepNum; i++ {
 		if bin.infos[i].MaxSeq < minSeq {
 			delPivot = i
 		}

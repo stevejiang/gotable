@@ -804,6 +804,16 @@ func replyScan(call *Call, err error) (ScanReply, error) {
 	return r.(ScanReply), nil
 }
 
+// Get call reply. The real reply types are:
+// Auth/Ping/(Z)Set/(Z)Del: nil;
+// (Z)Get: GetReply;
+// (Z)Incr: IncrReply;
+// (Z)MGet: []GetReply;
+// (Z)MSet: []SetReply;
+// (Z)MDel: []DelReply;
+// (Z)MIncr: []IncrReply;
+// (Z)Scan: ScanReply;
+// Dump: DumpReply;
 func (call *Call) Reply() (interface{}, error) {
 	if call.err != nil {
 		return nil, call.err

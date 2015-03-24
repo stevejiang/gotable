@@ -66,6 +66,7 @@ func (slv *slaver) Close() {
 }
 
 func (slv *slaver) DelayClose() {
+	// Any better solution?
 	log.Printf("Delay close slaver %p\n", slv)
 	time.Sleep(time.Second * 2)
 	slv.Close()
@@ -160,7 +161,7 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 		if !valid {
 			slv.mc.SetStatus(ctrl.SlaverNeedClear)
 			// Any better solution?
-			log.Fatalf("Slaver has old data with lastSeq %d, please clear first! "+
+			log.Fatalf("Slaver lastSeq %d is out of sync, please clear old data! "+
 				"(Restart may fix this issue)", lastSeq)
 		}
 
@@ -265,6 +266,13 @@ func (ms *master) doClose() {
 	log.Printf("Master sync to slaver %s is closed\n", ms.slaveAddr)
 }
 
+func (ms *master) doDelayClose() {
+	// Any better solution?
+	log.Printf("Delay close master %p\n", ms)
+	time.Sleep(time.Second * 2)
+	ms.doClose()
+}
+
 func (ms *master) Close() {
 	if !ms.IsClosed() {
 		atomic.AddUint32(&ms.closed, 1)
@@ -298,8 +306,8 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 	if ms.lastSeq > 0 {
 		lastSeq = ms.lastSeq
 		if ms.migration {
-			log.Printf("Already full migrated to %s unitId %d\n",
-				ms.slaveAddr, ms.unitId)
+			log.Printf("Migration lastSeq is not 0, close now!\n")
+			ms.Close()
 		} else {
 			log.Printf("Already full synced to %s\n", ms.slaveAddr)
 		}
@@ -368,7 +376,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 
 func (ms *master) GoAsync(tbl *store.Table) {
 	var lastSeq = ms.fullSync(tbl)
-	if ms.cli.IsClosed() {
+	if ms.IsClosed() || ms.cli.IsClosed() {
 		log.Println("Master-slaver connection is closed, stop sync!")
 		return
 	}
@@ -381,9 +389,20 @@ func (ms *master) GoAsync(tbl *store.Table) {
 			ms.slaveAddr, lastSeq)
 	}
 
+	ms.reader = binlog.NewReader(ms.bin)
+	var err = ms.reader.Init(lastSeq)
+	if err != nil {
+		if err == binlog.ErrLogMissing {
+			ms.syncStatus(store.KeySyncLogMissing, 0)
+			ms.doDelayClose()
+		} else {
+			ms.doClose()
+		}
+		return
+	}
+
 	ms.NewLogComming()
 
-	var isReady bool
 	var readyCount int64
 	var head proto.PkgHead
 	var tick = time.Tick(time.Second)
@@ -395,22 +414,12 @@ func (ms *master) GoAsync(tbl *store.Table) {
 				return
 			}
 
-			if ms.reader == nil {
-				ms.reader = binlog.NewReader(ms.bin, lastSeq)
-			}
-			if ms.reader == nil {
-				ms.doClose()
-				return
-			}
-
 			for !ms.IsClosed() && !ms.cli.IsClosed() {
 				var pkg = ms.reader.Next()
 				if pkg == nil {
 					if readyCount%60 == 0 {
 						ms.syncStatus(store.KeyIncrSyncEnd, 0)
 						readyCount++
-					} else {
-						isReady = true
 					}
 					break
 				}
@@ -432,10 +441,8 @@ func (ms *master) GoAsync(tbl *store.Table) {
 				return
 			}
 
-			if isReady {
+			if readyCount > 0 {
 				readyCount++
-			} else {
-				isReady = false
 			}
 
 			ms.NewLogComming()

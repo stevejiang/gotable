@@ -9,7 +9,6 @@ GoTable is a high performance NoSQL database powered by [Go](http://golang.org/)
 + Data storage is not limited by RAM and friendly with SSD.
 + Transaction support with CAS (compare and switch).
 + Replication.
-+ Cluster (To be done ...)
 
 ## Build and Install
 

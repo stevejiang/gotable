@@ -21,11 +21,10 @@ import (
 )
 
 var (
-	ErrPkgLen     = errors.New("invalid pkg length")
-	ErrHeadBuf    = errors.New("invalid head buffer size")
-	ErrRowKeyLen  = errors.New("invalid row key length")
-	ErrColKeyLen  = errors.New("invalid col key length")
-	ErrKvArrayLen = errors.New("invalid key/value array length")
+	ErrPkgLen     = errors.New("pkg length out of range")
+	ErrRowKeyLen  = errors.New("row key length out of range")
+	ErrColKeyLen  = errors.New("col key length out of range")
+	ErrKvArrayLen = errors.New("key/value array length out of range")
 )
 
 const (
@@ -123,7 +122,7 @@ func OverWriteSeq(pkg []byte, seq uint64) {
 func ReadPkg(r *bufio.Reader, headBuf []byte, head *PkgHead,
 	pkgBuf []byte) (pkg []byte, err error) {
 	if len(headBuf) != HeadSize {
-		return nil, ErrHeadBuf
+		headBuf = make([]byte, HeadSize)
 	}
 
 	if head == nil {

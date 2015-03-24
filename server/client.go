@@ -167,7 +167,7 @@ func (c *Client) GoRecvRequest(ch *RequestChan, slv *slaver) {
 	for {
 		pkg, err := proto.ReadPkg(c.r, headBuf, &head, nil)
 		if err != nil {
-			if err != io.EOF && err != io.ErrUnexpectedEOF {
+			if !c.IsClosed() && err != io.EOF && err != io.ErrUnexpectedEOF {
 				log.Printf("ReadPkg failed: %s, close client!\n", err)
 			}
 			c.Close()

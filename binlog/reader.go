@@ -16,9 +16,15 @@ package binlog
 
 import (
 	"bufio"
+	"errors"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"log"
 	"os"
+)
+
+var (
+	ErrLogMissing = errors.New("log file missing")
+	ErrUnexpected = errors.New("unexpected binlog reader error")
 )
 
 type Reader struct {
@@ -36,18 +42,12 @@ type Reader struct {
 	rseq *readerSeq
 }
 
-func NewReader(bin *BinLog, logSeq uint64) *Reader {
+func NewReader(bin *BinLog) *Reader {
 	var r = new(Reader)
 	r.bin = bin
 	r.curMemPos = -1
 	r.rseq = new(readerSeq)
 	r.headBuf = make([]byte, proto.HeadSize)
-
-	if !r.init(logSeq) {
-		log.Printf("Failed to init with logSeq=%d\n", logSeq)
-		r.Close()
-		return nil
-	}
 
 	return r
 }
@@ -75,7 +75,7 @@ func (r *Reader) Close() {
 	r.rseq = nil
 }
 
-func (r *Reader) init(logSeq uint64) bool {
+func (r *Reader) Init(logSeq uint64) error {
 	var err error
 	r.bin.mtx.Lock()
 
@@ -96,11 +96,18 @@ func (r *Reader) init(logSeq uint64) bool {
 
 	if index < 0 {
 		r.bin.mtx.Unlock() // unlock immediately
+		if logSeq > 0 && logSeq != MinNormalSeq {
+			return ErrLogMissing
+		}
 		r.curMemPos = -1
 		r.curInfo.Idx = 0
-		return true
+		return nil
 	} else {
 		r.curInfo = *r.bin.infos[index]
+		if logSeq > 0 && logSeq != MinNormalSeq && r.curInfo.MinSeq > logSeq {
+			r.bin.mtx.Unlock() // unlock immediately
+			return ErrLogMissing
+		}
 	}
 
 	r.rseq.seq = r.curInfo.MinSeq
@@ -112,7 +119,7 @@ func (r *Reader) init(logSeq uint64) bool {
 		r.curFile, err = os.Open(name)
 		if err != nil {
 			log.Printf("open file failed: (%s) %s\n", name, err)
-			return false
+			return err
 		}
 
 		if r.curBufR == nil {
@@ -125,7 +132,7 @@ func (r *Reader) init(logSeq uint64) bool {
 		for {
 			_, err = proto.ReadPkg(r.curBufR, r.headBuf, &r.head, pkgBuf)
 			if err != nil {
-				return false
+				return err
 			}
 
 			if r.head.Seq >= logSeq {
@@ -137,22 +144,22 @@ func (r *Reader) init(logSeq uint64) bool {
 
 		if r.curInfo.Idx != r.bin.fileIdx {
 			log.Printf("invalid file index (%d, %d)\n", r.curInfo.Idx, r.bin.fileIdx)
-			return false
+			return ErrUnexpected
 		}
 		r.curMemPos = 0
 
 		for {
 			if r.curMemPos+proto.HeadSize > r.bin.usedLen {
-				return false
+				return ErrUnexpected
 			}
 
 			_, err = r.head.Decode(r.bin.memlog[r.curMemPos:])
 			if err != nil {
-				return false
+				return ErrUnexpected
 			}
 
 			if r.curMemPos+int(r.head.PkgLen) > r.bin.usedLen {
-				return false
+				return ErrUnexpected
 			}
 
 			r.curMemPos += int(r.head.PkgLen)
@@ -162,7 +169,7 @@ func (r *Reader) init(logSeq uint64) bool {
 		}
 	}
 
-	return true
+	return nil
 }
 
 func (r *Reader) nextFile() []byte {

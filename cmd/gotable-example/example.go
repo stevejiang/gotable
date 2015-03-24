@@ -45,8 +45,8 @@ func main() {
 	testCas(tc)
 	testBinary(tc)
 	testPing(tc)
+	testAsync(tc)
 	testDump(tc)
-
 }
 
 func testGet(tc *table.Context) {
@@ -64,7 +64,7 @@ func testGet(tc *table.Context) {
 	}
 
 	if value == nil {
-		fmt.Printf("GET result1: Key not exist\n")
+		fmt.Printf("GET result1: Key not exist!\n")
 	} else {
 		fmt.Printf("GET result1: %q\t%d\n", value, score)
 	}
@@ -83,7 +83,7 @@ func testGet(tc *table.Context) {
 	}
 
 	if value == nil {
-		fmt.Printf("GET result2: Key not exist\n")
+		fmt.Printf("GET result2: Key not exist!\n")
 	} else {
 		fmt.Printf("GET result2: %q\t%d\n", value, score)
 	}
@@ -130,6 +130,14 @@ func testMGet(tc *table.Context) {
 	}
 }
 
+func printScanReply(r table.ScanReply) {
+	for i := 0; i < len(r.Kvs); i++ {
+		fmt.Printf("[%q\t%q]\t[%d\t%q]\n",
+			r.Kvs[i].RowKey, r.Kvs[i].ColKey,
+			r.Kvs[i].Score, r.Kvs[i].Value)
+	}
+}
+
 func testScan(tc *table.Context) {
 	r, err := tc.Scan(1, []byte("row1"), []byte("col0"), true, 10)
 	if err != nil {
@@ -138,11 +146,7 @@ func testScan(tc *table.Context) {
 	}
 
 	fmt.Println("SCAN result:")
-	for i := 0; i < len(r.Kvs); i++ {
-		fmt.Printf("[%q\t%q]\t[%d\t%q]\n",
-			r.Kvs[i].RowKey, r.Kvs[i].ColKey,
-			r.Kvs[i].Score, r.Kvs[i].Value)
-	}
+	printScanReply(r)
 	if r.End {
 		fmt.Println("SCAN finished!")
 	} else {
@@ -178,11 +182,7 @@ func testZScan(tc *table.Context) {
 
 	fmt.Println("ZSCAN result:")
 	for {
-		for i := 0; i < len(r.Kvs); i++ {
-			fmt.Printf("[%q\t%q]\t[%d\t%q]\n",
-				r.Kvs[i].RowKey, r.Kvs[i].ColKey,
-				r.Kvs[i].Score, r.Kvs[i].Value)
-		}
+		printScanReply(r)
 
 		if r.End {
 			fmt.Println("ZSCAN finished!")
@@ -258,6 +258,7 @@ func testBinary(tc *table.Context) {
 
 func testPing(tc *table.Context) {
 	start := time.Now()
+
 	err := tc.Ping()
 	if err != nil {
 		fmt.Printf("Ping failed: %s\n", err)
@@ -267,6 +268,43 @@ func testPing(tc *table.Context) {
 	elapsed := time.Since(start)
 
 	fmt.Printf("Ping succeed: %.2fms\n", float64(elapsed)/1e6)
+}
+
+func testAsync(tc *table.Context) {
+	//var done = make(chan *table.Call, 2)
+	c1, err := tc.GoScanStart(1, []byte("row1"), true, 10, nil)
+	if err != nil {
+		fmt.Printf("GoScan failed: %s\n", err)
+		return
+	}
+
+	c2, err := tc.GoZScanStart(1, []byte("row2"), true, true, 10, nil)
+	if err != nil {
+		fmt.Printf("GoZScanStart failed: %s\n", err)
+		return
+	}
+
+	// Wait for reply
+	<-c1.Done
+	<-c2.Done
+
+	r1, err := c1.Reply()
+	if err != nil {
+		fmt.Printf("Reply failed: %s\n", err)
+		return
+	} else {
+		fmt.Println("ASYNC C1 result:")
+		printScanReply(r1.(table.ScanReply))
+	}
+
+	r2, err := c2.Reply()
+	if err != nil {
+		fmt.Printf("Reply failed: %s\n", err)
+		return
+	} else {
+		fmt.Println("ASYNC C2 result:")
+		printScanReply(r2.(table.ScanReply))
+	}
 }
 
 func testDump(tc *table.Context) {

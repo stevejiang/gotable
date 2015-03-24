@@ -33,8 +33,9 @@ const (
 
 // AdminDB keys, reserved tableId=0(no migration on this table)
 const (
-	KeyFullSyncEnd = "full-sync-end"
-	KeyIncrSyncEnd = "incr-sync-end"
+	KeyFullSyncEnd    = "full-sync-end"
+	KeyIncrSyncEnd    = "incr-sync-end"
+	KeySyncLogMissing = "sync-log-missing"
 )
 
 const (

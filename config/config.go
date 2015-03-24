@@ -76,6 +76,6 @@ compression = "snappy"
 
 [binlog]
 memory_size = 8
-keep_num = 5
+keep_num = 50
 
 `
