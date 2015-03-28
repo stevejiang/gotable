@@ -781,8 +781,8 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 	var it = tbl.db.NewIterator(nil)
 	defer it.Destroy()
 
-	var scanAsc = (in.PkgFlag&proto.FlagAscending != 0)
-	var startSeek = (in.PkgFlag&proto.FlagStart != 0)
+	var scanAsc = (in.PkgFlag&proto.FlagScanAsc != 0)
+	var startSeek = (in.PkgFlag&proto.FlagScanKeyStart != 0)
 	var scanColSpace uint8 = proto.ColSpaceScore1
 	if scanAsc {
 		if startSeek {
@@ -807,7 +807,7 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 		}
 	}
 
-	out.PkgFlag |= proto.FlagEnd
+	out.PkgFlag |= proto.FlagScanEnd
 	var first = true
 	var scanNum = int(in.Num)
 	var pkgLen = proto.HeadSize + 1000
@@ -866,11 +866,11 @@ func (tbl *Table) zScanSortScore(in *proto.PkgScanReq, out *proto.PkgScanResp) {
 
 			pkgLen += kv.Length()
 			if pkgLen > proto.MaxPkgLen/2 {
-				out.PkgFlag &^= proto.FlagEnd
+				out.PkgFlag &^= proto.FlagScanEnd
 				break
 			}
 		} else {
-			out.PkgFlag &^= proto.FlagEnd
+			out.PkgFlag &^= proto.FlagScanEnd
 			break
 		}
 		i++
@@ -911,8 +911,8 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 	var it = tbl.db.NewIterator(nil)
 	defer it.Destroy()
 
-	var scanAsc = (in.PkgFlag&proto.FlagAscending != 0)
-	var startSeek = (in.PkgFlag&proto.FlagStart != 0)
+	var scanAsc = (in.PkgFlag&proto.FlagScanAsc != 0)
+	var startSeek = (in.PkgFlag&proto.FlagScanKeyStart != 0)
 	if scanAsc {
 		if startSeek {
 			// Seek to the first element
@@ -934,7 +934,7 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 		}
 	}
 
-	out.PkgFlag |= proto.FlagEnd
+	out.PkgFlag |= proto.FlagScanEnd
 	var first = true
 	var scanNum = int(in.Num)
 	var pkgLen = proto.HeadSize + 1000
@@ -983,11 +983,11 @@ func (tbl *Table) Scan(req *PkgArgs, au Authorize) []byte {
 
 			pkgLen += kv.Length()
 			if pkgLen > proto.MaxPkgLen/2 {
-				out.PkgFlag &^= proto.FlagEnd
+				out.PkgFlag &^= proto.FlagScanEnd
 				break
 			}
 		} else {
-			out.PkgFlag &^= proto.FlagEnd
+			out.PkgFlag &^= proto.FlagScanEnd
 			break
 		}
 		i++
@@ -1012,7 +1012,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	out.EndUnitId = in.EndUnitId
 	out.LastUnitId = in.StartUnitId
 	out.PkgFlag = in.PkgFlag
-	out.PkgFlag &^= (proto.FlagUnitStart | proto.FlagEnd)
+	out.PkgFlag &^= (proto.FlagDumpUnitStart | proto.FlagDumpEnd)
 
 	if in.DbId == proto.AdminDbId {
 		return errorHandle(&out, table.EcInvDbId)
@@ -1022,7 +1022,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		return errorHandle(&out, table.EcNoPrivilege)
 	}
 
-	var onlyOneTable = (out.PkgFlag&proto.FlagOneTable != 0)
+	var onlyOneTable = (out.PkgFlag&proto.FlagDumpTable != 0)
 	var rOpt = tbl.db.NewReadOptions(false)
 	rOpt.SetFillCache(false)
 	defer rOpt.Destroy()
@@ -1056,7 +1056,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	for it.Valid() && len(out.Kvs) < maxScanNum {
 		unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 		if unitId < in.StartUnitId || unitId > in.EndUnitId {
-			out.PkgFlag |= proto.FlagEnd
+			out.PkgFlag |= proto.FlagDumpEnd
 			break
 		}
 
@@ -1084,11 +1084,11 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 			if nextUnitId <= in.EndUnitId {
 				triedUnitNum++
 				out.LastUnitId = nextUnitId
-				out.PkgFlag |= proto.FlagUnitStart
+				out.PkgFlag |= proto.FlagDumpUnitStart
 				SeekToUnit(it, nextUnitId, in.DbId, nextUnitTableId)
 				continue
 			} else {
-				out.PkgFlag |= proto.FlagEnd
+				out.PkgFlag |= proto.FlagDumpEnd
 				break
 			}
 		}
@@ -1124,11 +1124,11 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 
 		out.Kvs = append(out.Kvs, kv)
 		out.LastUnitId = unitId
-		out.PkgFlag &^= proto.FlagUnitStart
+		out.PkgFlag &^= proto.FlagDumpUnitStart
 
 		pkgLen += kv.Length()
 		if pkgLen > proto.MaxPkgLen/2 {
-			out.PkgFlag &^= proto.FlagEnd
+			out.PkgFlag &^= proto.FlagDumpEnd
 			break
 		}
 
@@ -1136,7 +1136,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	}
 
 	if !it.Valid() {
-		out.PkgFlag |= proto.FlagEnd
+		out.PkgFlag |= proto.FlagDumpEnd
 	}
 
 	var pkg = make([]byte, out.Length())

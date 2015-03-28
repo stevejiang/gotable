@@ -137,7 +137,7 @@ fi
 
 if [ "$1" = "-build_rocksdb" ]; then
     # Test whether rocksdb is installed correctly
-	$CXX $CGO_CFLAGS -x c++ - $CGO_LDFLAGS -lpthread -o /dev/null 2>/dev/null <<EOF
+    $CXX $CGO_CFLAGS -x c++ - $CGO_LDFLAGS -lpthread -o $DEPS_DIR/check-rocksdb 2>/dev/null <<EOF
       #include <rocksdb/c.h>
       int main() {rocksdb_options_create();}
 EOF

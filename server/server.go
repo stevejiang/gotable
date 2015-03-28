@@ -1005,12 +1005,12 @@ func Run(conf *config.Config) {
 	log.Printf("Goroutine distribution: read %d, write %d, %s\n",
 		readProcNum, writeProcNum, "sync 1, dump 1, ctrl 1")
 
-	link, err := net.Listen("tcp", conf.Db.Host)
+	link, err := net.Listen(conf.Db.Network, conf.Db.Address)
 	if err != nil {
 		log.Fatalln("Listen failed:", err)
 	}
 
-	log.Printf("GoTable started on %s\n", conf.Db.Host)
+	log.Printf("GoTable started on %s://%s\n", conf.Db.Network, conf.Db.Address)
 
 	// Normal slaver, reconnect to master
 	hasMaster, migration, _ := srv.mc.GetMasterUnit()

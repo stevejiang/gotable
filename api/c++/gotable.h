@@ -93,10 +93,8 @@ struct SetReply {
 	uint8_t tableId;
 	string  rowKey;
 	string  colKey;
-	string  value;
-	int64_t score;
 
-	SetReply() : errCode(0), tableId(0), score(0) {}
+	SetReply() : errCode(0), tableId(0) {}
 };
 
 struct IncrArgs {
@@ -113,9 +111,19 @@ struct IncrArgs {
 			tableId(tableId), rowKey(rowKey), colKey(colKey), score(score), cas(cas) {}
 };
 
+struct IncrReply {
+	int8_t  errCode; // Error Code Replied
+	uint8_t tableId;
+	string  rowKey;
+	string  colKey;
+	string  value;
+	int64_t score;
+
+	IncrReply() : errCode(0), tableId(0), score(0) {}
+};
+
 typedef GetArgs DelArgs;
 typedef SetReply DelReply;
-typedef SetReply IncrReply;
 
 struct ScanKV {
 	uint8_t tableId;

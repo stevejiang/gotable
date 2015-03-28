@@ -42,7 +42,7 @@ void testGet(Client* cli) {
 	}
 
 	if(err > 0) {
-		printf("get result1: Key not exist\n");
+		printf("get result1: Key not exist!\n");
 	} else {
 		printf("get result1: %s\t%lld\n", value.c_str(), (long long)score);
 	}
@@ -61,7 +61,7 @@ void testGet(Client* cli) {
 	}
 
 	if(err > 0) {
-		printf("get result2: Key not exist\n");
+		printf("get result2: Key not exist!\n");
 	} else {
 		printf("get result2: %s\t%lld\n", value.c_str(), (long long)score);
 	}

@@ -39,7 +39,7 @@ func main() {
 	}
 
 	var maxProcs = conf.Db.MaxCpuNum
-	if maxProcs == 0 {
+	if maxProcs <= 0 {
 		maxProcs = runtime.NumCPU()
 	}
 	runtime.GOMAXPROCS(maxProcs)

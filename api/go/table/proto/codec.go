@@ -95,12 +95,18 @@ func (kv *KeyValue) SetValue(value []byte) {
 
 // PkgFlag
 const (
-	FlagZop       = 0x1  // if set, it is a "Z" op
-	FlagAscending = 0x2  // if set, Scan in ASC order, else DESC order
-	FlagStart     = 0x4  // if set, Scan start from MIN/MAX key
-	FlagEnd       = 0x8  // if set, Scan/Dump finished, stop now
-	FlagOneTable  = 0x10 // if set, Dump only one table, else Dump full DB(dbId)
-	FlagUnitStart = 0x20 // if set, Dump start from new UnitId, else from pivot record
+	// Common flags
+	FlagZop = 0x1 // if set, it is a "Z" op
+
+	// (Z)Scan flags
+	FlagScanAsc      = 0x4  // if set, Scan in ASC order, else DESC order
+	FlagScanKeyStart = 0x8  // if set, Scan start from MIN/MAX key
+	FlagScanEnd      = 0x10 // if set, Scan finished, stop now
+
+	// Dump flags
+	FlagDumpTable     = 0x4  // if set, Dump only one table, else Dump current DB(dbId)
+	FlagDumpUnitStart = 0x8  // if set, Dump start from new UnitId, else from pivot record
+	FlagDumpEnd       = 0x10 // if set, Dump finished, stop now
 )
 
 // Get, Set, Del, GetSet, GetDel, ZGet, ZSet, Sync

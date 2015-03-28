@@ -102,13 +102,13 @@ int Client::doOneOp(bool zop, uint8_t cmd, uint8_t tableId,
 	p.seq = seq;
 	p.dbId = dbId;
 	p.cmd = cmd;
-	p.kv.tableId = tableId;
-	p.kv.rowKey = rowKey;
-	p.kv.colKey = colKey;
+	p.tableId = tableId;
+	p.rowKey = rowKey;
+	p.colKey = colKey;
 
-	p.kv.setCas(cas);
-	p.kv.setScore(score);
-	p.kv.setValue(value);
+	p.setCas(cas);
+	p.setScore(score);
+	p.setValue(value);
 
 	// ZGet, ZSet, ZDel, ZIncr
 	if(zop) {
@@ -193,6 +193,13 @@ static inline void copyReply(GetReply& r, const KeyValue& kv) {
 }
 
 static inline void copyReply(SetReply& r, const KeyValue& kv) {
+	r.errCode = kv.errCode;
+	r.tableId = kv.tableId;
+	r.rowKey.assign(kv.rowKey.data(), kv.rowKey.size());
+	r.colKey.assign(kv.colKey.data(), kv.colKey.size());
+}
+
+static inline void copyReply(IncrReply& r, const KeyValue& kv) {
 	r.errCode = kv.errCode;
 	r.tableId = kv.tableId;
 	r.rowKey.assign(kv.rowKey.data(), kv.rowKey.size());
@@ -297,14 +304,14 @@ int Client::auth(const char* password) {
 	if(err < 0) {
 		return err;
 	}
-	if(reply.kv.errCode == 0) {
+	if(reply.errCode == 0) {
 		if(reply.dbId == AdminDbId) {
 			authAdmin = true;
 		} else {
 			setAuth.insert(reply.dbId);
 		}
 	}
-	return reply.kv.errCode;
+	return reply.errCode;
 }
 
 int Client::ping() {
@@ -315,12 +322,12 @@ int Client::ping() {
 	if(err < 0) {
 		return err;
 	}
-	return reply.kv.errCode;
+	return reply.errCode;
 }
 
 static inline int replyGet(string* value, int64_t* score, uint32_t* cas, PkgOneOp* reply) {
 	// failed
-	if(reply->kv.errCode < 0) {
+	if(reply->errCode < 0) {
 		if(value != NULL) {
 			value->clear();
 		}
@@ -328,22 +335,22 @@ static inline int replyGet(string* value, int64_t* score, uint32_t* cas, PkgOneO
 		if(score != NULL) {
 			*score = 0;
 		}
-		return reply->kv.errCode;
+		return reply->errCode;
 	}
 
 	if(value != NULL) {
-		value->assign(reply->kv.value.data(), reply->kv.value.size());
+		value->assign(reply->value.data(), reply->value.size());
 	}
 
 	if(score != NULL) {
-		*score = reply->kv.score;
+		*score = reply->score;
 	}
 
 	if(cas != NULL && *cas > 1) {
-		*cas = reply->kv.cas;
+		*cas = reply->cas;
 	}
 
-	return reply->kv.errCode;
+	return reply->errCode;
 }
 
 int Client::get(uint8_t tableId, const string& rowKey, const string& colKey,
@@ -381,7 +388,7 @@ int Client::set(uint8_t tableId, const string& rowKey, const string& colKey,
 	if(err < 0) {
 		return err;
 	}
-	return reply.kv.errCode;
+	return reply.errCode;
 }
 
 int Client::zSet(uint8_t tableId, const string& rowKey, const string& colKey,
@@ -393,7 +400,7 @@ int Client::zSet(uint8_t tableId, const string& rowKey, const string& colKey,
 	if(err < 0) {
 		return err;
 	}
-	return reply.kv.errCode;
+	return reply.errCode;
 }
 
 int Client::del(uint8_t tableId, const string& rowKey, const string& colKey, uint32_t cas) {
@@ -404,7 +411,7 @@ int Client::del(uint8_t tableId, const string& rowKey, const string& colKey, uin
 	if(err < 0) {
 		return err;
 	}
-	return reply.kv.errCode;
+	return reply.errCode;
 }
 
 int Client::zDel(uint8_t tableId, const string& rowKey, const string& colKey, uint32_t cas) {
@@ -415,7 +422,7 @@ int Client::zDel(uint8_t tableId, const string& rowKey, const string& colKey, ui
 	if(err < 0) {
 		return err;
 	}
-	return reply.kv.errCode;
+	return reply.errCode;
 }
 
 int Client::incr(uint8_t tableId, const string& rowKey, const string& colKey,
@@ -547,24 +554,24 @@ int Client::doScan(bool zop, uint8_t tableId, const string& rowKey, const string
 	p.dbId = dbId;
 	p.cmd = CmdScan;
 	if(asc) {
-		p.pkgFlag |= FlagAscending;
+		p.pkgFlag |= FlagScanAsc;
 	}
 	if(start) {
-		p.pkgFlag |= FlagStart;
+		p.pkgFlag |= FlagScanKeyStart;
 	}
 	p.num = uint16_t(num);
-	p.kv.tableId = tableId;
-	p.kv.rowKey = rowKey;
-	p.kv.colKey = colKey;
+	p.tableId = tableId;
+	p.rowKey = rowKey;
+	p.colKey = colKey;
 
 	// ZScan
 	if(zop) {
 		p.pkgFlag |= FlagZop;
-		p.kv.setScore(score);
+		p.setScore(score);
 		if(orderByScore) {
-			p.kv.setColSpace(ColSpaceScore1);
+			p.setColSpace(ColSpaceScore1);
 		} else {
-			p.kv.setColSpace(ColSpaceScore2);
+			p.setColSpace(ColSpaceScore2);
 		}
 	}
 
@@ -618,7 +625,7 @@ int Client::doScan(bool zop, uint8_t tableId, const string& rowKey, const string
 
 static inline int replyScan(ScanReply* reply, const PkgScanResp& p) {
 	if(p.errCode == 0 && reply != NULL) {
-		reply->end = (p.pkgFlag&FlagEnd) != 0;
+		reply->end = (p.pkgFlag&FlagScanEnd) != 0;
 		reply->kvs.resize(p.kvs.size());
 		for(unsigned i = 0; i < p.kvs.size(); i++) {
 			copyReply(reply->kvs[i], p.kvs[i]);
@@ -706,15 +713,15 @@ int Client::doDump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 	p.dbId = dbId;
 	p.cmd = CmdDump;
 	if(oneTable) {
-		p.pkgFlag |= FlagOneTable;
+		p.pkgFlag |= FlagDumpTable;
 	}
 	p.startUnitId = startUnitId;
 	p.endUnitId = endUnitId;
-	p.kv.tableId = tableId;
-	p.kv.rowKey = rowKey;
-	p.kv.colKey = colKey;
-	p.kv.setColSpace(colSpace);
-	p.kv.setScore(score);
+	p.tableId = tableId;
+	p.rowKey = rowKey;
+	p.colKey = colKey;
+	p.setColSpace(colSpace);
+	p.setScore(score);
 
 	int pkgLen = p.length();
 	if(pkgLen > MaxPkgLen) {
@@ -761,7 +768,7 @@ int Client::doDump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 	reply->ctx.startUnitId = startUnitId;
 	reply->ctx.endUnitId = endUnitId;
 	reply->ctx.lastUnitId = resp->lastUnitId;
-	reply->ctx.unitStart = (resp->pkgFlag&FlagUnitStart) != 0;
+	reply->ctx.unitStart = (resp->pkgFlag&FlagDumpUnitStart) != 0;
 
 	return 0;
 }
@@ -778,7 +785,7 @@ int Client::dump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 	}
 
 	if(p.errCode == 0 && reply != NULL) {
-		reply->end = (p.pkgFlag&FlagEnd) != 0;
+		reply->end = (p.pkgFlag&FlagDumpEnd) != 0;
 		reply->kvs.resize(p.kvs.size());
 		for(unsigned i = 0; i < p.kvs.size(); i++) {
 			copyReply(reply->kvs[i], p.kvs[i]);

@@ -180,7 +180,7 @@ int KeyValue::encode(char* pkg, int pkgLen) {
 
 int PkgOneOp::length() {
 	// PKG = HEAD+cPkgFlag+KeyValueCtrl
-	return HeadSize + 1 + kv.length();
+	return HeadSize + 1 + KeyValue::length();
 }
 
 int PkgOneOp::decode(const char* pkg, int pkgLen) {
@@ -195,7 +195,7 @@ int PkgOneOp::decode(const char* pkg, int pkgLen) {
 	pkgFlag = pkg[n];
 	n += 1;
 
-	int m = kv.decode(pkg+n, pkgLen-n);
+	int m = KeyValue::decode(pkg+n, pkgLen-n);
 	if(m < 0){
 		return -4;
 	}
@@ -216,7 +216,7 @@ int PkgOneOp::encode(char* pkg, int pkgLen) {
 	pkg[n] = pkgFlag;
 	n += 1;
 
-	int m = kv.encode(pkg+n, pkgLen-n);
+	int m = KeyValue::encode(pkg+n, pkgLen-n);
 	if(m < 0) {
 		return -4;
 	}

@@ -42,6 +42,10 @@ func (c *Context) Client() *Client {
 	return c.cli
 }
 
+func (c *Context) DatabaseId() uint8 {
+	return c.dbId
+}
+
 func (c *Context) Auth(password string) error {
 	if c.cli.isAuthorized(c.dbId) {
 		return nil
@@ -512,10 +516,10 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 	if asc {
-		p.PkgFlag |= proto.FlagAscending
+		p.PkgFlag |= proto.FlagScanAsc
 	}
 	if start {
-		p.PkgFlag |= proto.FlagStart
+		p.PkgFlag |= proto.FlagScanKeyStart
 	}
 	p.Num = uint16(num)
 	p.TableId = tableId
@@ -589,7 +593,7 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	p.DbId = c.dbId
 	p.Cmd = call.cmd
 	if oneTable {
-		p.PkgFlag |= proto.FlagOneTable
+		p.PkgFlag |= proto.FlagDumpTable
 	}
 	p.StartUnitId = startUnitId
 	p.EndUnitId = endUnitId
@@ -920,7 +924,7 @@ func (call *Call) Reply() (interface{}, error) {
 
 		var r ScanReply
 		r.ctx = call.ctx.(scanContext)
-		r.End = (p.PkgFlag&proto.FlagEnd != 0)
+		r.End = (p.PkgFlag&proto.FlagScanEnd != 0)
 		r.Kvs = make([]ScanKV, len(p.Kvs))
 		var rowKey []byte
 		for i := 0; i < len(p.Kvs); i++ {
@@ -947,8 +951,8 @@ func (call *Call) Reply() (interface{}, error) {
 		var r DumpReply
 		r.ctx = call.ctx.(dumpContext)
 		r.ctx.lastUnitId = p.LastUnitId
-		r.ctx.unitStart = (p.PkgFlag&proto.FlagUnitStart != 0)
-		r.End = (p.PkgFlag&proto.FlagEnd != 0)
+		r.ctx.unitStart = (p.PkgFlag&proto.FlagDumpUnitStart != 0)
+		r.End = (p.PkgFlag&proto.FlagDumpEnd != 0)
 		r.Kvs = make([]DumpKV, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
 			r.Kvs[i] = DumpKV{p.Kvs[i].TableId, p.Kvs[i].ColSpace,
