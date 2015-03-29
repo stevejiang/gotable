@@ -20,9 +20,12 @@
 #include <string>
 #include <arpa/inet.h>
 
-
+#ifndef htonll
 #define htonll(x) gotable::switchll((x))
+#endif
+#ifndef ntohll
 #define ntohll(x) gotable::switchll((x))
+#endif
 
 namespace gotable {
 

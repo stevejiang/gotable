@@ -50,13 +50,14 @@ func main() {
 }
 
 func testGet(tc *table.Context) {
-	// set
+	// SET
 	err := tc.Set(1, []byte("row1"), []byte("col1"), []byte("v01"), 10, 0)
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
 		return
 	}
 
+	// GET
 	value, score, _, err := tc.Get(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
@@ -69,13 +70,14 @@ func testGet(tc *table.Context) {
 		fmt.Printf("GET result1: %q\t%d\n", value, score)
 	}
 
-	// delete
+	// DEL
 	err = tc.Del(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
 		fmt.Printf("Del failed: %s\n", err)
 		return
 	}
 
+	// GET
 	value, score, _, err = tc.Get(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)
@@ -90,6 +92,7 @@ func testGet(tc *table.Context) {
 }
 
 func testMGet(tc *table.Context) {
+	// MSET
 	var ma table.MSetArgs
 	ma.Add(1, []byte("row1"), []byte("col0"), []byte("v00"), 10, 0)
 	ma.Add(1, []byte("row1"), []byte("col1"), []byte("v01"), 9, 0)
@@ -102,6 +105,7 @@ func testMGet(tc *table.Context) {
 		return
 	}
 
+	// MGET
 	var mb table.MGetArgs
 	mb.Add(1, []byte("row1"), []byte("col4"), 0)
 	mb.Add(1, []byte("row1"), []byte("col2"), 0)
@@ -139,6 +143,7 @@ func printScanReply(r table.ScanReply) {
 }
 
 func testScan(tc *table.Context) {
+	// SCAN
 	r, err := tc.Scan(1, []byte("row1"), []byte("col0"), true, 10)
 	if err != nil {
 		fmt.Printf("Scan failed: %s\n", err)
@@ -155,12 +160,14 @@ func testScan(tc *table.Context) {
 }
 
 func testZScan(tc *table.Context) {
+	// ZSET
 	err := tc.ZSet(1, []byte("row2"), []byte("000"), []byte("v00"), 10, 0)
 	if err != nil {
 		fmt.Printf("ZSet failed: %s\n", err)
 		return
 	}
 
+	// ZMSET
 	var ma table.MSetArgs
 	ma.Add(1, []byte("row2"), []byte("001"), []byte("v01"), 9, 0)
 	ma.Add(1, []byte("row2"), []byte("002"), []byte("v02"), 6, 0)
@@ -173,7 +180,7 @@ func testZScan(tc *table.Context) {
 		return
 	}
 
-	//r, err := tc.ZScan(1, []byte("row2"), nil, 0, true, true, 4)
+	// ZSCAN
 	r, err := tc.ZScanStart(1, []byte("row2"), true, true, 4)
 	if err != nil {
 		fmt.Printf("ZScan failed: %s\n", err)
@@ -206,6 +213,7 @@ func testCas(tc *table.Context) {
 	var err error
 	// Try i < 11 for cas not match
 	for i := 0; i < 1; i++ {
+		// GET with CAS=2
 		value, score, newCas, err = tc.Get(1, []byte("row1"), []byte("col1"), 2)
 		if err != nil {
 			fmt.Printf("Get failed: %s\n", err)
@@ -221,12 +229,14 @@ func testCas(tc *table.Context) {
 		fmt.Printf("\tCas %02d: (%d %d)\t(%s, %d)\n", i, newCas, cas, value, score)
 	}
 
+	// SET with CAS
 	err = tc.Set(1, []byte("row1"), []byte("col1"),
 		[]byte(string(value)+"-cas"), score+20, cas)
 	if err != nil {
 		fmt.Printf("Set failed: %s\n", err)
 	}
 
+	// GET without CAS
 	value, score, _, err = tc.Get(1, []byte("row1"), []byte("col1"), 0)
 	if err != nil {
 		fmt.Printf("Get failed: %s\n", err)

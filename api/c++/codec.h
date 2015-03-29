@@ -118,16 +118,16 @@ enum {
 	// (Z)Scan flags
 	FlagScanAsc      = 0x4,  // if set, Scan in ASC order, else DESC order
 	FlagScanKeyStart = 0x8,  // if set, Scan start from MIN/MAX key
-	FlagScanEnd      = 0x10, // if set, Scan/Dump finished, stop now
+	FlagScanEnd      = 0x10, // if set, Scan finished, stop now
 
 	// Dump flags
-	FlagDumpTable     = 0x4, // if set, Dump only one table, else Dump full DB(dbId)
-	FlagDumpUnitStart = 0x8, // if set, Dump start from new UnitId, else from pivot record
-	FlagDumpEnd       = 0x10,// if set, Scan/Dump finished, stop now
+	FlagDumpTable     = 0x4,  // if set, Dump only one table, else Dump current DB(dbId)
+	FlagDumpUnitStart = 0x8,  // if set, Dump start from new UnitId, else from pivot record
+	FlagDumpEnd       = 0x10, // if set, Dump finished, stop now
 };
 
 // Get, Set, Del, GetSet, GetDel, ZGet, ZSet, Sync
-// PKG=HEAD+cPkgFlag+KeyValueCtrl
+// PKG=HEAD+cPkgFlag+KeyValue
 struct PkgOneOp : public PkgHead, KeyValue {
 	uint8_t  pkgFlag;
 
@@ -139,7 +139,7 @@ struct PkgOneOp : public PkgHead, KeyValue {
 };
 
 // MGet, MSet, MDel, MZGet, MZSet, MZDel
-// PKG=HEAD+cPkgFlag+cErrCode+wNum+KeyValueCtrl[wNum]
+// PKG=HEAD+cPkgFlag+cErrCode+wNum+KeyValue[wNum]
 struct PkgMultiOp : public PkgHead {
 	uint8_t          pkgFlag;
 	int8_t           errCode;

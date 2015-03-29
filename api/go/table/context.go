@@ -42,6 +42,7 @@ func (c *Context) Client() *Client {
 	return c.cli
 }
 
+// Get the selected database ID of the Context.
 func (c *Context) DatabaseId() uint8 {
 	return c.dbId
 }
@@ -89,31 +90,43 @@ func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte, cas uint32) (
 	return replyGet(c.GoZGet(tableId, rowKey, colKey, cas, nil))
 }
 
+// Set key/value in default column space. CAS is 0 for normal cases.
+// Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) error {
 	return replySet(c.GoSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
+// Set key/value in "Z" sorted socre column space. CAS is 0 for normal cases.
+// Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) error {
 	return replySet(c.GoZSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
+// Delete the key in default column space. CAS is 0 for normal cases.
+// Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
 	cas uint32) error {
 	return replySet(c.GoDel(tableId, rowKey, colKey, cas, nil))
 }
 
+// Delete the key in "Z" sorted socre column space. CAS is 0 for normal cases.
+// Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32) error {
 	return replySet(c.GoZDel(tableId, rowKey, colKey, cas, nil))
 }
 
+// Increase key/score in default column space. CAS is 0 for normal cases.
+// Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (newValue []byte, newScore int64, err error) {
 	return replyIncr(c.GoIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
+// Increase key/score in "Z" sorted socre column space. CAS is 0 for normal cases.
+// Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (newValue []byte, newScore int64, err error) {
 	return replyIncr(c.GoZIncr(tableId, rowKey, colKey, score, cas, nil))
@@ -223,29 +236,46 @@ func (c *Context) ZmIncr(args MIncrArgs) ([]IncrReply, error) {
 	return r.([]IncrReply), nil
 }
 
+// Scan columns of the selected rowKey in default column space.
+// The colKey is the pivot record(excluded).
+// If asc is true SCAN in ASC order, else SCAN in DESC order.
+// It replies at most num records.
 func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int) (ScanReply, error) {
 	return replyScan(c.GoScan(tableId, rowKey, colKey, asc, num, nil))
 }
 
+// Convinient API of SCAN.
+// If asc is true SCAN start from the minimum colKey, else start from the maximum colKey.
+// It replies at most num records.
 func (c *Context) ScanStart(tableId uint8, rowKey []byte,
 	asc bool, num int) (ScanReply, error) {
 	return replyScan(c.GoScanStart(tableId, rowKey, asc, num, nil))
 }
 
+// Scan columns of the selected rowKey in "Z" sorted score space.
+// The colKey and score is the pivot record(excluded).
+// If asc is true ZSCAN in ASC order, else ZSCAN in DESC order.
+// If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
+// It replies at most num records.
 func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int) (ScanReply, error) {
 	return replyScan(c.GoZScan(tableId, rowKey, colKey, score,
 		asc, orderByScore, num, nil))
 }
 
+// Convinient API of ZSCAN.
+// If asc is true SCAN start from the minimum colKey and score,
+// else start from the maximum colKey and score.
+// If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
+// It replies at most num records.
 func (c *Context) ZScanStart(tableId uint8, rowKey []byte,
 	asc, orderByScore bool, num int) (ScanReply, error) {
 	return replyScan(c.GoZScanStart(tableId, rowKey,
 		asc, orderByScore, num, nil))
 }
 
-// Scan/ZScan more records.
+// (Z)Scan more records.
 func (c *Context) ScanMore(last ScanReply) (ScanReply, error) {
 	if last.End || len(last.Kvs) == 0 {
 		return ScanReply{}, ErrScanEnded

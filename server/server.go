@@ -1010,7 +1010,8 @@ func Run(conf *config.Config) {
 		log.Fatalln("Listen failed:", err)
 	}
 
-	log.Printf("GoTable started on %s://%s\n", conf.Db.Network, conf.Db.Address)
+	log.Printf("GoTable %s started on %s://%s\n",
+		table.Version, conf.Db.Network, conf.Db.Address)
 
 	// Normal slaver, reconnect to master
 	hasMaster, migration, _ := srv.mc.GetMasterUnit()

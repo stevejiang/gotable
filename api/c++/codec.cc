@@ -179,7 +179,7 @@ int KeyValue::encode(char* pkg, int pkgLen) {
 }
 
 int PkgOneOp::length() {
-	// PKG = HEAD+cPkgFlag+KeyValueCtrl
+	// PKG = HEAD+cPkgFlag+KeyValue
 	return HeadSize + 1 + KeyValue::length();
 }
 
@@ -227,7 +227,7 @@ int PkgOneOp::encode(char* pkg, int pkgLen) {
 }
 
 int PkgMultiOp::length() {
-	// PKG = HEAD+cPkgFlag+cErrCode+wNum+KeyValueCtrl[wNum]
+	// PKG = HEAD+cPkgFlag+cErrCode+wNum+KeyValue[wNum]
 	int n = HeadSize + 4;
 	for(int i = 0; i < kvs.size(); i++) {
 		n += kvs[i].length();
