@@ -141,6 +141,7 @@ func (bin *BinLog) RemoveMonitor(m Monitor) {
 			break
 		}
 	}
+	bin.msChanged = true
 	bin.mtx.Unlock()
 }
 

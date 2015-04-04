@@ -639,6 +639,7 @@ func (srv *Server) slaveOf(req *Request) {
 			if slv != nil {
 				slv.Close()
 			}
+			srv.bin.AsSlaver()
 			srv.connectToMaster(srv.mc)
 		} else {
 			if slv != nil {
@@ -747,8 +748,6 @@ func (srv *Server) migrate(req *Request) {
 }
 
 func (srv *Server) connectToMaster(mc *config.MasterConfig) {
-	srv.bin.AsSlaver()
-
 	var slv = NewSlaver(srv.reqChan, srv.bin, mc, srv.conf.Auth.AdminPwd)
 	go slv.GoConnectToMaster()
 
@@ -1016,6 +1015,15 @@ func Run(conf *config.Config) {
 	// Normal slaver, reconnect to master
 	hasMaster, migration, _ := srv.mc.GetMasterUnit()
 	if hasMaster && !migration {
+		lastSeq, valid := srv.bin.GetMasterSeq()
+		if !valid {
+			srv.mc.SetStatus(ctrl.SlaverNeedClear)
+			// Any better solution?
+			log.Fatalf("Slaver lastSeq %d is out of sync, please clear old data! "+
+				"(Restart may fix this issue)", lastSeq)
+		}
+
+		srv.bin.AsSlaver()
 		srv.connectToMaster(srv.mc)
 	}
 
