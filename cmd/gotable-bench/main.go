@@ -27,7 +27,8 @@ import (
 )
 
 var (
-	host     = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
+	address  = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
+	network  = flag.String("N", "tcp", "Server network: tcp, tcp4, tcp6, unix")
 	cliNum   = flag.Int("c", 50, "Number of parallel clients")
 	reqNum   = flag.Int("n", 100000, "Total number of requests")
 	dataSize = flag.Int("d", 8, "Data size of SET/MSET value in bytes")
@@ -50,10 +51,11 @@ func main() {
 		runtime.GOMAXPROCS(*maxProcs)
 	}
 
-	var cliPool = table.NewPool([]table.Addr{{"tcp", *host}}, *poolNum)
+	var cliPool = table.NewPool([]table.Addr{{*network, *address}}, *poolNum)
 	client, err := cliPool.Get()
 	if err != nil {
-		fmt.Printf("Get connection client to host %s failed!\n\n", *host)
+		fmt.Printf("Get connection client to host %s://%s failed!\n\n",
+			*network, *address)
 		cliPool.Close()
 		flag.Usage()
 		os.Exit(1)

@@ -24,9 +24,8 @@ import (
 )
 
 var (
-	host     = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
-	userName = flag.String("u", "", "User name for authentication")
-	password = flag.String("p", "", "Password for authentication")
+	address = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
+	network = flag.String("N", "tcp", "Server network: tcp, tcp4, tcp6, unix")
 )
 
 func main() {

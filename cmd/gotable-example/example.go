@@ -23,13 +23,14 @@ import (
 )
 
 var (
-	host = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
+	address = flag.String("h", "127.0.0.1:6688", "Server host address ip:port")
+	network = flag.String("N", "tcp", "Server network: tcp, tcp4, tcp6, unix")
 )
 
 func main() {
 	flag.Parse()
 
-	client, err := table.Dial("tcp", *host)
+	client, err := table.Dial(*network, *address)
 	if err != nil {
 		fmt.Printf("Dial failed: %s\n", err)
 		return

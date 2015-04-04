@@ -29,7 +29,7 @@ type client struct {
 
 func newClient() *client {
 	var c = new(client)
-	cli, err := table.Dial("tcp", *host)
+	cli, err := table.Dial(*network, *address)
 	if err != nil {
 		fmt.Println("Dial failed: ", err)
 		return nil
