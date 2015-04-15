@@ -284,10 +284,10 @@ func (c *Context) ScanMore(last ScanReply) (ScanReply, error) {
 	var call *Call
 	var err error
 	if last.ctx.zop {
-		call, err = c.GoZScan(r.TableId, r.RowKey, r.ColKey, r.Score,
+		call, err = c.GoZScan(last.ctx.tableId, last.ctx.rowKey, r.ColKey, r.Score,
 			last.ctx.asc, last.ctx.orderByScore, last.ctx.num, nil)
 	} else {
-		call, err = c.GoScan(r.TableId, r.RowKey, r.ColKey,
+		call, err = c.GoScan(last.ctx.tableId, last.ctx.rowKey, r.ColKey,
 			last.ctx.asc, last.ctx.num, nil)
 	}
 	return replyScan(call, err)
@@ -580,7 +580,7 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 		return call, err
 	}
 
-	call.ctx = scanContext{zop, asc, orderByScore, num}
+	call.ctx = scanContext{tableId, rowKey, zop, asc, orderByScore, num}
 	c.cli.sending <- call
 
 	return call, nil
@@ -954,14 +954,12 @@ func (call *Call) Reply() (interface{}, error) {
 
 		var r ScanReply
 		r.ctx = call.ctx.(scanContext)
+		r.TableId = r.ctx.tableId
+		r.RowKey = r.ctx.rowKey
 		r.End = (p.PkgFlag&proto.FlagScanEnd != 0)
 		r.Kvs = make([]ScanKV, len(p.Kvs))
-		var rowKey []byte
 		for i := 0; i < len(p.Kvs); i++ {
-			if i == 0 {
-				rowKey = copyBytes(p.Kvs[i].RowKey)
-			}
-			r.Kvs[i] = ScanKV{p.Kvs[i].TableId, rowKey, copyBytes(p.Kvs[i].ColKey),
+			r.Kvs[i] = ScanKV{copyBytes(p.Kvs[i].ColKey),
 				copyBytes(p.Kvs[i].Value), p.Kvs[i].Score}
 		}
 		return r, nil

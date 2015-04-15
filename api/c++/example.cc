@@ -121,7 +121,7 @@ void testScan(Client* cli) {
 	printf("SCAN result:\n");
 	for(unsigned i = 0; i < reply.kvs.size(); i++) {
 		printf("[%s\t%s]\t[%lld\t%s]\n",
-			reply.kvs[i].rowKey.c_str(), reply.kvs[i].colKey.c_str(),
+			reply.rowKey.c_str(), reply.kvs[i].colKey.c_str(),
 			(long long)reply.kvs[i].score, reply.kvs[i].value.c_str());
 	}
 	if(reply.end) {
@@ -162,7 +162,7 @@ void testZScan(Client* cli) {
 	while(true) {
 		for(unsigned i = 0; i < reply.kvs.size(); i++) {
 			printf("[%s\t%s]\t[%lld\t%s]\n",
-				reply.kvs[i].rowKey.c_str(), reply.kvs[i].colKey.c_str(),
+				reply.rowKey.c_str(), reply.kvs[i].colKey.c_str(),
 				(long long)reply.kvs[i].score, reply.kvs[i].value.c_str());
 		}
 

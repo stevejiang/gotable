@@ -20,7 +20,6 @@ import (
 	"errors"
 	"github.com/stevejiang/gotable/api/go/table"
 	"github.com/stevejiang/gotable/api/go/table/proto"
-	"github.com/stevejiang/gotable/config"
 	"github.com/stevejiang/gotable/ctrl"
 	"log"
 	"os"
@@ -501,26 +500,12 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 
 func (tbl *Table) Get(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 	var in proto.PkgOneOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkOneOp(&in, req, au) {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
-		err = tbl.getKV(nil, zop, in.DbId, &in.KeyValue, wa)
+		err := tbl.getKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		if err != nil {
 			log.Printf("getKV failed: %s\n", err)
 		}
-	} else {
-		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
-		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in)
@@ -528,30 +513,17 @@ func (tbl *Table) Get(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 
 func (tbl *Table) MGet(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 	var in proto.PkgMultiOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkMultiOp(&in, req, au) {
 		var rOpt = tbl.db.NewReadOptions(true)
 		defer rOpt.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.getKV(rOpt, zop, in.DbId, &in.Kvs[i], wa)
+			err := tbl.getKV(rOpt, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("getKV failed: %s\n", err)
 				break
 			}
 		}
-	} else {
-		in.Kvs = nil
 	}
 
 	return replyMulti(&in)
@@ -582,29 +554,15 @@ func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
 
 func (tbl *Table) Set(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkOneOp(&in, req, au) {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.setKV(nil, zop, in.DbId, &in.KeyValue, wa)
+		err := tbl.setKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
 			log.Printf("setKV failed: %s\n", err)
 		}
-	} else {
-		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
-		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -612,32 +570,19 @@ func (tbl *Table) Set(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool
 
 func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkMultiOp(&in, req, au) {
 		var wb = tbl.db.NewWriteBatch()
 		defer wb.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.setKV(wb, zop, in.DbId, &in.Kvs[i], wa)
+			err := tbl.setKV(wb, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("setKV failed: %s\n", err)
 				break
 			}
 		}
 		tbl.rwMtx.RUnlock()
-	} else {
-		in.Kvs = nil
 	}
 
 	return replyMulti(&in), table.EcOk == in.ErrCode
@@ -645,29 +590,15 @@ func (tbl *Table) MSet(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 func (tbl *Table) Del(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkOneOp(&in, req, au) {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.delKV(nil, zop, in.DbId, &in.KeyValue, wa)
+		err := tbl.delKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
 			log.Printf("delKV failed: %s\n", err)
 		}
-	} else {
-		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
-		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -675,32 +606,19 @@ func (tbl *Table) Del(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool
 
 func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkMultiOp(&in, req, au) {
 		var wb = tbl.db.NewWriteBatch()
 		defer wb.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.delKV(wb, zop, in.DbId, &in.Kvs[i], wa)
+			err := tbl.delKV(wb, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("delKV failed: %s\n", err)
 				break
 			}
 		}
 		tbl.rwMtx.RUnlock()
-	} else {
-		in.Kvs = nil
 	}
 
 	return replyMulti(&in), table.EcOk == in.ErrCode
@@ -708,29 +626,15 @@ func (tbl *Table) MDel(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 func (tbl *Table) Incr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgOneOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkOneOp(&in, req, au) {
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
-		err = tbl.incrKV(nil, zop, in.DbId, &in.KeyValue, wa)
+		err := tbl.incrKV(nil, zop, in.DbId, &in.KeyValue, wa)
 		tbl.rwMtx.RUnlock()
 
 		if err != nil {
 			log.Printf("incrKV failed: %s\n", err)
 		}
-	} else {
-		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
-		in.CtrlFlag |= proto.CtrlErrCode
 	}
 
 	return replyHandle(&in), table.EcOk == in.ErrCode
@@ -738,32 +642,19 @@ func (tbl *Table) Incr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, boo
 
 func (tbl *Table) MIncr(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
 	var in proto.PkgMultiOp
-	n, err := in.Decode(req.Pkg)
-	if err != nil || n != len(req.Pkg) {
-		in.ErrCode = table.EcDecodeFail
-	}
-	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
-		in.ErrCode = table.EcInvDbId
-	}
-	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
-		in.ErrCode = table.EcNoPrivilege
-	}
-
-	if in.ErrCode == 0 {
+	if checkMultiOp(&in, req, au) {
 		var wb = tbl.db.NewWriteBatch()
 		defer wb.Destroy()
 		zop := (in.PkgFlag&proto.FlagZop != 0)
 		tbl.rwMtx.RLock()
 		for i := 0; i < len(in.Kvs); i++ {
-			err = tbl.incrKV(wb, zop, in.DbId, &in.Kvs[i], wa)
+			err := tbl.incrKV(wb, zop, in.DbId, &in.Kvs[i], wa)
 			if err != nil {
 				log.Printf("incrKV failed: %s\n", err)
 				break
 			}
 		}
 		tbl.rwMtx.RUnlock()
-	} else {
-		in.Kvs = nil
 	}
 
 	return replyMulti(&in), table.EcOk == in.ErrCode
@@ -1381,6 +1272,45 @@ func newScoreColKey(score int64, colKey []byte) []byte {
 	return col
 }
 
+func checkOneOp(in *proto.PkgOneOp, req *PkgArgs, au Authorize) bool {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
+		in.ErrCode = table.EcDecodeFail
+	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
+
+	if in.ErrCode != 0 {
+		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
+		in.CtrlFlag |= proto.CtrlErrCode
+	}
+
+	return in.ErrCode == 0
+}
+
+func checkMultiOp(in *proto.PkgMultiOp, req *PkgArgs, au Authorize) bool {
+	n, err := in.Decode(req.Pkg)
+	if err != nil || n != len(req.Pkg) {
+		in.ErrCode = table.EcDecodeFail
+	}
+	if in.ErrCode == 0 && in.DbId == proto.AdminDbId {
+		in.ErrCode = table.EcInvDbId
+	}
+	if in.ErrCode == 0 && !au.IsAuth(in.DbId) {
+		in.ErrCode = table.EcNoPrivilege
+	}
+
+	if in.ErrCode != 0 {
+		in.Kvs = nil
+	}
+
+	return in.ErrCode == 0
+}
+
 func errorHandle(out proto.PkgResponse, errCode int8) []byte {
 	out.SetErrCode(errCode)
 	var pkg = make([]byte, out.Length())
@@ -1414,64 +1344,4 @@ func replyMulti(out *proto.PkgMultiOp) []byte {
 		log.Fatalf("Encode failed: %s\n", err)
 	}
 	return pkg
-}
-
-type WriteAccess struct {
-	replication bool // Replication slaver
-	hasMaster   bool
-	migration   bool
-	unitId      uint16
-}
-
-func NewWriteAccess(replication bool, mc *config.MasterConfig) *WriteAccess {
-	hasMaster, migration, unitId := mc.GetMasterUnit()
-	return &WriteAccess{replication, hasMaster, migration, unitId}
-}
-
-// Do we have right to write this key?
-func (m *WriteAccess) CheckKey(dbId, tableId uint8, rowKey []byte) bool {
-	if m.replication {
-		return true // Accept all replication data
-	}
-
-	if !m.hasMaster {
-		return true
-	}
-
-	if m.migration {
-		return m.unitId != ctrl.GetUnitId(dbId, tableId, rowKey)
-	} else {
-		return false
-	}
-}
-
-// Do we have right to write this unit?
-func (m *WriteAccess) CheckUnit(unitId uint16) bool {
-	if m.replication {
-		return true // Accept all replication data
-	}
-
-	if !m.hasMaster {
-		return true
-	}
-
-	if m.migration {
-		return m.unitId != unitId
-	} else {
-		return false
-	}
-}
-
-// return false: no right to write!
-// return true: may have right to write, need to check key or unit again
-func (m *WriteAccess) Check() bool {
-	if m.replication {
-		return true // Accept all replication data
-	}
-
-	if m.hasMaster && !m.migration {
-		return false
-	}
-
-	return true
 }

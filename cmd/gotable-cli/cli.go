@@ -334,8 +334,7 @@ func (c *client) scan(args []string) error {
 	} else {
 		for i := 0; i < len(r.Kvs); i++ {
 			var kv = r.Kvs[i]
-			fmt.Printf("%2d) [%q\t%q]\t[%d\t%q]\n", i,
-				kv.RowKey, kv.ColKey, kv.Score, kv.Value)
+			fmt.Printf("%2d) [%q\t%d\t%q]\n", i, kv.ColKey, kv.Score, kv.Value)
 		}
 	}
 
@@ -386,8 +385,7 @@ func (c *client) zscan(args []string) error {
 	} else {
 		for i := 0; i < len(r.Kvs); i++ {
 			var kv = r.Kvs[i]
-			fmt.Printf("%2d) [%q\t%d\t%q]\t[%q]\n", i,
-				kv.RowKey, kv.Score, kv.ColKey, kv.Value)
+			fmt.Printf("%2d) [%d\t%q\t%q]\n", i, kv.Score, kv.ColKey, kv.Value)
 		}
 	}
 

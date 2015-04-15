@@ -209,8 +209,6 @@ static inline void copyReply(IncrReply& r, const KeyValue& kv) {
 }
 
 static inline void copyReply(ScanKV& r, const KeyValue& kv) {
-	r.tableId = kv.tableId;
-	r.rowKey.assign(kv.rowKey.data(), kv.rowKey.size());
 	r.colKey.assign(kv.colKey.data(), kv.colKey.size());
 	r.value.assign(kv.value.data(), kv.value.size());
 	r.score = kv.score;
@@ -615,6 +613,9 @@ int Client::doScan(bool zop, uint8_t tableId, const string& rowKey, const string
 
 	//TODO: check seq & handle timeout
 
+	reply->tableId = tableId;
+	reply->rowKey = rowKey;
+
 	reply->ctx.zop = zop;
 	reply->ctx.asc = asc;
 	reply->ctx.orderByScore = orderByScore;
@@ -691,10 +692,11 @@ int Client::scanMore(const ScanReply& last, ScanReply* reply) {
 	}
 	const ScanKV& r = last.kvs[last.kvs.size()-1];
 	if(last.ctx.zop) {
-		return zScan(r.tableId, r.rowKey, r.colKey, r.score,
+		return zScan(last.tableId, last.rowKey, r.colKey, r.score,
 			last.ctx.asc, last.ctx.orderByScore, last.ctx.num, reply);
 	} else {
-		return scan(r.tableId, r.rowKey, r.colKey, last.ctx.asc, last.ctx.num, reply);
+		return scan(last.tableId, last.rowKey, r.colKey,
+				last.ctx.asc, last.ctx.num, reply);
 	}
 }
 

@@ -138,7 +138,7 @@ func testMGet(tc *table.Context) {
 func printScanReply(r table.ScanReply) {
 	for i := 0; i < len(r.Kvs); i++ {
 		fmt.Printf("[%q\t%q]\t[%d\t%q]\n",
-			r.Kvs[i].RowKey, r.Kvs[i].ColKey,
+			r.RowKey, r.Kvs[i].ColKey,
 			r.Kvs[i].Score, r.Kvs[i].Value)
 	}
 }

@@ -451,7 +451,7 @@ func scan(c *table.Context, done chan *table.Call, zop bool,
 		for i := 0; i < len(r.Kvs); i++ {
 			var one = r.Kvs[i]
 			fmt.Printf("%02d) [%q\t%q]\t[%d\t%q]\n", i,
-				one.RowKey, one.ColKey, one.Score, one.Value)
+				r.RowKey, one.ColKey, one.Score, one.Value)
 		}
 	}
 }

@@ -167,6 +167,8 @@ func (a *MIncrArgs) Add(tableId uint8, rowKey, colKey []byte, score int64, cas u
 }
 
 type scanContext struct {
+	tableId      uint8
+	rowKey       []byte
 	zop          bool
 	asc          bool // true: Ascending  order; false: Descending  order
 	orderByScore bool // true: Score+ColKey; false: ColKey
@@ -174,16 +176,16 @@ type scanContext struct {
 }
 
 type ScanKV struct {
-	TableId uint8
-	RowKey  []byte
-	ColKey  []byte
-	Value   []byte
-	Score   int64
+	ColKey []byte
+	Value  []byte
+	Score  int64
 }
 
 type ScanReply struct {
-	Kvs []ScanKV
-	End bool // false: Not end yet; true: Scan to end, stop now
+	TableId uint8
+	RowKey  []byte
+	Kvs     []ScanKV
+	End     bool // false: Not end yet; true: Scan to end, stop now
 
 	ctx scanContext
 }

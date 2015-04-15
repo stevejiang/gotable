@@ -126,20 +126,20 @@ typedef GetArgs DelArgs;
 typedef SetReply DelReply;
 
 struct ScanKV {
-	uint8_t tableId;
-	string  rowKey;
 	string  colKey;
 	string  value;
 	int64_t score;
 
-	ScanKV() : tableId(0), score(0) {}
+	ScanKV() : score(0) {}
 };
 
 struct ScanReply {
+	uint8_t tableId;
+	string  rowKey;
 	vector<ScanKV> kvs;
-	bool end;    // true: Scan to end, stop now
+	bool    end;    // true: Scan to end, stop now
 
-	ScanReply() : kvs(), end(false) {}
+	ScanReply() : tableId(0), kvs(), end(false) {}
 
 private:
 	struct ScanContext {

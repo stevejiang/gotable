@@ -15,6 +15,7 @@
 package table
 
 import (
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -31,14 +32,14 @@ type Addr struct {
 }
 
 type Pool struct {
+	as      []Addr // Server address list, never change once assigned
 	connNum int
 
 	mtx      sync.Mutex
-	as       []Addr
 	status   []int
 	cs       []*Client
-	lastAddr int // last as index
-	lastCli  int // last cs index
+	lastAddr int // Last as index
+	lastCli  int // Last cs index
 	closed   bool
 }
 
@@ -49,6 +50,7 @@ func NewPool(as []Addr, connNum int) *Pool {
 	for i := 0; i < len(as); i++ {
 		p.status = append(p.status, statusOk)
 	}
+	p.lastAddr = rand.Int() % len(as)
 
 	go p.goPingDeamon()
 	return p
@@ -131,11 +133,11 @@ func (p *Pool) goPingDeamon() {
 		time.Sleep(time.Second)
 		for i := 0; i < len(p.as); i++ {
 			p.mtx.Lock()
-			if p.status[i] != statusOk {
-				p.mtx.Unlock()
+			var st = p.status[i]
+			p.mtx.Unlock()
+			if st != statusOk {
 				var addr = p.as[i]
-
-				c, err := net.Dial(addr.Network, addr.Address)
+				c, err := net.DialTimeout(addr.Network, addr.Address, time.Second)
 				if err == nil {
 					p.mtx.Lock()
 					p.status[i] = statusOk
@@ -144,7 +146,6 @@ func (p *Pool) goPingDeamon() {
 					continue
 				}
 			}
-			p.mtx.Unlock()
 		}
 	}
 }
