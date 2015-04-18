@@ -8,7 +8,7 @@ GoTable is a high performance NoSQL database powered by [Go](http://golang.org/)
 + Powerful set of APIs: GET, SET, DEL, MGET, MSET, MDEL, SCAN, INCR, DUMP and "Z" APIs.
 + Data storage is not limited by RAM.
 + Friendly with SSD.
-+ Transaction support with CAS (compare and switch).
++ Transaction support with [CAS](http://en.wikipedia.org/wiki/Compare-and-swap) (Compare-And-Swap).
 + Replication.
 
 ## Build and Install
@@ -86,6 +86,18 @@ You can use gotable-cli to play with GoTable. Start a gotable-server instance, t
 	OK
 	gotable@0> get 0 r1 c1
 	[5	"v1"]
+
+## Replication
+
+You can use gotable-cli with command SLAVEOF to change replication settings of a slave on the fly. If a GoTable server is already acting as slave, the command SLAVEOF NO ONE will turn off the replication, turning the GoTable server into a master. In the proper form SLAVEOF host will make the server a slave of another server listening at the specified host(ip:port). GoTable remembers the replication settings, it will reconnect to master automatically when restarted.
+
+	% gotable-cli 
+	gotable@0> SLAVEOF 127.0.0.1:6689
+	OK
+	gotable@0> SLAVEOF
+	OK
+
+If a server is already a slave of some master, SLAVEOF host will stop the replication against the old server and start the synchronization against the new one. Old dataset is kept and synchronization starts from the last binlog sequence.
 
 ## API Example
 

@@ -110,7 +110,6 @@ void testMGet(Client* cli) {
 }
 
 void testScan(Client* cli) {
-	//int scan(uint8_t tableId, const string& rowKey, const string& colKey, bool asc, int num, ScanReply* reply);
 	ScanReply reply;
 	int err = cli->scan(1, "row1", "col0", true, 10, &reply);
 	if(err < 0) {

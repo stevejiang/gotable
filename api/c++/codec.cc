@@ -222,7 +222,7 @@ int PkgOneOp::encode(char* pkg, int pkgLen) {
 	}
 	n += m;
 
-	OverWriteLen(pkg, n);
+	overWriteLen(pkg, n);
 	return n;
 }
 
@@ -292,7 +292,7 @@ int PkgMultiOp::encode(char* pkg, int pkgLen) {
 		n += m;
 	}
 
-	OverWriteLen(pkg, n);
+	overWriteLen(pkg, n);
 	return n;
 }
 
@@ -328,7 +328,7 @@ int PkgScanReq::encode(char* pkg, int pkgLen) {
 	putUint16(pkg+n, num);
 	n += 2;
 
-	OverWriteLen(pkg, n);
+	overWriteLen(pkg, n);
 	return n;
 }
 
@@ -368,7 +368,7 @@ int PkgDumpReq::encode(char* pkg, int pkgLen) {
 	putUint16(pkg+n, endUnitId);
 	n += 2;
 
-	OverWriteLen(pkg, n);
+	overWriteLen(pkg, n);
 	return n;
 }
 
@@ -412,7 +412,7 @@ int PkgDumpResp::encode(char* pkg, int pkgLen) {
 	putUint16(pkg+n, lastUnitId);
 	n += 2;
 
-	OverWriteLen(pkg, n);
+	overWriteLen(pkg, n);
 	return n;
 }
 

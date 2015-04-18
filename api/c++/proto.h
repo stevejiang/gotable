@@ -74,8 +74,8 @@ struct PkgHead {
 	virtual int encode(char* pkg, int len);
 };
 
-void OverWriteLen(char* pkg, int pkgLen);
-void OverWriteSeq(char* pkg, uint64_t seq);
+void overWriteLen(char* pkg, int pkgLen);
+void overWriteSeq(char* pkg, uint64_t seq);
 
 int readPkg(int fd, char* buf, int bufLen, PkgHead* head, string& pkg);
 

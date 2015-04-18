@@ -122,7 +122,7 @@ func (c *Client) ClientType() uint32 {
 }
 
 // Check whether dbId is authencated.
-// If dbId is 0, it means admin privilege.
+// If dbId is 255, it means admin privilege.
 func (c *Client) IsAuth(dbId uint8) bool {
 	if c == nil || !c.authEnabled {
 		return true

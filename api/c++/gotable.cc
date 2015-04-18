@@ -146,14 +146,16 @@ int Client::doOneOp(bool zop, uint8_t cmd, uint8_t tableId,
 		this->close();
 		return -5;
 	}
+	if(head.seq != seq) {
+		this->close();
+		return -6;
+	}
 
 	// reply
 	n = reply->decode(pkg.data(), pkg.size());
 	if(n < 0) {
-		return -6;
+		return -7;
 	}
-
-	//TODO: check seq & handle timeout
 
 	return 0;
 }
@@ -278,14 +280,16 @@ int Client::doMultiOp(bool zop, uint8_t cmd, const vector<T>& args,
 		this->close();
 		return -5;
 	}
+	if(head.seq != seq) {
+		this->close();
+		return -6;
+	}
 
 	// reply
 	n = reply->decode(pkg.data(), pkg.size());
 	if(n < 0) {
-		return -6;
+		return -7;
 	}
-
-	//TODO: check seq & handle timeout
 
 	return 0;
 }
@@ -604,14 +608,16 @@ int Client::doScan(bool zop, uint8_t tableId, const string& rowKey, const string
 		this->close();
 		return -5;
 	}
+	if(head.seq != seq) {
+		this->close();
+		return -6;
+	}
 
 	// reply
 	n = resp->decode(pkg.data(), pkg.size());
 	if(n < 0) {
-		return -6;
+		return -7;
 	}
-
-	//TODO: check seq & handle timeout
 
 	reply->tableId = tableId;
 	reply->rowKey = rowKey;
@@ -756,14 +762,16 @@ int Client::doDump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 		this->close();
 		return -5;
 	}
+	if(head.seq != seq) {
+		this->close();
+		return -6;
+	}
 
 	// reply
 	n = resp->decode(pkg.data(), pkg.size());
 	if(n < 0) {
-		return -6;
+		return -7;
 	}
-
-	//TODO: check seq & handle timeout
 
 	reply->ctx.oneTable = oneTable;
 	reply->ctx.tableId = tableId;

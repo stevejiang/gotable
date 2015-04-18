@@ -102,6 +102,13 @@ func (slv *slaver) doConnectToMaster() {
 			continue
 		}
 
+		if c.RemoteAddr().String() == slv.mi.SlaverAddr {
+			log.Printf("Master and slaver address are the same!\n")
+			c.Close()
+			slv.Close()
+			return
+		}
+
 		cli := NewClient(c, false)
 		slv.mtx.Lock()
 		slv.cli = cli

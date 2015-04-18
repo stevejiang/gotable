@@ -587,6 +587,20 @@ func (srv *Server) replyMigrate(req *Request, msg string) {
 	}
 }
 
+func sameAddress(masterAddr, slaverAddr string, req *Request) bool {
+	if masterAddr == slaverAddr {
+		return true
+	}
+
+	if len(masterAddr) > 0 && masterAddr[0] == ':' {
+		masterAddr = "127.0.0.1" + masterAddr
+	}
+	if len(slaverAddr) > 0 && slaverAddr[0] == ':' {
+		slaverAddr = "127.0.0.1" + slaverAddr
+	}
+	return masterAddr == slaverAddr || masterAddr == req.Cli.LocalAddr().String()
+}
+
 func (srv *Server) slaveOf(req *Request) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
@@ -617,7 +631,7 @@ func (srv *Server) slaveOf(req *Request) {
 		if len(p.SlaverAddr) == 0 {
 			p.SlaverAddr = req.Cli.LocalAddr().String()
 		}
-		if p.MasterAddr == p.SlaverAddr {
+		if sameAddress(p.MasterAddr, p.SlaverAddr, req) {
 			log.Printf("Master and slaver address are the same!\n")
 			srv.replyMigrate(req, "master and slaver address are the same")
 			return
@@ -692,7 +706,7 @@ func (srv *Server) migrate(req *Request) {
 		if len(p.SlaverAddr) == 0 {
 			p.SlaverAddr = req.Cli.LocalAddr().String()
 		}
-		if p.MasterAddr == p.SlaverAddr {
+		if sameAddress(p.MasterAddr, p.SlaverAddr, req) {
 			log.Printf("Master and slaver address are the same!\n")
 			srv.replyMigrate(req, "master and slaver address are the same")
 			return

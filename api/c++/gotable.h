@@ -189,55 +189,163 @@ public:
 	Client(int fd);
 	~Client();
 
+	// Dial connects to the address of GoTable server.
+	// Upon success it returns a connection Client to GoTable server.
+	// Otherwise NULL is returned.
 	static Client* Dial(const char* ip, int port);
+
+	// Close the connection.
 	void close();
 
+	// Change the selected database for the current connection.
+	// Database 0 is selected by default.
 	void select(uint8_t dbId);
+
+	// Get the selected database ID for the current connection.
 	uint8_t databaseId();
+
+	// Authenticate to the server.
+	// Return value <0 means failed, 0 means succeed.
 	int auth(const char* password);
+
+	// Ping the server.
+	// Return value <0 means failed, 0 means succeed.
 	int ping();
 
+	// Get value&score of the key in default column space.
+	// Parameter CAS is Compare-And-Swap, 2 means read data on master and
+	// return a new CAS, 1 means read data on master machine but without a
+	// new CAS, 0(NULL) means read data on any machine without a new CAS.
+	// On cluster mode, routing to master machine is automatically, but on a
+	// normal master/slaver mode it should be done manually.
+	// If CAS 1&2 sent to a slaver machine, error will be returned.
+	// Return value <0 means failed, 0 means succeed, 1 means key not exist.
 	int get(uint8_t tableId, const string& rowKey, const string& colKey,
 			string* value, int64_t* score, uint32_t* cas=NULL);
+
+	// Get value&score of the key in "Z" sorted score column space.
+	// Request and return parameters have the same meaning as the Get API.
 	int zGet(uint8_t tableId, const string& rowKey, const string& colKey,
 			string* value, int64_t* score, uint32_t* cas=NULL);
+
+	// Set key/value in default column space. CAS is 0 for normal cases.
+	// Use the CAS returned by GET if you want to "lock" the record.
+	// Return value <0 means failed, 0 means succeed.
 	int set(uint8_t tableId, const string& rowKey, const string& colKey,
 			const string& value, int64_t score, uint32_t cas=0);
+
+	// Set key/value in "Z" sorted score column space. CAS is 0 for normal cases.
+	// Use the CAS returned by GET if you want to "lock" the record.
+	// Return value <0 means failed, 0 means succeed.
 	int zSet(uint8_t tableId, const string& rowKey, const string& colKey,
 			const string& value, int64_t score, uint32_t cas=0);
+
+	// Delete the key in default column space. CAS is 0 for normal cases.
+	// Use the CAS returned by GET if you want to "lock" the record.
+	// Return value <0 means failed, 0 means succeed.
 	int del(uint8_t tableId, const string& rowKey, const string& colKey,
 			uint32_t cas=0);
+
+	// Delete the key in "Z" sorted score column space. CAS is 0 for normal cases.
+	// Use the CAS returned by GET if you want to "lock" the record.
+	// Return value <0 means failed, 0 means succeed.
 	int zDel(uint8_t tableId, const string& rowKey, const string& colKey,
 			uint32_t cas=0);
+
+	// Increase key/score in default column space. CAS is 0 for normal cases.
+	// Use the CAS returned by GET if you want to "lock" the record.
+	// Return value <0 means failed, 0 means succeed.
 	int incr(uint8_t tableId, const string& rowKey, const string& colKey,
 			string* value, int64_t* score, uint32_t cas=0);
+
+	// Increase key/score in "Z" sorted score column space. CAS is 0 for normal cases.
+	// Use the CAS returned by GET if you want to "lock" the record.
+	// Return value <0 means failed, 0 means succeed.
 	int zIncr(uint8_t tableId, const string& rowKey, const string& colKey,
 			string* value, int64_t* score, uint32_t cas=0);
 
+	// Get values&scores of multiple keys in default column space.
+	// Return value <0 means failed, 0 means succeed.
 	int mGet(const vector<GetArgs>& args, vector<GetReply>* reply);
+
+	// Get values&scores of multiple keys in "Z" sorted score column space.
+	// Return value <0 means failed, 0 means succeed.
 	int zmGet(const vector<GetArgs>& args, vector<GetReply>* reply);
+
+	// Set multiple keys/values in default column space.
+	// Return value <0 means failed, 0 means succeed.
 	int mSet(const vector<SetArgs>& args, vector<SetReply>* reply);
+
+	// Set multiple keys/values in "Z" sorted score column space.
+	// Return value <0 means failed, 0 means succeed.
 	int zmSet(const vector<SetArgs>& args, vector<SetReply>* reply);
+
+	// Delete multiple keys in default column space.
+	// Return value <0 means failed, 0 means succeed.
 	int mDel(const vector<DelArgs>& args, vector<DelReply>* reply);
+
+	// Delete multiple keys in "Z" sorted score column space.
+	// Return value <0 means failed, 0 means succeed.
 	int zmDel(const vector<DelArgs>& args, vector<DelReply>* reply);
+
+	// Increase multiple keys/scores in default column space.
+	// Return value <0 means failed, 0 means succeed.
 	int mIncr(const vector<IncrArgs>& args, vector<IncrReply>* reply);
+
+	// Increase multiple keys/scores in "Z" sorted score column space.
+	// Return value <0 means failed, 0 means succeed.
 	int zmIncr(const vector<IncrArgs>& args, vector<IncrReply>* reply);
 
+	// Scan columns of the selected rowKey in default column space.
+	// The colKey is the pivot record(excluded). If asc is true SCAN in ASC order,
+	// else SCAN in DESC order. It replies at most num records.
+	// Return value <0 means failed, 0 means succeed.
 	int scan(uint8_t tableId, const string& rowKey, const string& colKey,
 			bool asc, int num, ScanReply* reply);
+
+	// Convenient API of SCAN. If asc is true SCAN start from the minimum colKey,
+	// else start from the maximum colKey. It replies at most num records.
+	// Return value <0 means failed, 0 means succeed.
 	int scanStart(uint8_t tableId, const string& rowKey,
 			bool asc, int num, ScanReply* reply);
+
+	// Scan columns of the selected rowKey in "Z" sorted score space.
+	// The colKey and score is the pivot record(excluded). If asc is true ZSCAN in ASC order,
+	// else ZSCAN in DESC order. If orderByScore is true ZSCAN order by score+colKey,
+	// else ZSCAN order by colKey. It replies at most num records.
+	// Return value <0 means failed, 0 means succeed.
 	int zScan(uint8_t tableId, const string& rowKey, const string& colKey, int64_t score,
 			bool asc, bool orderByScore, int num, ScanReply* reply);
+
+	// Convenient API of ZSCAN. If asc is true SCAN start from the minimum colKey and score,
+	// else start from the maximum colKey and score. If orderByScore is true ZSCAN order by
+	// score+colKey, else ZSCAN order by colKey. It replies at most num records.
+	// Return value <0 means failed, 0 means succeed.
 	int zScanStart(uint8_t tableId, const string& rowKey,
 			bool asc, bool orderByScore, int num, ScanReply* reply);
+
+	// (Z)Scan more records.
+	// Return value <0 means failed, 0 means succeed.
 	int scanMore(const ScanReply& last, ScanReply* reply);
 
+	// Dump start from the pivot record. If oneTable is true, only dump the selected table.
+	// If oneTable is false, dump current DB(dbId).
+	// The pivot record itself is excluded from the reply.
+	// Return value <0 means failed, 0 means succeed.
 	int dump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 			const string& rowKey, const string& colKey, int64_t score,
 			uint16_t startUnitId, uint16_t endUnitId, DumpReply* reply);
+
+	// Dump current DB(database selected).
+	// Return value <0 means failed, 0 means succeed.
 	int dumpDB(DumpReply* reply);
+
+	// Dump the selected Table.
+	// Return value <0 means failed, 0 means succeed.
 	int dumpTable(uint8_t tableId, DumpReply* reply);
+
+	// Dump more records.
+	// Return value <0 means failed, 0 means succeed.
 	int dumpMore(const DumpReply& last, DumpReply* reply);
 
 private:

@@ -47,6 +47,7 @@ func (c *Context) DatabaseId() uint8 {
 	return c.dbId
 }
 
+// Authenticate to the server.
 func (c *Context) Auth(password string) error {
 	if c.cli.isAuthorized(c.dbId) {
 		return nil
@@ -61,6 +62,7 @@ func (c *Context) Auth(password string) error {
 	return err
 }
 
+// Ping the server.
 func (c *Context) Ping() error {
 	call, err := c.GoPing(nil)
 	if err != nil {
@@ -72,21 +74,22 @@ func (c *Context) Ping() error {
 }
 
 // Get value&score of the key in default column space.
-// Parameter cas is Compare And Switch, 2 means read data on master and return
-// a new cas, 1 means read data on master machine but without a new cas, 0 means
-// read data on any machine without a new cas. On cluter mode, routing to master
+// Parameter CAS is Compare-And-Swap, 2 means read data on master and return
+// a new CAS, 1 means read data on master machine but without a new CAS, 0 means
+// read data on any machine without a new CAS. On cluster mode, routing to master
 // machine is automatically, but on a normal master/slaver mode it should be done
-// manually. If cas 1&2 sent to a slaver machine, error will be returned.
+// manually. If CAS 1&2 sent to a slaver machine, error will be returned.
+// For most cases, set CAS as 0.
 // Return value nil means key not exist.
 func (c *Context) Get(tableId uint8, rowKey, colKey []byte, cas uint32) (
-	value []byte, score int64, casReply uint32, err error) {
+	value []byte, score int64, retCas uint32, err error) {
 	return replyGet(c.GoGet(tableId, rowKey, colKey, cas, nil))
 }
 
 // Get value&score of the key in "Z" sorted score column space.
 // Request and return parameters have the same meaning as the Get API.
 func (c *Context) ZGet(tableId uint8, rowKey, colKey []byte, cas uint32) (
-	value []byte, score int64, newCas uint32, err error) {
+	value []byte, score int64, retCas uint32, err error) {
 	return replyGet(c.GoZGet(tableId, rowKey, colKey, cas, nil))
 }
 
@@ -97,7 +100,7 @@ func (c *Context) Set(tableId uint8, rowKey, colKey, value []byte, score int64,
 	return replySet(c.GoSet(tableId, rowKey, colKey, value, score, cas, nil))
 }
 
-// Set key/value in "Z" sorted socre column space. CAS is 0 for normal cases.
+// Set key/value in "Z" sorted score column space. CAS is 0 for normal cases.
 // Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) ZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32) error {
@@ -111,7 +114,7 @@ func (c *Context) Del(tableId uint8, rowKey, colKey []byte,
 	return replySet(c.GoDel(tableId, rowKey, colKey, cas, nil))
 }
 
-// Delete the key in "Z" sorted socre column space. CAS is 0 for normal cases.
+// Delete the key in "Z" sorted score column space. CAS is 0 for normal cases.
 // Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) ZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32) error {
@@ -125,13 +128,14 @@ func (c *Context) Incr(tableId uint8, rowKey, colKey []byte, score int64,
 	return replyIncr(c.GoIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
-// Increase key/score in "Z" sorted socre column space. CAS is 0 for normal cases.
+// Increase key/score in "Z" sorted score column space. CAS is 0 for normal cases.
 // Use the CAS returned by GET if you want to "lock" the record.
 func (c *Context) ZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32) (newValue []byte, newScore int64, err error) {
 	return replyIncr(c.GoZIncr(tableId, rowKey, colKey, score, cas, nil))
 }
 
+// Get values&scores of multiple keys in default column space.
 func (c *Context) MGet(args MGetArgs) ([]GetReply, error) {
 	call, err := c.GoMGet(args, nil)
 	if err != nil {
@@ -145,6 +149,7 @@ func (c *Context) MGet(args MGetArgs) ([]GetReply, error) {
 	return r.([]GetReply), nil
 }
 
+// Get values&scores of multiple keys in "Z" sorted score column space.
 func (c *Context) ZmGet(args MGetArgs) ([]GetReply, error) {
 	call, err := c.GoZmGet(args, nil)
 	if err != nil {
@@ -158,6 +163,7 @@ func (c *Context) ZmGet(args MGetArgs) ([]GetReply, error) {
 	return r.([]GetReply), nil
 }
 
+// Set multiple keys/values in default column space.
 func (c *Context) MSet(args MSetArgs) ([]SetReply, error) {
 	call, err := c.GoMSet(args, nil)
 	if err != nil {
@@ -171,6 +177,7 @@ func (c *Context) MSet(args MSetArgs) ([]SetReply, error) {
 	return r.([]SetReply), nil
 }
 
+// Set multiple keys/values in "Z" sorted score column space.
 func (c *Context) ZmSet(args MSetArgs) ([]SetReply, error) {
 	call, err := c.GoZmSet(args, nil)
 	if err != nil {
@@ -184,6 +191,7 @@ func (c *Context) ZmSet(args MSetArgs) ([]SetReply, error) {
 	return r.([]SetReply), nil
 }
 
+// Delete multiple keys in default column space.
 func (c *Context) MDel(args MDelArgs) ([]DelReply, error) {
 	call, err := c.GoMDel(args, nil)
 	if err != nil {
@@ -197,6 +205,7 @@ func (c *Context) MDel(args MDelArgs) ([]DelReply, error) {
 	return r.([]DelReply), nil
 }
 
+// Delete multiple keys in "Z" sorted score column space.
 func (c *Context) ZmDel(args MDelArgs) ([]DelReply, error) {
 	call, err := c.GoZmDel(args, nil)
 	if err != nil {
@@ -210,6 +219,7 @@ func (c *Context) ZmDel(args MDelArgs) ([]DelReply, error) {
 	return r.([]DelReply), nil
 }
 
+// Increase multiple keys/scores in default column space.
 func (c *Context) MIncr(args MIncrArgs) ([]IncrReply, error) {
 	call, err := c.GoMIncr(args, nil)
 	if err != nil {
@@ -223,6 +233,7 @@ func (c *Context) MIncr(args MIncrArgs) ([]IncrReply, error) {
 	return r.([]IncrReply), nil
 }
 
+// Increase multiple keys/scores in "Z" sorted score column space.
 func (c *Context) ZmIncr(args MIncrArgs) ([]IncrReply, error) {
 	call, err := c.GoZmIncr(args, nil)
 	if err != nil {
@@ -245,7 +256,7 @@ func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
 	return replyScan(c.GoScan(tableId, rowKey, colKey, asc, num, nil))
 }
 
-// Convinient API of SCAN.
+// Convenient API of SCAN.
 // If asc is true SCAN start from the minimum colKey, else start from the maximum colKey.
 // It replies at most num records.
 func (c *Context) ScanStart(tableId uint8, rowKey []byte,
@@ -264,7 +275,7 @@ func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
 		asc, orderByScore, num, nil))
 }
 
-// Convinient API of ZSCAN.
+// Convenient API of ZSCAN.
 // If asc is true SCAN start from the minimum colKey and score,
 // else start from the maximum colKey and score.
 // If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
@@ -413,45 +424,54 @@ func (c *Context) goOneOp(zop bool, cmd, tableId uint8,
 	return call, nil
 }
 
+// Asynchronous PING API.
 func (c *Context) GoPing(done chan *Call) (*Call, error) {
 	return c.goOneOp(false, proto.CmdPing, 0, nil, nil, nil, 0, 0, done)
 }
 
+// Asynchronous GET API.
 func (c *Context) GoGet(tableId uint8, rowKey, colKey []byte, cas uint32,
 	done chan *Call) (*Call, error) {
 	return c.goOneOp(false, proto.CmdGet, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
+// Asynchronous ZGET API.
 func (c *Context) GoZGet(tableId uint8, rowKey, colKey []byte, cas uint32,
 	done chan *Call) (*Call, error) {
 	return c.goOneOp(true, proto.CmdGet, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
+// Asynchronous SET API.
 func (c *Context) GoSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
 	return c.goOneOp(false, proto.CmdSet, tableId, rowKey, colKey, value, score, cas, done)
 }
 
+// Asynchronous ZSET API.
 func (c *Context) GoZSet(tableId uint8, rowKey, colKey, value []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
 	return c.goOneOp(true, proto.CmdSet, tableId, rowKey, colKey, value, score, cas, done)
 }
 
+// Asynchronous DEL API.
 func (c *Context) GoDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32, done chan *Call) (*Call, error) {
 	return c.goOneOp(false, proto.CmdDel, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
+// Asynchronous ZDEL API.
 func (c *Context) GoZDel(tableId uint8, rowKey, colKey []byte,
 	cas uint32, done chan *Call) (*Call, error) {
 	return c.goOneOp(true, proto.CmdDel, tableId, rowKey, colKey, nil, 0, cas, done)
 }
 
+// Asynchronous INCR API.
 func (c *Context) GoIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
 	return c.goOneOp(false, proto.CmdIncr, tableId, rowKey, colKey, nil, score, cas, done)
 }
 
+// Asynchronous ZINCR API.
 func (c *Context) GoZIncr(tableId uint8, rowKey, colKey []byte, score int64,
 	cas uint32, done chan *Call) (*Call, error) {
 	return c.goOneOp(true, proto.CmdIncr, tableId, rowKey, colKey, nil, score, cas, done)
@@ -496,34 +516,42 @@ func (c *Context) goMultiOp(zop bool, args multiArgs, cmd uint8,
 	return call, nil
 }
 
+// Asynchronous MGET API.
 func (c *Context) GoMGet(args []GetArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, MGetArgs(args), proto.CmdMGet, done)
 }
 
+// Asynchronous ZMGET API.
 func (c *Context) GoZmGet(args []GetArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, MGetArgs(args), proto.CmdMGet, done)
 }
 
+// Asynchronous MSET API.
 func (c *Context) GoMSet(args []SetArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, MSetArgs(args), proto.CmdMSet, done)
 }
 
+// Asynchronous ZMSET API.
 func (c *Context) GoZmSet(args []SetArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, MSetArgs(args), proto.CmdMSet, done)
 }
 
+// Asynchronous MDEL API.
 func (c *Context) GoMDel(args []DelArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, MDelArgs(args), proto.CmdMDel, done)
 }
 
+// Asynchronous ZMDEL API.
 func (c *Context) GoZmDel(args []DelArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, MDelArgs(args), proto.CmdMDel, done)
 }
 
+// Asynchronous MINCR API.
 func (c *Context) GoMIncr(args []IncrArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(false, MIncrArgs(args), proto.CmdMIncr, done)
 }
 
+// Asynchronous ZMINCR API.
 func (c *Context) GoZmIncr(args []IncrArgs, done chan *Call) (*Call, error) {
 	return c.goMultiOp(true, MIncrArgs(args), proto.CmdMIncr, done)
 }
@@ -586,24 +614,28 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	return call, nil
 }
 
+// Asynchronous SCAN API.
 func (c *Context) GoScan(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(false, tableId, rowKey, colKey, 0,
 		false, asc, false, num, done)
 }
 
+// Asynchronous convenient SCAN API.
 func (c *Context) GoScanStart(tableId uint8, rowKey []byte,
 	asc bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(false, tableId, rowKey, nil, 0,
 		true, asc, false, num, done)
 }
 
+// Asynchronous ZSCAN API.
 func (c *Context) GoZScan(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(true, tableId, rowKey, colKey, score,
 		false, asc, orderByScore, num, done)
 }
 
+// Asynchronous convenient ZSCAN API.
 func (c *Context) GoZScanStart(tableId uint8, rowKey []byte,
 	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(true, tableId, rowKey, nil, 0,
@@ -789,55 +821,6 @@ func (c *CtrlContext) DelUnit(unitId uint16) error {
 	return nil
 }
 
-func replyGet(call *Call, err error) ([]byte, int64, uint32, error) {
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, 0, 0, err
-	}
-
-	a := r.(GetReply)
-	return a.Value, a.Score, a.Cas, nil
-}
-
-func replySet(call *Call, err error) error {
-	if err != nil {
-		return err
-	}
-
-	_, err = (<-call.Done).Reply()
-	return err
-}
-
-func replyIncr(call *Call, err error) ([]byte, int64, error) {
-	if err != nil {
-		return nil, 0, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return nil, 0, err
-	}
-
-	var a = r.(IncrReply)
-	return a.Value, a.Score, nil
-}
-
-func replyScan(call *Call, err error) (ScanReply, error) {
-	if err != nil {
-		return ScanReply{}, err
-	}
-
-	r, err := (<-call.Done).Reply()
-	if err != nil {
-		return ScanReply{}, err
-	}
-	return r.(ScanReply), nil
-}
-
 // Get call reply. The real reply types are:
 // Auth/Ping/(Z)Set/(Z)Del: nil;
 // (Z)Get: GetReply;
@@ -1011,4 +994,53 @@ func (call *Call) replyInnerCtrl(p interface{}) (interface{}, error) {
 		return nil, call.err
 	}
 	return p, nil
+}
+
+func replyGet(call *Call, err error) ([]byte, int64, uint32, error) {
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	a := r.(GetReply)
+	return a.Value, a.Score, a.Cas, nil
+}
+
+func replySet(call *Call, err error) error {
+	if err != nil {
+		return err
+	}
+
+	_, err = (<-call.Done).Reply()
+	return err
+}
+
+func replyIncr(call *Call, err error) ([]byte, int64, error) {
+	if err != nil {
+		return nil, 0, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	var a = r.(IncrReply)
+	return a.Value, a.Score, nil
+}
+
+func replyScan(call *Call, err error) (ScanReply, error) {
+	if err != nil {
+		return ScanReply{}, err
+	}
+
+	r, err := (<-call.Done).Reply()
+	if err != nil {
+		return ScanReply{}, err
+	}
+	return r.(ScanReply), nil
 }

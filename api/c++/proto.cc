@@ -48,11 +48,11 @@ int PkgHead::encode(char* pkg, int len) {
 	return HeadSize;
 }
 
-void OverWriteLen(char* pkg, int pkgLen) {
+void overWriteLen(char* pkg, int pkgLen) {
 	putUint32(pkg+10, uint32_t(pkgLen));
 }
 
-void OverWriteSeq(char* pkg, uint64_t seq) {
+void overWriteSeq(char* pkg, uint64_t seq) {
 	putUint64(pkg+2, seq);
 }
 
