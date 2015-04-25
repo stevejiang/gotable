@@ -20,10 +20,10 @@ To build GoTable, you need to setup [Go](http://golang.org/) environment and gcc
 	
 	cd $GOPATH/src/github.com/stevejiang/gotable
 	
-	#build gotable, it will download rocksdb automatically if not found
+	#build GoTable, it will download rocksdb automatically if not found
 	make
 
-The build tool uses curl or wget to download rocksdb. If your computer has trouble to connect internet, please manually download and build rocksdb, and then use the following command to build gotable:
+The build tool uses curl or wget to download rocksdb. If your computer has trouble to connect internet, please manually download and build rocksdb, and then use the following command to build GoTable:
 
 	#use prebuilt rocksdb
 	make CGO_CFLAGS="-I/path/to/rocksdb/include" CGO_LDFLAGS="-L/path/to/rocksdb"

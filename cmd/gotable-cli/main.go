@@ -33,23 +33,23 @@ func main() {
 
 	var cli = newClient()
 	if cli == nil {
-		fmt.Printf("Failed to create client!\n\n")
+		writeln("Failed to create client!\n")
 		flag.Usage()
 		return
 	}
 
 	re, _ := regexp.Compile(`'[^\'\"]*'|[qQ]?"[^\'\"]*"|[^\s\'\"]+`)
 
-	fmt.Println("Welcome to GoTable.")
-	writeHelp()
+	writeln("Welcome to GoTable.")
+	//writeHelp()
 	for {
 		line, err := linenoise.Line(fmt.Sprintf("gotable@%d> ", cli.dbId))
 		if err != nil {
 			if err == linenoise.KillSignalError {
-				quit()
+				os.Exit(0)
 			}
-			fmt.Printf("Unexpected error: %s\n", err)
-			quit()
+			writeln("Unexpected error: %s" + err.Error())
+			os.Exit(0)
 		}
 		fields := fullMatchString(re, line)
 
@@ -94,6 +94,8 @@ func main() {
 			checkError(cli.use(fields[1:]))
 		case "slaveof":
 			checkError(cli.slaveOf(fields[1:]))
+		case "dump":
+			checkError(cli.dump(fields[1:]))
 
 		case "?":
 			fallthrough
@@ -114,51 +116,57 @@ func main() {
 }
 
 func quit() {
-	fmt.Println("Bye.")
-	fmt.Println("")
+	writeln("Bye.")
+	writeln("")
 	os.Exit(0)
 }
 
+func writeln(msg string) {
+	fmt.Fprintln(os.Stderr, msg)
+}
+
 func writeHelp() {
-	fmt.Println("  help                      print this message")
-	fmt.Println("  auth <dbId> <password>    authenticate to the database")
-	fmt.Println("select <dbId>               select database [0 ~ 254] to use")
-	fmt.Println("   set <tableId> <rowKey> <colKey> <value> [score]")
-	fmt.Println("                            set key/value in selected database")
-	fmt.Println("   get <tableId> <rowKey> <colKey>")
-	fmt.Println("                            get key/value in selected database")
-	fmt.Println("   del <tableId> <rowKey> <colKey>")
-	fmt.Println("                            delete key in selected database")
-	fmt.Println("  incr <tableId> <rowKey> <colKey> [score]")
-	fmt.Println("                            increase key score in selected database")
-	fmt.Println("  zset <tableId> <rowKey> <colKey> <value> [score]")
-	fmt.Println("                            zset key/value in selected database")
-	fmt.Println("  zget <tableId> <rowKey> <colKey>")
-	fmt.Println("                            zget key/value in selected database")
-	fmt.Println("  zdel <tableId> <rowKey> <colKey>")
-	fmt.Println("                            zdel key in selected database")
-	fmt.Println(" zincr <tableId> <rowKey> <colKey> [score]")
-	fmt.Println("                            zincr key score in selected database")
-	fmt.Println("  scan <tableId> <rowKey> <colKey> [num]")
-	fmt.Println("                            scan columns of rowKey in ASC order")
-	fmt.Println(" zscan <tableId> <rowKey> <score> <colKey> [num]")
-	fmt.Println("                            zscan columns of rowKey in ASC order by score")
-	fmt.Println("slaveof [host]              be slave of master host(ip:port)")
-	fmt.Println("  ping                      ping the server")
-	fmt.Println(" clear                      clear the screen")
-	fmt.Println("  quit                      exit")
-	fmt.Println("")
-	fmt.Println("Use the arrow up and down keys to walk through history.")
-	fmt.Println("")
+	writeln("  help                      print help message")
+	writeln("  auth <dbId> <password>    authenticate to the database")
+	writeln("select <dbId>               select database [0 ~ 254] to use")
+	writeln("   set <tableId> <rowKey> <colKey> <value> [score]")
+	writeln("                            set key/value in selected database")
+	writeln("   get <tableId> <rowKey> <colKey>")
+	writeln("                            get key/value in selected database")
+	writeln("   del <tableId> <rowKey> <colKey>")
+	writeln("                            delete key in selected database")
+	writeln("  incr <tableId> <rowKey> <colKey> [score]")
+	writeln("                            increase key score in selected database")
+	writeln("  zset <tableId> <rowKey> <colKey> <value> [score]")
+	writeln("                            zset key/value in selected database")
+	writeln("  zget <tableId> <rowKey> <colKey>")
+	writeln("                            zget key/value in selected database")
+	writeln("  zdel <tableId> <rowKey> <colKey>")
+	writeln("                            zdel key in selected database")
+	writeln(" zincr <tableId> <rowKey> <colKey> [score]")
+	writeln("                            zincr key score in selected database")
+	writeln("  scan <tableId> <rowKey> <colKey> [num]")
+	writeln("                            scan columns of rowKey in ASC order")
+	writeln(" zscan <tableId> <rowKey> <score> <colKey> [num]")
+	writeln("                            zscan columns of rowKey in ASC order by score")
+	writeln("  dump <dbId> [tableId]     dump the selected database or the table. Fields are:")
+	writeln("                            dbId, tableId, rowKey, colSpace, colKey, value, score")
+	writeln("slaveof [host]              be slave of master host(ip:port)")
+	writeln("  ping                      ping the server")
+	writeln(" clear                      clear the screen")
+	writeln("  quit                      exit")
+	writeln("")
+	writeln("Use the arrow up and down keys to walk through history.")
+	writeln("")
 }
 
 func writeUnrecognized() {
-	fmt.Println("Unrecognized command line. Use 'help'.")
+	writeln("Unrecognized command line. Use 'help'.")
 }
 
 func checkError(err error) {
 	if err != nil {
-		fmt.Printf("Failed with error: %s\n", err)
+		writeln("Failed with error: %s" + err.Error())
 	}
 }
 

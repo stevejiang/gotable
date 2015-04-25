@@ -125,6 +125,12 @@ func (bin *BinLog) init() error {
 	return nil
 }
 
+func (bin *BinLog) Flush() {
+	if bin.binBufW != nil {
+		bin.binBufW.Flush()
+	}
+}
+
 func (bin *BinLog) RegisterMonitor(m Monitor) {
 	bin.mtx.Lock()
 	bin.monitors = append(bin.monitors, m)
@@ -161,11 +167,12 @@ func (bin *BinLog) AsSlaver() {
 	bin.mtx.Unlock()
 }
 
-func (bin *BinLog) GetLogSeq() uint64 {
+func (bin *BinLog) GetLogSeqChanLen() (uint64, int) {
 	bin.mtx.Lock()
 	seq := bin.logSeq
+	chanLen := len(bin.reqChan)
 	bin.mtx.Unlock()
-	return seq
+	return seq, chanLen
 }
 
 // Only for master/slaver mode
@@ -181,13 +188,6 @@ func (bin *BinLog) GetMasterSeq() (masterSeq uint64, valid bool) {
 	if masterSeq > 0 && masterSeq < MinNormalSeq {
 		valid = false
 	}
-	return
-}
-
-func (bin *BinLog) GetLastLogSeq() (lastLogSeq uint64, valid bool) {
-	bin.mtx.Lock()
-	lastLogSeq, valid = bin.logSeq, len(bin.reqChan) == 0
-	bin.mtx.Unlock()
 	return
 }
 
@@ -228,19 +228,17 @@ func (bin *BinLog) GoWriteBinLog() {
 			}
 			bin.mtx.Unlock()
 
+			proto.OverWriteSeq(req.Pkg, bin.logSeq)
+			bin.doWrite(req, bin.logSeq)
+
 			for _, ms := range ms {
 				ms.NewLogComming()
 			}
 
-			proto.OverWriteSeq(req.Pkg, bin.logSeq)
-			bin.doWrite(req, bin.logSeq)
-
 			last1 = req
 
 		case <-tick:
-			if bin.binBufW != nil {
-				bin.binBufW.Flush()
-			}
+			bin.Flush()
 
 			if last1 == nil {
 				if last2 != nil {

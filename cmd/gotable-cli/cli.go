@@ -392,6 +392,58 @@ func (c *client) zscan(args []string) error {
 	return nil
 }
 
+func (c *client) dump(args []string) error {
+	//dump <dbId> [tableId]
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("invalid number of arguments (%d)", len(args))
+	}
+
+	dbId, err := getDatabaseId(args[0])
+	if err != nil {
+		return err
+	}
+
+	// select new databse
+	c.dbId = dbId
+	c.c = c.c.Client().NewContext(dbId)
+
+	var r table.DumpReply
+	if len(args) > 1 {
+		tableId, err := getTableId(args[1])
+		if err != nil {
+			return err
+		}
+
+		r, err = c.c.DumpTable(tableId)
+		if err != nil {
+			return err
+		}
+	} else {
+		r, err = c.c.DumpDB()
+		if err != nil {
+			return err
+		}
+	}
+
+	for {
+		for _, kv := range r.Kvs {
+			fmt.Printf("%d\t%d\t%q\t%d\t%q\t%q\t%d\n",
+				dbId, kv.TableId, kv.RowKey, kv.ColSpace, kv.ColKey, kv.Value, kv.Score)
+		}
+
+		if r.End {
+			break
+		}
+
+		r, err = c.c.DumpMore(r)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func errCodeMsg(errCode int8) string {
 	switch errCode {
 	case table.EcCasNotMatch:

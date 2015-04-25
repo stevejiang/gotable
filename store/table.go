@@ -109,6 +109,10 @@ func NewTable(tableDir string, maxOpenFiles int,
 	return tbl
 }
 
+func (tbl *Table) Close() {
+	tbl.db.Close()
+}
+
 func (tbl *Table) GetRWMutex() *sync.RWMutex {
 	return &tbl.rwMtx
 }
@@ -298,42 +302,6 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 	return nil
 }
 
-func (tbl *Table) setSyncKV(zop bool, dbId uint8, kv *proto.KeyValue) error {
-	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
-
-	var rawColSpace uint8 = proto.ColSpaceDefault
-	if zop {
-		rawColSpace = proto.ColSpaceScore2
-	}
-
-	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
-
-	if zop {
-		var wb = tbl.db.NewWriteBatch()
-		defer wb.Destroy()
-
-		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
-
-		var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
-			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
-		tbl.db.Put(scoreKey, getRawValue(kv.Value, 0), wb)
-
-		var err = tbl.db.Commit(wb)
-		if err != nil {
-			kv.SetErrCode(table.EcWriteFail)
-			return err
-		}
-	} else {
-		var err = tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), nil)
-		if err != nil {
-			kv.SetErrCode(table.EcWriteFail)
-			return err
-		}
-	}
-
-	return nil
-}
-
 func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 	kv *proto.KeyValue, wa *WriteAccess) error {
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
@@ -498,6 +466,53 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 	return nil
 }
 
+func (tbl *Table) setSyncKV(wb *WriteBatch, dbId uint8, kv *proto.KeyValue) {
+	var zop = (kv.ColSpace != proto.ColSpaceDefault)
+	var rawColSpace uint8 = proto.ColSpaceDefault
+	if zop {
+		rawColSpace = proto.ColSpaceScore2
+	}
+
+	var rawKey = getRawKey(dbId, kv.TableId, rawColSpace, kv.RowKey, kv.ColKey)
+
+	if zop {
+		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
+
+		var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+			kv.RowKey, newScoreColKey(kv.Score, kv.ColKey))
+		tbl.db.Put(scoreKey, getRawValue(kv.Value, 0), wb)
+	} else {
+		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
+	}
+}
+
+func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
+	var in proto.PkgMultiOp
+	_, err := in.Decode(req.Pkg)
+	if err == nil {
+		// Sync full DB, including DB 0
+		var wb = tbl.db.NewWriteBatch()
+		for i := 0; i < len(in.Kvs); i++ {
+			tbl.setSyncKV(wb, in.DbId, &in.Kvs[i])
+		}
+		tbl.rwMtx.RLock()
+		err = tbl.db.Commit(wb)
+		tbl.rwMtx.RUnlock()
+		wb.Destroy()
+
+		if err == nil {
+			return nil, true
+		} else {
+			in.SetErrCode(table.EcWriteFail)
+			log.Printf("setRawKV failed: %s\n", err)
+		}
+	} else {
+		in.SetErrCode(table.EcDecodeFail)
+	}
+
+	return replyHandle(&in), table.EcOk == in.ErrCode
+}
+
 func (tbl *Table) Get(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 	var in proto.PkgOneOp
 	if checkOneOp(&in, req, au) {
@@ -527,29 +542,6 @@ func (tbl *Table) MGet(req *PkgArgs, au Authorize, wa *WriteAccess) []byte {
 	}
 
 	return replyMulti(&in)
-}
-
-func (tbl *Table) Sync(req *PkgArgs) ([]byte, bool) {
-	var in proto.PkgOneOp
-	_, err := in.Decode(req.Pkg)
-	if err == nil {
-		// Sync full DB, including DB 0
-		zop := (in.PkgFlag&proto.FlagZop != 0)
-		tbl.rwMtx.RLock()
-		err = tbl.setSyncKV(zop, in.DbId, &in.KeyValue)
-		tbl.rwMtx.RUnlock()
-
-		if err == nil {
-			return nil, true
-		} else {
-			log.Printf("setRawKV failed: %s\n", err)
-		}
-	} else {
-		in.CtrlFlag &^= 0xFF // Clear all ctrl flags
-		in.SetErrCode(table.EcDecodeFail)
-	}
-
-	return replyHandle(&in), table.EcOk == in.ErrCode
 }
 
 func (tbl *Table) Set(req *PkgArgs, au Authorize, wa *WriteAccess) ([]byte, bool) {
@@ -976,7 +968,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 				triedUnitNum++
 				out.LastUnitId = nextUnitId
 				out.PkgFlag |= proto.FlagDumpUnitStart
-				SeekToUnit(it, nextUnitId, in.DbId, nextUnitTableId)
+				seekToUnit(it, nextUnitId, in.DbId, nextUnitTableId)
 				continue
 			} else {
 				out.PkgFlag |= proto.FlagDumpEnd
@@ -1110,8 +1102,49 @@ func (tbl *Table) NewIterator(fillCache bool) *Iterator {
 	}
 }
 
-func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgOneOp) (uint16, bool) {
+func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgMultiOp,
+	migration bool, migUnitId uint16) bool {
 	p.PkgFlag &^= 0xFF
+	p.ErrCode = 0
+	p.Kvs = nil
+
+	var size = 0
+	for i := 0; i < 10 && size < 400 && it.Valid(); i++ {
+		var kv proto.KeyValue
+		dbId, unitId, ok := seekAndCopySyncKV(it, &kv)
+		if !ok {
+			return false
+		}
+		if migration && migUnitId != unitId {
+			if migUnitId < unitId {
+				return false
+			} else if migUnitId > unitId {
+				seekToUnit(it, migUnitId, 0, 0)
+				if !it.Valid() {
+					return false
+				}
+				dbId, unitId, ok = seekAndCopySyncKV(it, &kv)
+				if !ok || migUnitId != unitId {
+					return false
+				}
+			}
+		}
+
+		if len(p.Kvs) == 0 {
+			p.DbId = dbId
+		} else if p.DbId != dbId {
+			return true
+		}
+
+		p.Kvs = append(p.Kvs, kv)
+		size += 13 + len(kv.RowKey) + len(kv.ColKey) + len(kv.Value)
+		it.Next()
+	}
+
+	return true
+}
+
+func seekAndCopySyncKV(it *Iterator, p *proto.KeyValue) (uint8, uint16, bool) {
 	p.CtrlFlag &^= 0xFF
 
 	unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
@@ -1124,26 +1157,24 @@ func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgOneOp) (uint16, bool) {
 	case proto.ColSpaceScore1:
 		it.Seek(getRawKey(dbId, tableId, colSpace+1, rowKey, nil))
 		if !it.Valid() {
-			return unitId, false
+			return dbId, unitId, false
 		}
-		return SeekAndCopySyncPkg(it, p)
+		return seekAndCopySyncKV(it, p)
 	case proto.ColSpaceScore2:
 		value, score := parseRawValue(it.Value())
 		p.SetValue(value)
 		p.SetScore(score)
-		p.PkgFlag |= proto.FlagZop
 	}
 
-	p.DbId = dbId
 	p.TableId = tableId
 	p.SetColSpace(colSpace)
 	p.RowKey = rowKey
 	p.ColKey = colKey
 
-	return unitId, true
+	return dbId, unitId, true
 }
 
-func SeekToUnit(it *Iterator, unitId uint16, dbId, tableId uint8) {
+func seekToUnit(it *Iterator, unitId uint16, dbId, tableId uint8) {
 	it.Seek(getRawUnitKey(unitId, dbId, tableId))
 }
 

@@ -28,6 +28,8 @@ import (
 )
 
 func main() {
+	log.SetFlags(log.Flags() | log.Lshortfile)
+
 	var configFile string
 	if len(os.Args) > 1 {
 		configFile = os.Args[1]
@@ -44,6 +46,11 @@ func main() {
 	}
 	runtime.GOMAXPROCS(maxProcs)
 
+	var srv = server.NewServer(conf)
+	if srv == nil {
+		log.Fatalln("Failed to create new server!")
+	}
+
 	if len(conf.Profile.Host) > 0 {
 		log.Printf("Start profile on http://%s/debug/pprof\n", conf.Profile.Host)
 		go func() {
@@ -53,24 +60,26 @@ func main() {
 
 	go func() {
 		var c = make(chan os.Signal, 1)
-		signal.Notify(c, syscall.SIGUSR1)
+		signal.Notify(c, syscall.SIGUSR1, syscall.SIGINT)
 
 		var s = <-c
 		log.Println("Get signal:", s)
 
-		if conf.Profile.Memory != "" {
-			f, err := os.Create(conf.Profile.Memory)
-			if err != nil {
-				log.Println("create memory profile file failed:", err)
-				return
-			}
+		if s == syscall.SIGUSR1 {
+			if conf.Profile.Memory != "" {
+				f, err := os.Create(conf.Profile.Memory)
+				if err != nil {
+					log.Println("create memory profile file failed:", err)
+					return
+				}
 
-			pprof.WriteHeapProfile(f)
-			f.Close()
+				pprof.WriteHeapProfile(f)
+				f.Close()
+			}
 		}
 
-		os.Exit(0)
+		srv.Close()
 	}()
 
-	server.Run(conf)
+	srv.Start()
 }

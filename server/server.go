@@ -27,7 +27,9 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 type Server struct {
@@ -36,6 +38,9 @@ type Server struct {
 	conf    *config.Config
 	mc      *config.MasterConfig
 	reqChan *RequestChan
+
+	// Atomic
+	closed uint32
 
 	rwMtx sync.RWMutex // protects following
 	slv   *slaver
@@ -78,7 +83,93 @@ func NewServer(conf *config.Config) *Server {
 	srv.reqChan.DumpReqChan = make(chan *Request, 16)
 	srv.reqChan.CtrlReqChan = make(chan *Request, 16)
 
+	go srv.bin.GoWriteBinLog()
+
+	var totalProcNum = runtime.NumCPU() * 2
+	var writeProcNum = totalProcNum / 4
+	var readProcNum = totalProcNum - writeProcNum
+	if writeProcNum < 2 {
+		writeProcNum = 2
+	}
+	for i := 0; i < readProcNum; i++ {
+		go srv.processRead()
+	}
+	for i := 0; i < writeProcNum; i++ {
+		go srv.processWrite()
+	}
+	go srv.processSync() // Use 1 goroutine to make sure data consistency
+	go srv.processDump()
+	go srv.processCtrl()
+
+	log.Printf("Goroutine distribution: read %d, write %d, %s\n",
+		readProcNum, writeProcNum, "sync 1, dump 1, ctrl 1")
+
 	return srv
+}
+
+func (srv *Server) Start() {
+	var authEnabled bool
+	if srv.conf.Auth.AdminPwd != "" {
+		authEnabled = true
+		srv.tbl.SetPassword(proto.AdminDbId, srv.conf.Auth.AdminPwd)
+	}
+
+	// Normal slaver, reconnect to master
+	hasMaster, migration, _ := srv.mc.GetMasterUnit()
+	if hasMaster && !migration {
+		lastSeq, valid := srv.bin.GetMasterSeq()
+		if !valid {
+			srv.mc.SetStatus(ctrl.SlaverNeedClear)
+			// Any better solution?
+			log.Fatalf("Slaver lastSeq %d is out of sync, please clear old data! "+
+				"(Restart may fix this issue)", lastSeq)
+		}
+
+		srv.bin.AsSlaver()
+		srv.connectToMaster(srv.mc)
+	}
+
+	link, err := net.Listen(srv.conf.Db.Network, srv.conf.Db.Address)
+	if err != nil {
+		log.Fatalln("Listen failed:", err)
+	}
+
+	log.Printf("GoTable %s started on %s://%s\n",
+		table.Version, srv.conf.Db.Network, srv.conf.Db.Address)
+
+	for {
+		if c, err := link.Accept(); err == nil {
+			//log.Printf("New connection %s\t%s\n", c.RemoteAddr(), c.LocalAddr())
+
+			cli := NewClient(c, authEnabled)
+			go cli.GoRecvRequest(srv.reqChan, nil)
+			go cli.GoSendResponse()
+		}
+	}
+}
+
+// Stop server and exit
+func (srv *Server) Close() {
+	if !srv.IsClosed() {
+		atomic.AddUint32(&srv.closed, 1)
+
+		// Flush data to file system
+		_, chanLen := srv.bin.GetLogSeqChanLen()
+		for i := 0; chanLen != 0 && i < 5000; i++ {
+			time.Sleep(time.Millisecond)
+			_, chanLen = srv.bin.GetLogSeqChanLen()
+		}
+
+		time.Sleep(time.Millisecond * 50)
+
+		srv.bin.Flush()
+		srv.tbl.Close()
+		os.Exit(0)
+	}
+}
+
+func (srv *Server) IsClosed() bool {
+	return atomic.LoadUint32(&srv.closed) > 0
 }
 
 func TableDirName(conf *config.Config) string {
@@ -884,6 +975,9 @@ func (srv *Server) processRead() {
 	for {
 		select {
 		case req := <-srv.reqChan.ReadReqChan:
+			if srv.IsClosed() {
+				continue
+			}
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
 				case proto.CmdAuth:
@@ -906,6 +1000,9 @@ func (srv *Server) processWrite() {
 	for {
 		select {
 		case req := <-srv.reqChan.WriteReqChan:
+			if srv.IsClosed() {
+				continue
+			}
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
 				case proto.CmdSet:
@@ -930,6 +1027,9 @@ func (srv *Server) processSync() {
 	for {
 		select {
 		case req := <-srv.reqChan.SyncReqChan:
+			if srv.IsClosed() {
+				continue
+			}
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
 				case proto.CmdSet:
@@ -958,6 +1058,9 @@ func (srv *Server) processDump() {
 	for {
 		select {
 		case req := <-srv.reqChan.DumpReqChan:
+			if srv.IsClosed() {
+				continue
+			}
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
 				case proto.CmdDump:
@@ -972,6 +1075,9 @@ func (srv *Server) processCtrl() {
 	for {
 		select {
 		case req := <-srv.reqChan.CtrlReqChan:
+			if srv.IsClosed() {
+				continue
+			}
 			if !req.Cli.IsClosed() {
 				switch req.Cmd {
 				case proto.CmdSlaveOf:
@@ -984,76 +1090,6 @@ func (srv *Server) processCtrl() {
 					srv.deleteUnit(req)
 				}
 			}
-		}
-	}
-}
-
-func Run(conf *config.Config) {
-	log.SetFlags(log.Flags() | log.Lshortfile)
-
-	var srv = NewServer(conf)
-	if srv == nil {
-		log.Fatalln("Failed to create new server.")
-		return
-	}
-
-	go srv.bin.GoWriteBinLog()
-
-	var totalProcNum = runtime.NumCPU() * 2
-	var writeProcNum = totalProcNum / 4
-	var readProcNum = totalProcNum - writeProcNum
-	if writeProcNum < 2 {
-		writeProcNum = 2
-	}
-	for i := 0; i < readProcNum; i++ {
-		go srv.processRead()
-	}
-	for i := 0; i < writeProcNum; i++ {
-		go srv.processWrite()
-	}
-	go srv.processSync() // Use 1 goroutine to make sure data consistency
-	go srv.processDump()
-	go srv.processCtrl()
-
-	log.Printf("Goroutine distribution: read %d, write %d, %s\n",
-		readProcNum, writeProcNum, "sync 1, dump 1, ctrl 1")
-
-	link, err := net.Listen(conf.Db.Network, conf.Db.Address)
-	if err != nil {
-		log.Fatalln("Listen failed:", err)
-	}
-
-	log.Printf("GoTable %s started on %s://%s\n",
-		table.Version, conf.Db.Network, conf.Db.Address)
-
-	// Normal slaver, reconnect to master
-	hasMaster, migration, _ := srv.mc.GetMasterUnit()
-	if hasMaster && !migration {
-		lastSeq, valid := srv.bin.GetMasterSeq()
-		if !valid {
-			srv.mc.SetStatus(ctrl.SlaverNeedClear)
-			// Any better solution?
-			log.Fatalf("Slaver lastSeq %d is out of sync, please clear old data! "+
-				"(Restart may fix this issue)", lastSeq)
-		}
-
-		srv.bin.AsSlaver()
-		srv.connectToMaster(srv.mc)
-	}
-
-	var authEnabled bool
-	if conf.Auth.AdminPwd != "" {
-		authEnabled = true
-		srv.tbl.SetPassword(proto.AdminDbId, conf.Auth.AdminPwd)
-	}
-
-	for {
-		if c, err := link.Accept(); err == nil {
-			//log.Printf("New connection %s\t%s\n", c.RemoteAddr(), c.LocalAddr())
-
-			cli := NewClient(c, authEnabled)
-			go cli.GoRecvRequest(srv.reqChan, nil)
-			go cli.GoSendResponse()
 		}
 	}
 }

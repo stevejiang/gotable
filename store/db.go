@@ -84,8 +84,12 @@ func (db *DB) Open(name string, createIfMissing bool, maxOpenFiles int,
 	C.rocksdb_options_set_compression(db.opt, C.int(compression))
 
 	var block_options = C.rocksdb_block_based_options_create()
-	db.cache = C.rocksdb_cache_create_lru(C.size_t(cacheSize))
-	C.rocksdb_block_based_options_set_block_cache(block_options, db.cache)
+	if cacheSize > 0 {
+		db.cache = C.rocksdb_cache_create_lru(C.size_t(cacheSize))
+		C.rocksdb_block_based_options_set_block_cache(block_options, db.cache)
+	} else {
+		C.rocksdb_block_based_options_set_no_block_cache(block_options, 1)
+	}
 	db.fp = C.rocksdb_filterpolicy_create_bloom(10)
 	C.rocksdb_block_based_options_set_filter_policy(block_options, db.fp)
 

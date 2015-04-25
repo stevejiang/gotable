@@ -324,11 +324,11 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 	// Stop write globally
 	rwMtx := tbl.GetRWMutex()
 	rwMtx.Lock()
-	var valid bool
-	for lastSeq, valid = ms.bin.GetLastLogSeq(); !valid; {
+	var chanLen int
+	for lastSeq, chanLen = ms.bin.GetLogSeqChanLen(); chanLen != 0; {
 		log.Println("Stop write globally for 1ms")
 		time.Sleep(time.Millisecond)
-		lastSeq, valid = ms.bin.GetLastLogSeq()
+		lastSeq, chanLen = ms.bin.GetLogSeqChanLen()
 	}
 	var it = tbl.NewIterator(false)
 	rwMtx.Unlock()
@@ -336,36 +336,25 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 	defer it.Destroy()
 
 	// Full sync
-	var one proto.PkgOneOp
-	one.Cmd = proto.CmdSync
-	for it.SeekToFirst(); it.Valid(); it.Next() {
-		unitId, ok := store.SeekAndCopySyncPkg(it, &one)
-		if !ok {
-			break
-		}
-		if ms.migration && ms.unitId != unitId {
-			if ms.unitId < unitId {
-				break
-			} else if ms.unitId > unitId {
-				store.SeekToUnit(it, ms.unitId, 0, 0)
-				if !it.Valid() {
-					break
-				}
-				unitId, ok = store.SeekAndCopySyncPkg(it, &one)
-				if !ok || ms.unitId != unitId {
-					break
-				}
-			}
-		}
+	var p proto.PkgMultiOp
+	p.Cmd = proto.CmdSync
+	for it.SeekToFirst(); it.Valid(); {
+		ok := store.SeekAndCopySyncPkg(it, &p, ms.migration, ms.unitId)
 
 		if ms.cli.IsClosed() {
 			return lastSeq
 		}
 
-		one.Seq = 0
-		var pkg = make([]byte, one.Length())
-		one.Encode(pkg)
-		ms.cli.AddResp(pkg)
+		if len(p.Kvs) > 0 {
+			p.Seq = 0
+			var pkg = make([]byte, p.Length())
+			p.Encode(pkg)
+			ms.cli.AddResp(pkg)
+		}
+
+		if !ok {
+			break
+		}
 	}
 
 	// Tell slaver full sync finished

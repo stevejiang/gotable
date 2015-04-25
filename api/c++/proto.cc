@@ -59,12 +59,8 @@ void overWriteSeq(char* pkg, uint64_t seq) {
 int readPkg(int fd, char* buf, int bufLen, PkgHead* head, string& pkg) {
 	pkg.clear();
 
-	if(buf == NULL || bufLen < HeadSize) {
+	if(buf == NULL || bufLen < HeadSize || head == NULL) {
 		return -2;
-	}
-
-	if (head == NULL) {
-		head = new PkgHead();
 	}
 
 	int readLen = 0;
