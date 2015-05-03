@@ -48,7 +48,7 @@ func main() {
 			if err == linenoise.KillSignalError {
 				os.Exit(0)
 			}
-			writeln("Unexpected error: %s" + err.Error())
+			writeln("Unexpected error: " + err.Error())
 			os.Exit(0)
 		}
 		fields := fullMatchString(re, line)
@@ -150,7 +150,7 @@ func writeHelp() {
 	writeln(" zscan <tableId> <rowKey> <score> <colKey> [num]")
 	writeln("                            zscan columns of rowKey in ASC order by score")
 	writeln("  dump <dbId> [tableId]     dump the selected database or the table. Fields are:")
-	writeln("                            dbId, tableId, rowKey, colSpace, colKey, value, score")
+	writeln("                            tableId, rowKey, colSpace, colKey, value, score")
 	writeln("slaveof [host]              be slave of master host(ip:port)")
 	writeln("  ping                      ping the server")
 	writeln(" clear                      clear the screen")
@@ -166,7 +166,7 @@ func writeUnrecognized() {
 
 func checkError(err error) {
 	if err != nil {
-		writeln("Failed with error: %s" + err.Error())
+		writeln("Failed with error: " + err.Error())
 	}
 }
 

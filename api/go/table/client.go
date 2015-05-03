@@ -32,7 +32,7 @@ import (
 const Version = "1.0.2" // GoTable version
 
 var (
-	ErrShutdown     = errors.New("connection is shut down")
+	ErrShutdown     = errors.New("connection is shutdown")
 	ErrCallNotReady = errors.New("call not ready to reply")
 	ErrClosedPool   = errors.New("connection pool is closed")
 	ErrNoValidAddr  = errors.New("no valid address")
@@ -61,22 +61,22 @@ var (
 const (
 	EcNotExist    = 1   // Key NOT exist
 	EcOk          = 0   // Success
-	EcCasNotMatch = -50 // CAS not match, get new CAS and try again
-	EcTempFail    = -51 // Temporary failed, retry may fix this
-	EcUnknownCmd  = -60 // Unknown cmd
-	EcAuthFailed  = -61 // Authorize failed
-	EcNoPrivilege = -62 // No access privilege
-	EcWriteSlaver = -63 // Can NOT write slaver directly
-	EcSlaverCas   = -64 // Invalid CAS on slaver for GET/MGET (cannot be 0)
-	EcReadFail    = -65 // Read failed
-	EcWriteFail   = -66 // Write failed
-	EcDecodeFail  = -67 // Decode request PKG failed
-	EcInvDbId     = -68 // Invalid DB ID (cannot be 255)
-	EcInvRowKey   = -69 // RowKey length should be [1 ~ 255]
-	EcInvValue    = -70 // Value length should be [0 ~ 1MB]
-	EcInvPkgLen   = -71 // Pkg length should be less than 2MB
-	EcInvScanNum  = -72 // Scan request number out of range
-	EcScanEnded   = -73 // Already scan/dump to end
+	EcCasNotMatch = -1  // CAS not match, get new CAS and try again
+	EcTempFail    = -2  // Temporary failed, retry may fix this
+	EcUnknownCmd  = -10 // Unknown cmd
+	EcAuthFailed  = -11 // Authorize failed
+	EcNoPrivilege = -12 // No access privilege
+	EcWriteSlaver = -13 // Can NOT write slaver directly
+	EcSlaverCas   = -14 // Invalid CAS on slaver for GET/MGET
+	EcReadFail    = -15 // Read failed
+	EcWriteFail   = -16 // Write failed
+	EcDecodeFail  = -17 // Decode request PKG failed
+	EcInvDbId     = -18 // Invalid DB ID (cannot be 255)
+	EcInvRowKey   = -19 // RowKey length should be [1 ~ 255]
+	EcInvValue    = -20 // Value length should be [0 ~ 1MB]
+	EcInvPkgLen   = -21 // Pkg length should be less than 2MB
+	EcInvScanNum  = -22 // Scan request number out of range
+	EcScanEnded   = -23 // Already scan/dump to end
 )
 
 var tableErrors = make([]error, 256)

@@ -22,6 +22,7 @@ import (
 	"github.com/stevejiang/gotable/store"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -31,10 +32,10 @@ type slaver struct {
 	reqChan  *RequestChan
 	bin      *binlog.BinLog
 	mc       *config.MasterConfig
-	mi       config.MasterInfo
 	adminPwd string
 
 	mtx    sync.Mutex // protects following
+	mi     config.MasterInfo
 	cli    *Client
 	closed bool
 }
@@ -88,21 +89,50 @@ func (slv *slaver) GoConnectToMaster() {
 	slv.mc = nil
 }
 
+func getRealAddr(slaverAddr, localAddr string) string {
+	var las = strings.Split(localAddr, ":")
+	if len(las) != 2 {
+		return slaverAddr
+	}
+	if strings.Index(slaverAddr, "127.0.0.1:") == 0 {
+		var sas = strings.Split(slaverAddr, ":")
+
+		if len(sas) != 2 {
+			return slaverAddr
+		}
+
+		return las[0] + ":" + sas[1]
+	}
+
+	if strings.Index(slaverAddr, ":") == 0 {
+		return las[0] + slaverAddr
+	}
+
+	return slaverAddr
+}
+
 func (slv *slaver) doConnectToMaster() {
+	slv.mtx.Lock()
+	var mi = slv.mi
+	slv.mtx.Unlock()
+
 	for {
 		if slv.IsClosed() {
 			return
 		}
 
-		c, err := net.Dial("tcp", slv.mi.MasterAddr)
+		c, err := net.Dial("tcp", mi.MasterAddr)
 		if err != nil {
 			log.Printf("Connect to master %s failed, sleep 1 second and try again.\n",
-				slv.mi.MasterAddr)
+				mi.MasterAddr)
 			time.Sleep(time.Second)
 			continue
 		}
 
-		if c.RemoteAddr().String() == slv.mi.SlaverAddr {
+		mi.MasterAddr = getRealAddr(mi.MasterAddr, c.RemoteAddr().String())
+		mi.SlaverAddr = getRealAddr(mi.SlaverAddr, c.LocalAddr().String())
+
+		if mi.MasterAddr == mi.SlaverAddr {
 			log.Printf("Master and slaver address are the same!\n")
 			c.Close()
 			slv.Close()
@@ -111,6 +141,7 @@ func (slv *slaver) doConnectToMaster() {
 
 		cli := NewClient(c, false)
 		slv.mtx.Lock()
+		slv.mi = mi
 		slv.cli = cli
 		slv.mtx.Unlock()
 		if slv.IsClosed() {
@@ -145,19 +176,23 @@ func (slv *slaver) doConnectToMaster() {
 }
 
 func (slv *slaver) SendSlaveOfToMaster() error {
+	slv.mtx.Lock()
+	var mi = slv.mi
 	var cli = slv.cli
+	slv.mtx.Unlock()
+
 	if cli == nil {
 		return nil
 	}
 
 	var err error
 	var pkg []byte
-	if slv.mi.Migration {
+	if mi.Migration {
 		var p ctrl.PkgMigrate
 		p.ClientReq = false
-		p.MasterAddr = slv.mi.MasterAddr
-		p.SlaverAddr = slv.mi.SlaverAddr
-		p.UnitId = slv.mi.UnitId
+		p.MasterAddr = mi.MasterAddr
+		p.SlaverAddr = mi.SlaverAddr
+		p.UnitId = mi.UnitId
 
 		pkg, err = ctrl.Encode(proto.CmdMigrate, 0, 0, &p)
 		if err != nil {
@@ -174,11 +209,11 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 
 		var p ctrl.PkgSlaveOf
 		p.ClientReq = false
-		p.MasterAddr = slv.mi.MasterAddr
-		p.SlaverAddr = slv.mi.SlaverAddr
+		p.MasterAddr = mi.MasterAddr
+		p.SlaverAddr = mi.SlaverAddr
 		p.LastSeq = lastSeq
 		log.Printf("Connect to master %s with lastSeq %d\n",
-			slv.mi.MasterAddr, p.LastSeq)
+			mi.MasterAddr, p.LastSeq)
 
 		pkg, err = ctrl.Encode(proto.CmdSlaveOf, 0, 0, &p)
 		if err != nil {
@@ -191,7 +226,9 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 }
 
 func (slv *slaver) SendAuthToMaster() error {
+	slv.mtx.Lock()
 	var cli = slv.cli
+	slv.mtx.Unlock()
 	if cli == nil {
 		return nil
 	}
@@ -275,7 +312,7 @@ func (ms *master) doClose() {
 
 func (ms *master) doDelayClose() {
 	// Any better solution?
-	log.Printf("Delay close master %p\n", ms)
+	log.Printf("Delay close master sync to slaver %s\n", ms.slaveAddr)
 	time.Sleep(time.Second * 2)
 	ms.doClose()
 }
@@ -373,7 +410,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 func (ms *master) GoAsync(tbl *store.Table) {
 	var lastSeq = ms.fullSync(tbl)
 	if ms.IsClosed() || ms.cli.IsClosed() {
-		log.Println("Master-slaver connection is closed, stop sync!")
+		ms.doClose()
 		return
 	}
 

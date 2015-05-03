@@ -95,6 +95,8 @@ func NewBinLog(dir string, memSize, keepNum int) *BinLog {
 		return nil
 	}
 
+	go bin.goWriteBinLog()
+
 	log.Printf("BinLog fileIdx %d, logSeq %d, memSize %dMB, keepNum %d\n",
 		bin.fileIdx, bin.logSeq, memSize/1024/1024, keepNum)
 
@@ -203,7 +205,7 @@ func (bin *BinLog) GetSeqFileName(fileIdx uint64) string {
 	return fmt.Sprintf("%s/%06d.seq", bin.dir, fileIdx)
 }
 
-func (bin *BinLog) GoWriteBinLog() {
+func (bin *BinLog) goWriteBinLog() {
 	var ms []Monitor
 	var last1, last2 *Request
 	var tick = time.Tick(time.Second)

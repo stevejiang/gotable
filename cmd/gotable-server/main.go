@@ -22,7 +22,6 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
-	"runtime"
 	"runtime/pprof"
 	"syscall"
 )
@@ -39,12 +38,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %s", err)
 	}
-
-	var maxProcs = conf.Db.MaxCpuNum
-	if maxProcs <= 0 {
-		maxProcs = runtime.NumCPU()
-	}
-	runtime.GOMAXPROCS(maxProcs)
 
 	var srv = server.NewServer(conf)
 	if srv == nil {

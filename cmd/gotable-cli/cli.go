@@ -427,8 +427,8 @@ func (c *client) dump(args []string) error {
 
 	for {
 		for _, kv := range r.Kvs {
-			fmt.Printf("%d\t%d\t%q\t%d\t%q\t%q\t%d\n",
-				dbId, kv.TableId, kv.RowKey, kv.ColSpace, kv.ColKey, kv.Value, kv.Score)
+			fmt.Printf("%d\t%q\t%d\t%q\t%q\t%d\n",
+				kv.TableId, kv.RowKey, kv.ColSpace, kv.ColKey, kv.Value, kv.Score)
 		}
 
 		if r.End {

@@ -43,8 +43,6 @@ var (
 	profileport = flag.String("profileport", "", "Profile port, such as 8080")
 )
 
-var valueData []byte
-
 func main() {
 	flag.Parse()
 	if *maxProcs > 0 {

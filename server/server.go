@@ -83,9 +83,15 @@ func NewServer(conf *config.Config) *Server {
 	srv.reqChan.DumpReqChan = make(chan *Request, 16)
 	srv.reqChan.CtrlReqChan = make(chan *Request, 16)
 
-	go srv.bin.GoWriteBinLog()
+	var maxProcs = conf.Db.MaxCpuNum
+	if maxProcs <= 0 {
+		maxProcs = runtime.NumCPU()
+	}
+	runtime.GOMAXPROCS(maxProcs)
 
-	var totalProcNum = runtime.NumCPU() * 2
+	log.Printf("NumCPU %d, GOMAXPROCS %d\n", runtime.NumCPU(), maxProcs)
+
+	var totalProcNum = maxProcs * 2
 	var writeProcNum = totalProcNum / 4
 	var readProcNum = totalProcNum - writeProcNum
 	if writeProcNum < 2 {
@@ -163,7 +169,7 @@ func (srv *Server) Close() {
 		time.Sleep(time.Millisecond * 50)
 
 		srv.bin.Flush()
-		srv.tbl.Close()
+		//srv.tbl.Close()
 		os.Exit(0)
 	}
 }
@@ -184,6 +190,10 @@ func ConfigDirName(conf *config.Config) string {
 	return fmt.Sprintf("%s/config", conf.Db.Data)
 }
 
+func BackupDirName(conf *config.Config) string {
+	return fmt.Sprintf("%s/backup", conf.Db.Data)
+}
+
 func clearSlaverOldData(conf *config.Config, mc *config.MasterConfig) error {
 	var err error
 	m := mc.GetMaster()
@@ -199,16 +209,28 @@ func clearSlaverOldData(conf *config.Config, mc *config.MasterConfig) error {
 			return err
 		}
 
+		// Move binlog & table to backup in case you need the old data
+		var backupDir = BackupDirName(conf)
+		err = os.RemoveAll(backupDir)
+		if err != nil {
+			return err
+		}
+
+		err = os.MkdirAll(backupDir, os.ModeDir|os.ModePerm)
+		if err != nil {
+			return err
+		}
+
 		var binlogDir = BinLogDirName(conf)
-		log.Printf("Delete dir %s\n", binlogDir)
-		err = os.RemoveAll(binlogDir)
+		log.Println("Move directory binlog to backup")
+		err = os.Rename(binlogDir, backupDir+"/binlog")
 		if err != nil {
 			return err
 		}
 
 		var tableDir = TableDirName(conf)
-		log.Printf("Delete dir %s\n", tableDir)
-		err = os.RemoveAll(tableDir)
+		log.Println("Move directory table to backup")
+		err = os.Rename(tableDir, backupDir+"/table")
 		if err != nil {
 			return err
 		}
@@ -606,8 +628,8 @@ func (srv *Server) newNormalMaster(req *Request, p *ctrl.PkgSlaveOf) {
 
 		req.Cli.SetClientType(ClientTypeMaster) // switch client type
 
-		log.Printf("Receive a slave connection from %s, lastSeq=%d\n",
-			req.Cli.c.RemoteAddr(), p.LastSeq)
+		log.Printf("Receive a slave connection from %s (%s), lastSeq=%d\n",
+			p.SlaverAddr, req.Cli.c.RemoteAddr(), p.LastSeq)
 
 		ms := NewMaster(p.SlaverAddr, p.LastSeq, false, 0, req.Cli, srv.bin)
 		go ms.GoAsync(srv.tbl)
@@ -641,7 +663,7 @@ func (srv *Server) newMigMaster(req *Request, p *ctrl.PkgMigrate) {
 
 		req.Cli.SetClientType(ClientTypeMaster) // switch client type
 
-		log.Printf("Receive a migration slave connection from %s(%s)\n",
+		log.Printf("Receive a migration slaver connection from %s(%s)\n",
 			req.Cli.c.RemoteAddr(), p.SlaverAddr)
 
 		ms := NewMaster(p.SlaverAddr, 0, true, p.UnitId, req.Cli, srv.bin)
