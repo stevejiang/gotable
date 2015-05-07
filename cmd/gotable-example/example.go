@@ -145,7 +145,7 @@ func printScanReply(r table.ScanReply) {
 
 func testScan(tc *table.Context) {
 	// SCAN
-	r, err := tc.Scan(1, []byte("row1"), []byte("col0"), true, 10)
+	r, err := tc.Scan(1, []byte("row1"), true, 10)
 	if err != nil {
 		fmt.Printf("Scan failed: %s\n", err)
 		return
@@ -182,7 +182,7 @@ func testZScan(tc *table.Context) {
 	}
 
 	// ZSCAN
-	r, err := tc.ZScanStart(1, []byte("row2"), true, true, 4)
+	r, err := tc.ZScan(1, []byte("row2"), true, true, 4)
 	if err != nil {
 		fmt.Printf("ZScan failed: %s\n", err)
 		return
@@ -283,15 +283,15 @@ func testPing(tc *table.Context) {
 
 func testAsync(tc *table.Context) {
 	//var done = make(chan *table.Call, 2)
-	c1, err := tc.GoScanStart(1, []byte("row1"), true, 10, nil)
+	c1, err := tc.GoScan(1, []byte("row1"), true, 10, nil)
 	if err != nil {
 		fmt.Printf("GoScan failed: %s\n", err)
 		return
 	}
 
-	c2, err := tc.GoZScanStart(1, []byte("row2"), true, true, 10, nil)
+	c2, err := tc.GoZScan(1, []byte("row2"), true, true, 10, nil)
 	if err != nil {
-		fmt.Printf("GoZScanStart failed: %s\n", err)
+		fmt.Printf("GoZScan failed: %s\n", err)
 		return
 	}
 

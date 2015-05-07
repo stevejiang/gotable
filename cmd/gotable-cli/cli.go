@@ -324,7 +324,7 @@ func (c *client) scan(args []string) error {
 		}
 	}
 
-	r, err := c.c.Scan(tableId, []byte(rowKey), []byte(colKey), true, int(num))
+	r, err := c.c.ScanPivot(tableId, []byte(rowKey), []byte(colKey), true, int(num))
 	if err != nil {
 		return err
 	}
@@ -374,7 +374,7 @@ func (c *client) zscan(args []string) error {
 		}
 	}
 
-	r, err := c.c.ZScan(tableId, []byte(rowKey), []byte(colKey), score,
+	r, err := c.c.ZScanPivot(tableId, []byte(rowKey), []byte(colKey), score,
 		true, true, int(num))
 	if err != nil {
 		return err

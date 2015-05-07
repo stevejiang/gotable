@@ -14,43 +14,23 @@
 
 package util
 
-type BitMap struct {
-	ab []uint8
-}
+import (
+	"strings"
+)
 
-// NewBitMap returns a new BitMap with size in bytes.
-func NewBitMap(size uint) *BitMap {
-	bm := new(BitMap)
-	bm.ab = make([]uint8, size)
-
-	return bm
-}
-
-func (bm *BitMap) Get(index uint) bool {
-	if len(bm.ab)*8 > int(index) {
-		idx := index / 8
-		bit := index % 8
-
-		return bm.ab[idx]&(1<<bit) != 0
+func GetRealAddr(writtenAddr, netAddr string) string {
+	var nas = strings.Split(netAddr, ":")
+	if len(nas) != 2 || len(nas[0]) == 0 {
+		return writtenAddr
+	}
+	if strings.Index(writtenAddr, "127.0.0.1:") == 0 {
+		var was = strings.Split(writtenAddr, ":")
+		return nas[0] + ":" + was[1]
 	}
 
-	return false
-}
-
-func (bm *BitMap) Set(index uint) {
-	if len(bm.ab)*8 > int(index) {
-		idx := index / 8
-		bit := index % 8
-
-		bm.ab[idx] |= (1 << bit)
+	if strings.Index(writtenAddr, ":") == 0 {
+		return nas[0] + writtenAddr
 	}
-}
 
-func (bm *BitMap) Clear(index uint) {
-	if len(bm.ab)*8 > int(index) {
-		idx := index / 8
-		bit := index % 8
-
-		bm.ab[idx] &^= (1 << bit)
-	}
+	return writtenAddr
 }

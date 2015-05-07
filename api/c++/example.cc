@@ -111,7 +111,7 @@ void testMGet(Client* cli) {
 
 void testScan(Client* cli) {
 	ScanReply reply;
-	int err = cli->scan(1, "row1", "col0", true, 10, &reply);
+	int err = cli->scan(1, "row1", true, 10, &reply);
 	if(err < 0) {
 		printf("scan failed: %d\n", err);
 		return;
@@ -151,7 +151,7 @@ void testZScan(Client* cli) {
 	}
 
 	ScanReply reply;
-	err = cli->zScanStart(1, "row2", true, true, 4, &reply);
+	err = cli->zScan(1, "row2", true, true, 4, &reply);
 	if(err < 0) {
 		printf("zScan failed: %d\n", err);
 		return;

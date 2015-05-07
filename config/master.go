@@ -30,10 +30,10 @@ const (
 
 type MasterInfo struct {
 	MasterAddr string // Master address ip:host
-	SlaverAddr string // This server address ip:host
-	Migration  bool   // true: Migration; false: Normal master/slaver
+	SlaveAddr  string // This server address ip:host
+	Migration  bool   // true: Migration; false: Normal master/slave
 	UnitId     uint16 // Only meaningful for migration
-	Status     int    // Status of Slaver/Migration
+	Status     int    // Status of Slave/Migration
 }
 
 type MasterEncoding struct {
@@ -69,13 +69,13 @@ func NewMasterConfig(dir string) *MasterConfig {
 	if mc.m.HasMaster {
 		if mc.m.Migration {
 			// Need to clear old data first
-			if mc.m.Status != ctrl.SlaverClear {
-				mc.m.Status = ctrl.SlaverNeedClear
+			if mc.m.Status != ctrl.SlaveClear {
+				mc.m.Status = ctrl.SlaveNeedClear
 			}
 		} else {
-			if mc.m.Status != ctrl.SlaverNeedClear &&
-				mc.m.Status != ctrl.SlaverClear {
-				mc.m.Status = ctrl.SlaverInit
+			if mc.m.Status != ctrl.SlaveNeedClear &&
+				mc.m.Status != ctrl.SlaveClear {
+				mc.m.Status = ctrl.SlaveInit
 			}
 		}
 	}
@@ -155,41 +155,41 @@ func (mc *MasterConfig) save(m *MasterEncoding) error {
 	return nil
 }
 
-func (mc *MasterConfig) SetMaster(masterAddr, slaverAddr string) error {
+func (mc *MasterConfig) SetMaster(masterAddr, slaveAddr string) error {
 	mc.mtx.RLock()
 	var m = mc.m
 	mc.mtx.RUnlock()
 
 	if m.HasMaster && m.Migration {
-		return fmt.Errorf("server is under migration and cannot change master/slaver")
+		return fmt.Errorf("server is under migration and cannot change master/slave")
 	}
 
 	if len(masterAddr) > 0 {
 		m.HasMaster = true
 		m.LastTime = time.Now()
 		m.MasterAddr = masterAddr
-		m.SlaverAddr = slaverAddr
+		m.SlaveAddr = slaveAddr
 		m.Migration = false
 		m.UnitId = ctrl.TotalUnitNum // Exceed
-		m.Status = ctrl.SlaverInit
+		m.Status = ctrl.SlaveInit
 	} else {
 		m.HasMaster = false
 		m.LastTime = time.Now()
-		m.Status = ctrl.NotSlaver
+		m.Status = ctrl.NotSlave
 	}
 
 	return mc.save(&m)
 }
 
-func (mc *MasterConfig) SetMigration(masterAddr, slaverAddr string, unitId uint16) error {
+func (mc *MasterConfig) SetMigration(masterAddr, slaveAddr string, unitId uint16) error {
 	mc.mtx.RLock()
 	var m = mc.m
 	mc.mtx.RUnlock()
 
 	if m.HasMaster {
 		if !m.Migration {
-			return fmt.Errorf("server is a slaver and cannot start/stop migration")
-		} else if m.Status == ctrl.SlaverClear {
+			return fmt.Errorf("server is a slave and cannot start/stop migration")
+		} else if m.Status == ctrl.SlaveClear {
 			return fmt.Errorf("cannot update migration config when clearing data")
 		}
 	}
@@ -205,14 +205,14 @@ func (mc *MasterConfig) SetMigration(masterAddr, slaverAddr string, unitId uint1
 		m.HasMaster = true
 		m.LastTime = time.Now()
 		m.MasterAddr = masterAddr
-		m.SlaverAddr = slaverAddr
+		m.SlaveAddr = slaveAddr
 		m.Migration = true
 		m.UnitId = unitId
-		m.Status = ctrl.SlaverInit
+		m.Status = ctrl.SlaveInit
 	} else {
 		m.HasMaster = false
 		m.LastTime = time.Now()
-		m.Status = ctrl.NotSlaver
+		m.Status = ctrl.NotSlave
 	}
 
 	return mc.save(&m)
@@ -222,7 +222,7 @@ func (mc *MasterConfig) SetStatus(status int) error {
 	var changed bool
 	mc.mtx.Lock()
 	if mc.m.HasMaster {
-		if status == ctrl.NotSlaver {
+		if status == ctrl.NotSlave {
 			mc.m.HasMaster = false
 			changed = true
 		}
@@ -242,7 +242,7 @@ func (mc *MasterConfig) SetStatus(status int) error {
 }
 
 func (mc *MasterConfig) Status() int {
-	var st int = ctrl.NotSlaver
+	var st int = ctrl.NotSlave
 	mc.mtx.RLock()
 	if mc.m.HasMaster {
 		st = mc.m.Status
@@ -261,7 +261,7 @@ func (mc *MasterConfig) GetMaster() MasterInfo {
 	mc.mtx.RUnlock()
 
 	if len(m.MasterAddr) == 0 {
-		m.Status = ctrl.NotSlaver
+		m.Status = ctrl.NotSlave
 	}
 
 	return m

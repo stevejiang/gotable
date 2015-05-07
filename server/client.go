@@ -29,12 +29,12 @@ import (
 const (
 	ClientTypeNormal = iota
 	ClientTypeMaster
-	ClientTypeSlaver
+	ClientTypeSlave
 )
 
 type Request struct {
 	Cli *Client
-	Slv *slaver
+	Slv *slave
 	store.PkgArgs
 }
 
@@ -161,7 +161,7 @@ func (c *Client) SetAuth(dbId uint8) {
 	}
 }
 
-func (c *Client) GoRecvRequest(ch *RequestChan, slv *slaver) {
+func (c *Client) GoRecvRequest(ch *RequestChan, slv *slave) {
 	var headBuf = make([]byte, proto.HeadSize)
 	var head proto.PkgHead
 	for {
@@ -216,7 +216,7 @@ func (c *Client) GoRecvRequest(ch *RequestChan, slv *slaver) {
 			ch.DumpReqChan <- &req
 		case proto.CmdDelUnit:
 			fallthrough
-		case proto.CmdSlaverSt:
+		case proto.CmdSlaveSt:
 			fallthrough
 		case proto.CmdMigrate:
 			fallthrough

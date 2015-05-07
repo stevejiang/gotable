@@ -20,7 +20,7 @@ import (
 )
 
 type WriteAccess struct {
-	replication bool // Replication slaver
+	replication bool // Replication slave
 	hasMaster   bool
 	migration   bool
 	unitId      uint16

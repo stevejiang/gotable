@@ -20,15 +20,15 @@ import (
 	"github.com/stevejiang/gotable/config"
 	"github.com/stevejiang/gotable/ctrl"
 	"github.com/stevejiang/gotable/store"
+	"github.com/stevejiang/gotable/util"
 	"log"
 	"net"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type slaver struct {
+type slave struct {
 	reqChan  *RequestChan
 	bin      *binlog.BinLog
 	mc       *config.MasterConfig
@@ -40,9 +40,9 @@ type slaver struct {
 	closed bool
 }
 
-func NewSlaver(reqChan *RequestChan, bin *binlog.BinLog,
-	mc *config.MasterConfig, adminPwd string) *slaver {
-	var slv = new(slaver)
+func NewSlave(reqChan *RequestChan, bin *binlog.BinLog,
+	mc *config.MasterConfig, adminPwd string) *slave {
+	var slv = new(slave)
 	slv.reqChan = reqChan
 	slv.bin = bin
 	slv.mc = mc
@@ -52,7 +52,7 @@ func NewSlaver(reqChan *RequestChan, bin *binlog.BinLog,
 	return slv
 }
 
-func (slv *slaver) Close() {
+func (slv *slave) Close() {
 	var cli *Client
 	slv.mtx.Lock()
 	if !slv.closed {
@@ -66,21 +66,21 @@ func (slv *slaver) Close() {
 	}
 }
 
-func (slv *slaver) DelayClose() {
+func (slv *slave) DelayClose() {
 	// Any better solution?
-	log.Printf("Delay close slaver %p\n", slv)
+	log.Printf("Delay close slave %p\n", slv)
 	time.Sleep(time.Second * 2)
 	slv.Close()
 }
 
-func (slv *slaver) IsClosed() bool {
+func (slv *slave) IsClosed() bool {
 	slv.mtx.Lock()
 	closed := slv.closed
 	slv.mtx.Unlock()
 	return closed
 }
 
-func (slv *slaver) GoConnectToMaster() {
+func (slv *slave) GoConnectToMaster() {
 	slv.doConnectToMaster()
 
 	slv.cli = nil
@@ -89,29 +89,7 @@ func (slv *slaver) GoConnectToMaster() {
 	slv.mc = nil
 }
 
-func getRealAddr(slaverAddr, localAddr string) string {
-	var las = strings.Split(localAddr, ":")
-	if len(las) != 2 {
-		return slaverAddr
-	}
-	if strings.Index(slaverAddr, "127.0.0.1:") == 0 {
-		var sas = strings.Split(slaverAddr, ":")
-
-		if len(sas) != 2 {
-			return slaverAddr
-		}
-
-		return las[0] + ":" + sas[1]
-	}
-
-	if strings.Index(slaverAddr, ":") == 0 {
-		return las[0] + slaverAddr
-	}
-
-	return slaverAddr
-}
-
-func (slv *slaver) doConnectToMaster() {
+func (slv *slave) doConnectToMaster() {
 	slv.mtx.Lock()
 	var mi = slv.mi
 	slv.mtx.Unlock()
@@ -129,11 +107,11 @@ func (slv *slaver) doConnectToMaster() {
 			continue
 		}
 
-		mi.MasterAddr = getRealAddr(mi.MasterAddr, c.RemoteAddr().String())
-		mi.SlaverAddr = getRealAddr(mi.SlaverAddr, c.LocalAddr().String())
+		mi.MasterAddr = util.GetRealAddr(mi.MasterAddr, c.RemoteAddr().String())
+		mi.SlaveAddr = util.GetRealAddr(mi.SlaveAddr, c.LocalAddr().String())
 
-		if mi.MasterAddr == mi.SlaverAddr {
-			log.Printf("Master and slaver address are the same!\n")
+		if mi.MasterAddr == mi.SlaveAddr {
+			log.Printf("Master and slave addresses are the same!\n")
 			c.Close()
 			slv.Close()
 			return
@@ -148,7 +126,7 @@ func (slv *slaver) doConnectToMaster() {
 			return
 		}
 
-		cli.SetClientType(ClientTypeSlaver)
+		cli.SetClientType(ClientTypeSlave)
 
 		go cli.GoRecvRequest(slv.reqChan, slv)
 		go cli.GoSendResponse()
@@ -156,14 +134,14 @@ func (slv *slaver) doConnectToMaster() {
 		if len(slv.adminPwd) == 0 {
 			err = slv.SendSlaveOfToMaster()
 			if err != nil {
-				log.Printf("SendSlaveOfToMaster failed(%s), close slaver!", err)
+				log.Printf("SendSlaveOfToMaster failed(%s), close slave!", err)
 				slv.Close()
 				return
 			}
 		} else {
 			err = slv.SendAuthToMaster()
 			if err != nil {
-				log.Printf("SendAuthToMaster failed(%s), close slaver!", err)
+				log.Printf("SendAuthToMaster failed(%s), close slave!", err)
 				slv.Close()
 				return
 			}
@@ -175,7 +153,7 @@ func (slv *slaver) doConnectToMaster() {
 	}
 }
 
-func (slv *slaver) SendSlaveOfToMaster() error {
+func (slv *slave) SendSlaveOfToMaster() error {
 	slv.mtx.Lock()
 	var mi = slv.mi
 	var cli = slv.cli
@@ -191,7 +169,7 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 		var p ctrl.PkgMigrate
 		p.ClientReq = false
 		p.MasterAddr = mi.MasterAddr
-		p.SlaverAddr = mi.SlaverAddr
+		p.SlaveAddr = mi.SlaveAddr
 		p.UnitId = mi.UnitId
 
 		pkg, err = ctrl.Encode(proto.CmdMigrate, 0, 0, &p)
@@ -201,16 +179,16 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 	} else {
 		lastSeq, valid := slv.bin.GetMasterSeq()
 		if !valid {
-			slv.mc.SetStatus(ctrl.SlaverNeedClear)
+			slv.mc.SetStatus(ctrl.SlaveNeedClear)
 			// Any better solution?
-			log.Fatalf("Slaver lastSeq %d is out of sync, please clear old data! "+
+			log.Fatalf("Slave lastSeq %d is out of sync, please clear old data! "+
 				"(Restart may fix this issue)", lastSeq)
 		}
 
 		var p ctrl.PkgSlaveOf
 		p.ClientReq = false
 		p.MasterAddr = mi.MasterAddr
-		p.SlaverAddr = mi.SlaverAddr
+		p.SlaveAddr = mi.SlaveAddr
 		p.LastSeq = lastSeq
 		log.Printf("Connect to master %s with lastSeq %d\n",
 			mi.MasterAddr, p.LastSeq)
@@ -222,10 +200,10 @@ func (slv *slaver) SendSlaveOfToMaster() error {
 	}
 
 	cli.AddResp(pkg)
-	return slv.mc.SetStatus(ctrl.SlaverFullSync)
+	return slv.mc.SetStatus(ctrl.SlaveFullSync)
 }
 
-func (slv *slaver) SendAuthToMaster() error {
+func (slv *slave) SendAuthToMaster() error {
 	slv.mtx.Lock()
 	var cli = slv.cli
 	slv.mtx.Unlock()
@@ -258,7 +236,7 @@ type master struct {
 	reader    *binlog.Reader
 	slaveAddr string
 	lastSeq   uint64
-	migration bool   // true: Migration; false: Normal master/slaver
+	migration bool   // true: Migration; false: Normal master/slave
 	unitId    uint16 // Only meaningful for migration
 
 	// atomic
@@ -307,12 +285,12 @@ func (ms *master) doClose() {
 	ms.bin = nil
 	ms.reader = nil
 
-	log.Printf("Master sync to slaver %s is closed\n", ms.slaveAddr)
+	log.Printf("Master sync to slave %s is closed\n", ms.slaveAddr)
 }
 
 func (ms *master) doDelayClose() {
 	// Any better solution?
-	log.Printf("Delay close master sync to slaver %s\n", ms.slaveAddr)
+	log.Printf("Delay close master sync to slave %s\n", ms.slaveAddr)
 	time.Sleep(time.Second * 2)
 	ms.doClose()
 }
@@ -394,7 +372,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 		}
 	}
 
-	// Tell slaver full sync finished
+	// Tell slave full sync finished
 	if ms.migration {
 		ms.syncStatus(store.KeyFullSyncEnd, 0)
 		log.Printf("Full migration to %s unitId %d finished\n",
@@ -498,8 +476,6 @@ func (ms *master) convertMigPkg(pkg []byte, head *proto.PkgHead) ([]byte, error)
 		fallthrough
 	case proto.CmdDel:
 		fallthrough
-	case proto.CmdSync:
-		fallthrough
 	case proto.CmdSet:
 		var p proto.PkgOneOp
 		_, err = p.Decode(pkg)
@@ -511,6 +487,8 @@ func (ms *master) convertMigPkg(pkg []byte, head *proto.PkgHead) ([]byte, error)
 		} else {
 			return nil, nil
 		}
+	case proto.CmdSync:
+		fallthrough
 	case proto.CmdMIncr:
 		fallthrough
 	case proto.CmdMDel:

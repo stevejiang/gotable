@@ -180,7 +180,7 @@ func (tbl *Table) getKV(rOpt *ReadOptions, zop bool, dbId uint8,
 	kv.CtrlFlag &^= 0xFF // Clear all ctrl flags
 
 	if kv.Cas > 0 && !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
-		kv.SetErrCode(table.EcSlaverCas)
+		kv.SetErrCode(table.EcSlaveCas)
 		return nil
 	}
 
@@ -234,7 +234,7 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 		return nil
 	}
 	if !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
-		kv.SetErrCode(table.EcWriteSlaver)
+		kv.SetErrCode(table.EcWriteSlave)
 		return nil
 	}
 
@@ -272,9 +272,16 @@ func (tbl *Table) setKV(wb *WriteBatch, zop bool, dbId uint8,
 		} else if oldVal != nil {
 			// Key exists
 			oldVal, oldScore = parseRawValue(oldVal)
-			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
-				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
-			tbl.db.Del(scoreKey, wb)
+			if oldScore != kv.Score {
+				var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+					kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
+				tbl.db.Del(scoreKey, wb)
+			} else if bytes.Compare(oldVal, kv.Value) == 0 {
+				// nothing changed
+				kv.SetValue(nil)
+				kv.SetScore(0)
+				return nil
+			}
 		}
 
 		tbl.db.Put(rawKey, getRawValue(kv.Value, kv.Score), wb)
@@ -311,7 +318,7 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 		return nil
 	}
 	if !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
-		kv.SetErrCode(table.EcWriteSlaver)
+		kv.SetErrCode(table.EcWriteSlave)
 		return nil
 	}
 
@@ -352,14 +359,13 @@ func (tbl *Table) delKV(wb *WriteBatch, zop bool, dbId uint8,
 			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
 				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
 			tbl.db.Del(scoreKey, wb)
-		}
 
-		tbl.db.Del(rawKey, wb)
-
-		err = tbl.db.Commit(wb)
-		if err != nil {
-			kv.SetErrCode(table.EcWriteFail)
-			return err
+			tbl.db.Del(rawKey, wb)
+			err = tbl.db.Commit(wb)
+			if err != nil {
+				kv.SetErrCode(table.EcWriteFail)
+				return err
+			}
 		}
 	} else {
 		err = tbl.db.Del(rawKey, nil)
@@ -384,7 +390,7 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 		return nil
 	}
 	if !wa.CheckKey(dbId, kv.TableId, kv.RowKey) {
-		kv.SetErrCode(table.EcWriteSlaver)
+		kv.SetErrCode(table.EcWriteSlave)
 		return nil
 	}
 
@@ -423,10 +429,16 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 		} else if oldVal != nil {
 			oldVal, oldScore = parseRawValue(oldVal)
 			newScore += oldScore
-
-			var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
-				kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
-			tbl.db.Del(scoreKey, wb)
+			if newScore != oldScore {
+				var scoreKey = getRawKey(dbId, kv.TableId, proto.ColSpaceScore1,
+					kv.RowKey, newScoreColKey(oldScore, kv.ColKey))
+				tbl.db.Del(scoreKey, wb)
+			} else {
+				// nothing changed
+				kv.SetValue(oldVal)
+				kv.SetScore(newScore)
+				return nil
+			}
 		}
 
 		tbl.db.Put(rawKey, getRawValue(oldVal, newScore), wb)
@@ -451,6 +463,12 @@ func (tbl *Table) incrKV(wb *WriteBatch, zop bool, dbId uint8,
 		} else if oldVal != nil {
 			oldVal, oldScore = parseRawValue(oldVal)
 			newScore += oldScore
+			if newScore == oldScore {
+				// nothing changed
+				kv.SetValue(oldVal)
+				kv.SetScore(newScore)
+				return nil
+			}
 		}
 
 		kv.SetValue(oldVal)

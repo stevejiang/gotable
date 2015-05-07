@@ -63,7 +63,7 @@ type BinLog struct {
 	binBufW *bufio.Writer
 
 	mtx       sync.Mutex // The following variables are protected by mtx
-	hasMaster bool       // Has master or not
+	hasMaster bool       // Has master or not, ONLY for normal master/slave
 	msChanged bool       // Whether monitors changed
 	monitors  []Monitor
 
@@ -127,6 +127,22 @@ func (bin *BinLog) init() error {
 	return nil
 }
 
+func (bin *BinLog) Close() {
+	bin.Flush()
+
+	if bin.binFile != nil {
+		bin.binFile.Close()
+		bin.binFile = nil
+	}
+
+	if bin.reqChan != nil {
+		close(bin.reqChan)
+	}
+
+	bin.infos = nil
+	bin.rseqs = nil
+}
+
 func (bin *BinLog) Flush() {
 	if bin.binBufW != nil {
 		bin.binBufW.Flush()
@@ -162,7 +178,7 @@ func (bin *BinLog) AsMaster() {
 	bin.mtx.Unlock()
 }
 
-func (bin *BinLog) AsSlaver() {
+func (bin *BinLog) AsSlave() {
 	bin.mtx.Lock()
 	bin.hasMaster = true
 	bin.logSeq = 0
@@ -177,7 +193,7 @@ func (bin *BinLog) GetLogSeqChanLen() (uint64, int) {
 	return seq, chanLen
 }
 
-// Only for master/slaver mode
+// Only for master/slave mode
 func (bin *BinLog) GetMasterSeq() (masterSeq uint64, valid bool) {
 	masterSeq = 0
 	bin.mtx.Lock()
@@ -213,7 +229,7 @@ func (bin *BinLog) goWriteBinLog() {
 		select {
 		case req, ok := <-bin.reqChan:
 			if !ok {
-				log.Printf("binlog channel closed %p\n", bin)
+				log.Printf("write binlog channel closed: %s\n", bin.dir)
 				return
 			}
 

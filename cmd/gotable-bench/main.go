@@ -429,15 +429,15 @@ func scan(c *table.Context, done chan *table.Call, zop bool,
 	var r table.ScanReply
 	if zop {
 		if done == nil {
-			r, err = c.ZScan(0, rowKey, colKey, score, true, true, num)
+			r, err = c.ZScanPivot(0, rowKey, colKey, score, true, true, num)
 		} else {
-			_, err = c.GoZScan(0, rowKey, colKey, score, true, true, num, done)
+			_, err = c.GoZScanPivot(0, rowKey, colKey, score, true, true, num, done)
 		}
 	} else {
 		if done == nil {
-			r, err = c.Scan(0, rowKey, colKey, true, num)
+			r, err = c.ScanPivot(0, rowKey, colKey, true, num)
 		} else {
-			_, err = c.GoScan(0, rowKey, colKey, true, num, done)
+			_, err = c.GoScanPivot(0, rowKey, colKey, true, num, done)
 		}
 	}
 	if err != nil {

@@ -35,8 +35,8 @@ enum {
 	EcUnknownCmd  = -10, // Unknown cmd
 	EcAuthFailed  = -11, // Authorize failed
 	EcNoPrivilege = -12, // No access privilege
-	EcWriteSlaver = -13, // Can NOT write slaver directly
-	EcSlaverCas   = -14, // Invalid CAS on slaver for GET/MGET
+	EcWriteSlave  = -13, // Can NOT write slave directly
+	EcSlaveCas    = -14, // Invalid CAS on slave for GET/MGET
 	EcReadFail    = -15, // Read failed
 	EcWriteFail   = -16, // Write failed
 	EcDecodeFail  = -17, // Decode request PKG failed
@@ -217,8 +217,8 @@ public:
 	// return a new CAS, 1 means read data on master machine but without a
 	// new CAS, 0(NULL) means read data on any machine without a new CAS.
 	// On cluster mode, routing to master machine is automatically, but on a
-	// normal master/slaver mode it should be done manually.
-	// If CAS 1&2 sent to a slaver machine, error will be returned.
+	// normal master/slave mode it should be done manually.
+	// If CAS 1&2 sent to a slave machine, error will be returned.
 	// Return value <0 means failed, 0 means succeed, 1 means key not exist.
 	int get(uint8_t tableId, const string& rowKey, const string& colKey,
 			string* value, int64_t* score, uint32_t* cas=NULL);
@@ -296,47 +296,53 @@ public:
 	// Return value <0 means failed, 0 means succeed.
 	int zmIncr(const vector<IncrArgs>& args, vector<IncrReply>* reply);
 
-	// Scan columns of the selected rowKey in default column space.
-	// The colKey is the pivot record(excluded). If asc is true SCAN in ASC order,
-	// else SCAN in DESC order. It replies at most num records.
+	// Scan columns of rowKey in default column space from MIN/MAX colKey.
+	// If asc is true SCAN start from the MIN colKey, else SCAN from the MAX colKey.
+	// It replies at most num records.
 	// Return value <0 means failed, 0 means succeed.
-	int scan(uint8_t tableId, const string& rowKey, const string& colKey,
+	int scan(uint8_t tableId, const string& rowKey,
 			bool asc, int num, ScanReply* reply);
 
-	// Convenient API of SCAN. If asc is true SCAN start from the minimum colKey,
-	// else start from the maximum colKey. It replies at most num records.
+	// Scan columns of rowKey in default column space from pivot record.
+	// The colKey is the pivot record where scan starts.
+	// If asc is true SCAN in ASC order, else SCAN in DESC order.
+	// It replies at most num records. The pivot record is excluded from the reply.
 	// Return value <0 means failed, 0 means succeed.
-	int scanStart(uint8_t tableId, const string& rowKey,
+	int scanPivot(uint8_t tableId, const string& rowKey, const string& colKey,
 			bool asc, int num, ScanReply* reply);
 
-	// Scan columns of the selected rowKey in "Z" sorted score space.
-	// The colKey and score is the pivot record(excluded). If asc is true ZSCAN in ASC order,
-	// else ZSCAN in DESC order. If orderByScore is true ZSCAN order by score+colKey,
-	// else ZSCAN order by colKey. It replies at most num records.
+	// Scan columns of rowKey in "Z" sorted score space from MIN/MAX colKey and score.
+	// If asc is true ZSCAN start from the MIN colKey and score,
+	// else ZSCAN from the MAX colKey and score.
+	// If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
+	// It replies at most num records.
 	// Return value <0 means failed, 0 means succeed.
-	int zScan(uint8_t tableId, const string& rowKey, const string& colKey, int64_t score,
+	int zScan(uint8_t tableId, const string& rowKey,
 			bool asc, bool orderByScore, int num, ScanReply* reply);
 
-	// Convenient API of ZSCAN. If asc is true SCAN start from the minimum colKey and score,
-	// else start from the maximum colKey and score. If orderByScore is true ZSCAN order by
-	// score+colKey, else ZSCAN order by colKey. It replies at most num records.
+	// Scan columns of rowKey in "Z" sorted score space from pivot record.
+	// The colKey and score is the pivot record where scan starts.
+	// If asc is true ZSCAN in ASC order, else ZSCAN in DESC order.
+	// If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
+	// It replies at most num records. The pivot record is excluded from the reply.
 	// Return value <0 means failed, 0 means succeed.
-	int zScanStart(uint8_t tableId, const string& rowKey,
+	int zScanPivot(uint8_t tableId, const string& rowKey, const string& colKey, int64_t score,
 			bool asc, bool orderByScore, int num, ScanReply* reply);
 
-	// (Z)Scan more records.
+	// Scan/ZScan more records.
 	// Return value <0 means failed, 0 means succeed.
 	int scanMore(const ScanReply& last, ScanReply* reply);
 
-	// Dump start from the pivot record. If oneTable is true, only dump the selected table.
-	// If oneTable is false, dump current DB(dbId).
-	// The pivot record itself is excluded from the reply.
+	// Dump records from the pivot record.
+	// If oneTable is true, only dump the selected table.
+	// If oneTable is false, dump all tables in current DB(dbId).
+	// The pivot record is excluded from the reply.
 	// Return value <0 means failed, 0 means succeed.
-	int dump(bool oneTable, uint8_t tableId, uint8_t colSpace,
+	int dumpPivot(bool oneTable, uint8_t tableId, uint8_t colSpace,
 			const string& rowKey, const string& colKey, int64_t score,
 			uint16_t startUnitId, uint16_t endUnitId, DumpReply* reply);
 
-	// Dump current DB(database selected).
+	// Dump all tables in current DB(database selected).
 	// Return value <0 means failed, 0 means succeed.
 	int dumpDB(DumpReply* reply);
 

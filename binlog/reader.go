@@ -75,28 +75,28 @@ func (r *Reader) Close() {
 	r.rseq = nil
 }
 
-func (r *Reader) Init(logSeq uint64) error {
+func (r *Reader) Init(lastSeq uint64) error {
 	var err error
 	r.bin.mtx.Lock()
 
 	r.bin.rseqs = append(r.bin.rseqs, r.rseq)
-	r.rseq.seq = logSeq
+	r.rseq.seq = lastSeq
 
 	var index = -1
 	for i, f := range r.bin.infos {
 		index = i
-		if logSeq < f.MinSeq {
+		if lastSeq < f.MinSeq {
 			break
 		}
 
-		if f.MaxSeq >= logSeq || f.MaxSeq == 0 {
+		if f.MaxSeq >= lastSeq || f.MaxSeq == 0 {
 			break
 		}
 	}
 
 	if index < 0 {
 		r.bin.mtx.Unlock() // unlock immediately
-		if logSeq > 0 && logSeq != MinNormalSeq {
+		if lastSeq > 0 && lastSeq != MinNormalSeq {
 			return ErrLogMissing
 		}
 		r.curMemPos = -1
@@ -104,7 +104,7 @@ func (r *Reader) Init(logSeq uint64) error {
 		return nil
 	} else {
 		r.curInfo = *r.bin.infos[index]
-		if logSeq > 0 && logSeq != MinNormalSeq && r.curInfo.MinSeq > logSeq {
+		if lastSeq > 0 && lastSeq != MinNormalSeq && r.curInfo.MinSeq > lastSeq+1 {
 			r.bin.mtx.Unlock() // unlock immediately
 			return ErrLogMissing
 		}
@@ -128,15 +128,17 @@ func (r *Reader) Init(logSeq uint64) error {
 			r.curBufR.Reset(r.curFile)
 		}
 
-		var pkgBuf = make([]byte, 4096)
-		for {
-			_, err = proto.ReadPkg(r.curBufR, r.headBuf, &r.head, pkgBuf)
-			if err != nil {
-				return err
-			}
+		if r.curInfo.MinSeq < lastSeq+1 {
+			var pkgBuf = make([]byte, 4096)
+			for {
+				_, err = proto.ReadPkg(r.curBufR, r.headBuf, &r.head, pkgBuf)
+				if err != nil {
+					return err
+				}
 
-			if r.head.Seq >= logSeq {
-				break
+				if r.head.Seq >= lastSeq {
+					break
+				}
 			}
 		}
 	} else {
@@ -148,23 +150,25 @@ func (r *Reader) Init(logSeq uint64) error {
 		}
 		r.curMemPos = 0
 
-		for {
-			if r.curMemPos+proto.HeadSize > r.bin.usedLen {
-				return ErrUnexpected
-			}
+		if r.curInfo.MinSeq < lastSeq+1 {
+			for {
+				if r.curMemPos+proto.HeadSize > r.bin.usedLen {
+					return ErrUnexpected
+				}
 
-			_, err = r.head.Decode(r.bin.memlog[r.curMemPos:])
-			if err != nil {
-				return ErrUnexpected
-			}
+				_, err = r.head.Decode(r.bin.memlog[r.curMemPos:])
+				if err != nil {
+					return ErrUnexpected
+				}
 
-			if r.curMemPos+int(r.head.PkgLen) > r.bin.usedLen {
-				return ErrUnexpected
-			}
+				if r.curMemPos+int(r.head.PkgLen) > r.bin.usedLen {
+					return ErrUnexpected
+				}
 
-			r.curMemPos += int(r.head.PkgLen)
-			if r.head.Seq >= logSeq {
-				break
+				r.curMemPos += int(r.head.PkgLen)
+				if r.head.Seq >= lastSeq {
+					break
+				}
 			}
 		}
 	}

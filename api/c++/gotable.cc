@@ -641,19 +641,7 @@ static inline int replyScan(ScanReply* reply, const PkgScanResp& p) {
 	return p.errCode;
 }
 
-int Client::scan(uint8_t tableId, const string& rowKey, const string& colKey,
-			bool asc, int num, ScanReply* reply) {
-	string pkg;
-	PkgScanResp p;
-	int err = doScan(false, tableId, rowKey, colKey, 0, false, asc, false, num,
-			reply, &p, pkg);
-	if(err < 0) {
-		return err;
-	}
-	return replyScan(reply, p);
-}
-
-int Client::scanStart(uint8_t tableId, const string& rowKey,
+int Client::scan(uint8_t tableId, const string& rowKey,
 			bool asc, int num, ScanReply* reply) {
 	string pkg;
 	PkgScanResp p;
@@ -665,11 +653,11 @@ int Client::scanStart(uint8_t tableId, const string& rowKey,
 	return replyScan(reply, p);
 }
 
-int Client::zScan(uint8_t tableId, const string& rowKey, const string& colKey, int64_t score,
-			bool asc, bool orderByScore, int num, ScanReply* reply) {
+int Client::scanPivot(uint8_t tableId, const string& rowKey, const string& colKey,
+			bool asc, int num, ScanReply* reply) {
 	string pkg;
 	PkgScanResp p;
-	int err = doScan(true, tableId, rowKey, colKey, score, false, asc, orderByScore, num,
+	int err = doScan(false, tableId, rowKey, colKey, 0, false, asc, false, num,
 			reply, &p, pkg);
 	if(err < 0) {
 		return err;
@@ -677,11 +665,23 @@ int Client::zScan(uint8_t tableId, const string& rowKey, const string& colKey, i
 	return replyScan(reply, p);
 }
 
-int Client::zScanStart(uint8_t tableId, const string& rowKey,
+int Client::zScan(uint8_t tableId, const string& rowKey,
 			bool asc, bool orderByScore, int num, ScanReply* reply) {
 	string pkg;
 	PkgScanResp p;
 	int err = doScan(true, tableId, rowKey, EMPTYSTR, 0, true, asc, orderByScore, num,
+			reply, &p, pkg);
+	if(err < 0) {
+		return err;
+	}
+	return replyScan(reply, p);
+}
+
+int Client::zScanPivot(uint8_t tableId, const string& rowKey, const string& colKey, int64_t score,
+			bool asc, bool orderByScore, int num, ScanReply* reply) {
+	string pkg;
+	PkgScanResp p;
+	int err = doScan(true, tableId, rowKey, colKey, score, false, asc, orderByScore, num,
 			reply, &p, pkg);
 	if(err < 0) {
 		return err;
@@ -698,10 +698,10 @@ int Client::scanMore(const ScanReply& last, ScanReply* reply) {
 	}
 	const ScanKV& r = last.kvs[last.kvs.size()-1];
 	if(last.ctx.zop) {
-		return zScan(last.tableId, last.rowKey, r.colKey, r.score,
+		return zScanPivot(last.tableId, last.rowKey, r.colKey, r.score,
 			last.ctx.asc, last.ctx.orderByScore, last.ctx.num, reply);
 	} else {
-		return scan(last.tableId, last.rowKey, r.colKey,
+		return scanPivot(last.tableId, last.rowKey, r.colKey,
 				last.ctx.asc, last.ctx.num, reply);
 	}
 }
@@ -783,7 +783,7 @@ int Client::doDump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 	return 0;
 }
 
-int Client::dump(bool oneTable, uint8_t tableId, uint8_t colSpace,
+int Client::dumpPivot(bool oneTable, uint8_t tableId, uint8_t colSpace,
 		const string& rowKey, const string& colKey, int64_t score,
 		uint16_t startUnitId, uint16_t endUnitId, DumpReply* reply) {
 	string pkg;
@@ -805,11 +805,11 @@ int Client::dump(bool oneTable, uint8_t tableId, uint8_t colSpace,
 }
 
 int Client::dumpDB(DumpReply* reply) {
-	return dump(false, 0, 0, EMPTYSTR, EMPTYSTR, 0, 0, 65535, reply);
+	return dumpPivot(false, 0, 0, EMPTYSTR, EMPTYSTR, 0, 0, 65535, reply);
 }
 
 int Client::dumpTable(uint8_t tableId, DumpReply* reply) {
-	return dump(true, tableId, 0, EMPTYSTR, EMPTYSTR, 0, 0, 65535, reply);
+	return dumpPivot(true, tableId, 0, EMPTYSTR, EMPTYSTR, 0, 0, 65535, reply);
 }
 
 int Client::dumpMore(const DumpReply& last, DumpReply* reply) {
@@ -835,7 +835,7 @@ int Client::dumpMore(const DumpReply& last, DumpReply* reply) {
 			rec = &t->kvs[t->kvs.size()-1];
 		}
 
-		int err = dump(t->ctx.oneTable, rec->tableId, rec->colSpace,
+		int err = dumpPivot(t->ctx.oneTable, rec->tableId, rec->colSpace,
 			rec->rowKey, rec->colKey, rec->score, lastUnitId, t->ctx.endUnitId, reply);
 		if(err < 0) {
 			return err;

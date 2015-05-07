@@ -14,22 +14,22 @@
 
 package ctrl
 
-// Slaver/Migration status
+// Slave/Migration status
 const (
-	NotSlaver       = iota // Not a normal slaver (also not a migration slaver)
-	SlaverInit             // Just receive slaver or migration command
-	SlaverNeedClear        // Slaver has old data, need to clear old data
-	SlaverClear            // Slaver clearing(deleting) old data
-	SlaverFullSync         // Doing full sync right now
-	SlaverIncrSync         // Doing incremental sync right now
-	SlaverReady            // Slaver is up to date with master
+	NotSlave       = iota // Not a normal slave (also not a migration slave)
+	SlaveInit             // Just receive slave or migration command
+	SlaveNeedClear        // Slave has old data, need to clear old data
+	SlaveClear            // Slave clearing(deleting) old data
+	SlaveFullSync         // Doing full sync right now
+	SlaveIncrSync         // Doing incremental sync right now
+	SlaveReady            // Slave is up to date with master
 )
 
 // SlaveOf command pkg
 type PkgSlaveOf struct {
-	ClientReq  bool   // true: from client api; false: from slaver to master
+	ClientReq  bool   // true: from client api; false: from slave to master
 	MasterAddr string // ip:host, no master if emtpy
-	SlaverAddr string // ip:host
+	SlaveAddr  string // ip:host
 	LastSeq    uint64
 	ErrMsg     string // error msg, nil means no error
 }
@@ -39,21 +39,21 @@ type PkgSlaveOf struct {
 // If all data migrated, switch client requests to new servers.
 // If migration failed, wait for delete unit command.
 // Steps in cluster mode when migration succeeds:
-// 1. new servers switch to normal status (but still hold the master/slaver connection)
+// 1. new servers switch to normal status (but still hold the master/slave connection)
 // 2. switch proxy and client requests routed to new servers
-// 3. wait for 10 seconds, and close the master/slaver connection
+// 3. wait for 10 seconds, and close the master/slave connection
 // 4. delete the unit data from old servers
 type PkgMigrate struct {
-	ClientReq  bool   // true: from client api; false: from slaver to master
+	ClientReq  bool   // true: from client api; false: from slave to master
 	MasterAddr string // ip:host, stop migration if empty
-	SlaverAddr string // ip:host
+	SlaveAddr  string // ip:host
 	UnitId     uint16 // The unit to be migrated
 	ErrMsg     string // error msg, nil means no error
 }
 
-// Get migration/slaver status
-type PkgSlaverStatus struct {
-	Migration bool   // true: Migration status; false: Normal slaver status
+// Get migration/slave status
+type PkgSlaveStatus struct {
+	Migration bool   // true: Migration status; false: Normal slave status
 	UnitId    uint16 // The unit under migration
 	Status    int
 	ErrMsg    string // error msg, nil means no error

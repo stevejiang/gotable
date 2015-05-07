@@ -77,8 +77,8 @@ func (c *Context) Ping() error {
 // Parameter CAS is Compare-And-Swap, 2 means read data on master and return
 // a new CAS, 1 means read data on master machine but without a new CAS, 0 means
 // read data on any machine without a new CAS. On cluster mode, routing to master
-// machine is automatically, but on a normal master/slaver mode it should be done
-// manually. If CAS 1&2 sent to a slaver machine, error will be returned.
+// machine is automatically, but on a normal master/slave mode it should be done
+// manually. If CAS 1&2 sent to a slave machine, error will be returned.
 // For most cases, set CAS as 0.
 // Return value nil means key not exist.
 func (c *Context) Get(tableId uint8, rowKey, colKey []byte, cas uint32) (
@@ -247,46 +247,45 @@ func (c *Context) ZmIncr(args MIncrArgs) ([]IncrReply, error) {
 	return r.([]IncrReply), nil
 }
 
-// Scan columns of the selected rowKey in default column space.
-// The colKey is the pivot record(excluded).
+// Scan columns of rowKey in default column space from MIN/MAX colKey.
+// If asc is true SCAN start from the MIN colKey, else SCAN from the MAX colKey.
+// It replies at most num records.
+func (c *Context) Scan(tableId uint8, rowKey []byte,
+	asc bool, num int) (ScanReply, error) {
+	return replyScan(c.GoScan(tableId, rowKey, asc, num, nil))
+}
+
+// Scan columns of rowKey in default column space from pivot record.
+// The colKey is the pivot record where scan starts.
 // If asc is true SCAN in ASC order, else SCAN in DESC order.
-// It replies at most num records.
-func (c *Context) Scan(tableId uint8, rowKey, colKey []byte,
+// It replies at most num records. The pivot record is excluded from the reply.
+func (c *Context) ScanPivot(tableId uint8, rowKey, colKey []byte,
 	asc bool, num int) (ScanReply, error) {
-	return replyScan(c.GoScan(tableId, rowKey, colKey, asc, num, nil))
+	return replyScan(c.GoScanPivot(tableId, rowKey, colKey, asc, num, nil))
 }
 
-// Convenient API of SCAN.
-// If asc is true SCAN start from the minimum colKey, else start from the maximum colKey.
+// Scan columns of rowKey in "Z" sorted score space from MIN/MAX colKey and score.
+// If asc is true ZSCAN start from the MIN colKey and score,
+// else ZSCAN from the MAX colKey and score.
+// If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
 // It replies at most num records.
-func (c *Context) ScanStart(tableId uint8, rowKey []byte,
-	asc bool, num int) (ScanReply, error) {
-	return replyScan(c.GoScanStart(tableId, rowKey, asc, num, nil))
+func (c *Context) ZScan(tableId uint8, rowKey []byte,
+	asc, orderByScore bool, num int) (ScanReply, error) {
+	return replyScan(c.GoZScan(tableId, rowKey, asc, orderByScore, num, nil))
 }
 
-// Scan columns of the selected rowKey in "Z" sorted score space.
-// The colKey and score is the pivot record(excluded).
+// Scan columns of rowKey in "Z" sorted score space from pivot record.
+// The colKey and score is the pivot record where scan starts.
 // If asc is true ZSCAN in ASC order, else ZSCAN in DESC order.
 // If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
-// It replies at most num records.
-func (c *Context) ZScan(tableId uint8, rowKey, colKey []byte, score int64,
+// It replies at most num records. The pivot record is excluded from the reply.
+func (c *Context) ZScanPivot(tableId uint8, rowKey, colKey []byte, score int64,
 	asc, orderByScore bool, num int) (ScanReply, error) {
-	return replyScan(c.GoZScan(tableId, rowKey, colKey, score,
+	return replyScan(c.GoZScanPivot(tableId, rowKey, colKey, score,
 		asc, orderByScore, num, nil))
 }
 
-// Convenient API of ZSCAN.
-// If asc is true SCAN start from the minimum colKey and score,
-// else start from the maximum colKey and score.
-// If orderByScore is true ZSCAN order by score+colKey, else ZSCAN order by colKey.
-// It replies at most num records.
-func (c *Context) ZScanStart(tableId uint8, rowKey []byte,
-	asc, orderByScore bool, num int) (ScanReply, error) {
-	return replyScan(c.GoZScanStart(tableId, rowKey,
-		asc, orderByScore, num, nil))
-}
-
-// (Z)Scan more records.
+// Scan/ZScan more records.
 func (c *Context) ScanMore(last ScanReply) (ScanReply, error) {
 	if last.End || len(last.Kvs) == 0 {
 		return ScanReply{}, ErrScanEnded
@@ -295,20 +294,20 @@ func (c *Context) ScanMore(last ScanReply) (ScanReply, error) {
 	var call *Call
 	var err error
 	if last.ctx.zop {
-		call, err = c.GoZScan(last.ctx.tableId, last.ctx.rowKey, r.ColKey, r.Score,
+		call, err = c.GoZScanPivot(last.ctx.tableId, last.ctx.rowKey, r.ColKey, r.Score,
 			last.ctx.asc, last.ctx.orderByScore, last.ctx.num, nil)
 	} else {
-		call, err = c.GoScan(last.ctx.tableId, last.ctx.rowKey, r.ColKey,
+		call, err = c.GoScanPivot(last.ctx.tableId, last.ctx.rowKey, r.ColKey,
 			last.ctx.asc, last.ctx.num, nil)
 	}
 	return replyScan(call, err)
 }
 
-// Dump start from the pivot record.
+// Dump records from the pivot record.
 // If oneTable is true, only dump the selected table.
-// If oneTable is false, dump current DB(dbId).
-// The pivot record itself is excluded from the reply.
-func (c *Context) Dump(oneTable bool, tableId, colSpace uint8,
+// If oneTable is false, dump all tables in current DB(dbId).
+// The pivot record is excluded from the reply.
+func (c *Context) DumpPivot(oneTable bool, tableId, colSpace uint8,
 	rowKey, colKey []byte, score int64,
 	startUnitId, endUnitId uint16) (DumpReply, error) {
 	call, err := c.goDump(oneTable, tableId, colSpace, rowKey, colKey,
@@ -332,12 +331,12 @@ func (c *Context) Dump(oneTable bool, tableId, colSpace uint8,
 
 // Dump the selected Table.
 func (c *Context) DumpTable(tableId uint8) (DumpReply, error) {
-	return c.Dump(true, tableId, 0, nil, nil, 0, 0, 65535)
+	return c.DumpPivot(true, tableId, 0, nil, nil, 0, 0, 65535)
 }
 
-// Dump current DB(dbId in Context).
+// Dump all tables in current DB(dbId in Context).
 func (c *Context) DumpDB() (DumpReply, error) {
-	return c.Dump(false, 0, 0, nil, nil, 0, 0, 65535)
+	return c.DumpPivot(false, 0, 0, nil, nil, 0, 0, 65535)
 }
 
 // Dump more records.
@@ -614,32 +613,32 @@ func (c *Context) goScan(zop bool, tableId uint8, rowKey, colKey []byte,
 	return call, nil
 }
 
-// Asynchronous SCAN API.
-func (c *Context) GoScan(tableId uint8, rowKey, colKey []byte,
-	asc bool, num int, done chan *Call) (*Call, error) {
-	return c.goScan(false, tableId, rowKey, colKey, 0,
-		false, asc, false, num, done)
-}
-
-// Asynchronous convenient SCAN API.
-func (c *Context) GoScanStart(tableId uint8, rowKey []byte,
+// Asynchronous SCAN API from MIN/MAX colKey.
+func (c *Context) GoScan(tableId uint8, rowKey []byte,
 	asc bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(false, tableId, rowKey, nil, 0,
 		true, asc, false, num, done)
 }
 
-// Asynchronous ZSCAN API.
-func (c *Context) GoZScan(tableId uint8, rowKey, colKey []byte, score int64,
-	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
-	return c.goScan(true, tableId, rowKey, colKey, score,
-		false, asc, orderByScore, num, done)
+// Asynchronous SCAN API from pivot record.
+func (c *Context) GoScanPivot(tableId uint8, rowKey, colKey []byte,
+	asc bool, num int, done chan *Call) (*Call, error) {
+	return c.goScan(false, tableId, rowKey, colKey, 0,
+		false, asc, false, num, done)
 }
 
-// Asynchronous convenient ZSCAN API.
-func (c *Context) GoZScanStart(tableId uint8, rowKey []byte,
+// Asynchronous ZSCAN API from MIN/MAX colKey and score.
+func (c *Context) GoZScan(tableId uint8, rowKey []byte,
 	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
 	return c.goScan(true, tableId, rowKey, nil, 0,
 		true, asc, orderByScore, num, done)
+}
+
+// Asynchronous ZSCAN API from pivot record.
+func (c *Context) GoZScanPivot(tableId uint8, rowKey, colKey []byte, score int64,
+	asc, orderByScore bool, num int, done chan *Call) (*Call, error) {
+	return c.goScan(true, tableId, rowKey, colKey, score,
+		false, asc, orderByScore, num, done)
 }
 
 func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
@@ -757,21 +756,21 @@ func (c *CtrlContext) Migrate(host string, unitId uint16) error {
 }
 
 // Internal control command.
-// SlaverStatus reads migration/slaver status.
-func (c *CtrlContext) SlaverStatus(migration bool, unitId uint16) (int, error) {
-	call := c.cli.newCall(proto.CmdSlaverSt, nil)
+// SlaveStatus reads migration/slave status.
+func (c *CtrlContext) SlaveStatus(migration bool, unitId uint16) (int, error) {
+	call := c.cli.newCall(proto.CmdSlaveSt, nil)
 	if call.err != nil {
-		return ctrl.NotSlaver, call.err
+		return ctrl.NotSlave, call.err
 	}
 
-	var p ctrl.PkgSlaverStatus
+	var p ctrl.PkgSlaveStatus
 	p.Migration = migration
 	p.UnitId = unitId
 
 	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
 		c.cli.errCall(call, err)
-		return ctrl.NotSlaver, call.err
+		return ctrl.NotSlave, call.err
 	}
 
 	call.pkg = pkg
@@ -779,12 +778,12 @@ func (c *CtrlContext) SlaverStatus(migration bool, unitId uint16) (int, error) {
 
 	r, err := (<-call.Done).Reply()
 	if err != nil {
-		return ctrl.NotSlaver, call.err
+		return ctrl.NotSlave, call.err
 	}
 
-	t := r.(*ctrl.PkgSlaverStatus)
+	t := r.(*ctrl.PkgSlaveStatus)
 	if t.ErrMsg != "" {
-		return ctrl.NotSlaver, errors.New(t.ErrMsg)
+		return ctrl.NotSlave, errors.New(t.ErrMsg)
 	}
 	return t.Status, nil
 }
@@ -978,8 +977,8 @@ func (call *Call) Reply() (interface{}, error) {
 		return call.replyInnerCtrl(&ctrl.PkgSlaveOf{})
 	case proto.CmdMigrate:
 		return call.replyInnerCtrl(&ctrl.PkgMigrate{})
-	case proto.CmdSlaverSt:
-		return call.replyInnerCtrl(&ctrl.PkgSlaverStatus{})
+	case proto.CmdSlaveSt:
+		return call.replyInnerCtrl(&ctrl.PkgSlaveStatus{})
 	case proto.CmdDelUnit:
 		return call.replyInnerCtrl(&ctrl.PkgDelUnit{})
 	}

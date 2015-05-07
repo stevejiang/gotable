@@ -44,8 +44,8 @@ var (
 	ErrUnknownCmd  = initErr(EcUnknownCmd, "unknown cmd")
 	ErrAuthFailed  = initErr(EcAuthFailed, "authorize failed")
 	ErrNoPrivilege = initErr(EcNoPrivilege, "no access privilege")
-	ErrWriteSlaver = initErr(EcWriteSlaver, "can not write slaver directly")
-	ErrSlaverCas   = initErr(EcSlaverCas, "invalid cas on slaver")
+	ErrWriteSlave  = initErr(EcWriteSlave, "can not write slave directly")
+	ErrSlaveCas    = initErr(EcSlaveCas, "invalid cas on slave")
 	ErrReadFail    = initErr(EcReadFail, "read failed")
 	ErrWriteFail   = initErr(EcWriteFail, "write failed")
 	ErrDecodeFail  = initErr(EcDecodeFail, "decode request pkg failed")
@@ -66,8 +66,8 @@ const (
 	EcUnknownCmd  = -10 // Unknown cmd
 	EcAuthFailed  = -11 // Authorize failed
 	EcNoPrivilege = -12 // No access privilege
-	EcWriteSlaver = -13 // Can NOT write slaver directly
-	EcSlaverCas   = -14 // Invalid CAS on slaver for GET/MGET
+	EcWriteSlave  = -13 // Can NOT write slave directly
+	EcSlaveCas    = -14 // Invalid CAS on slave for GET/MGET
 	EcReadFail    = -15 // Read failed
 	EcWriteFail   = -16 // Write failed
 	EcDecodeFail  = -17 // Decode request PKG failed
