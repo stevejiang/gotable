@@ -43,8 +43,9 @@ type Server struct {
 	// Atomic
 	closed uint32
 
-	rwMtx sync.RWMutex // protects following
-	slv   *slave
+	rwMtx     sync.RWMutex // protects following
+	slv       *slave
+	readyTime time.Time
 }
 
 func NewServer(conf *config.Config) *Server {
@@ -584,8 +585,18 @@ func (srv *Server) syncStatus(req *Request) {
 			srv.mc.SetStatus(ctrl.SlaveIncrSync)
 			log.Printf("Switch sync status to SlaveIncrSync\n")
 		case store.KeyIncrSyncEnd:
+			var st = srv.mc.Status()
 			srv.mc.SetStatus(ctrl.SlaveReady)
-			log.Printf("Switch sync status to SlaveReady")
+
+			var now = time.Now()
+			srv.rwMtx.Lock()
+			var lastTime = srv.readyTime
+			srv.readyTime = now
+			srv.rwMtx.Unlock()
+
+			if st != ctrl.SlaveReady || now.Sub(lastTime).Seconds() > 120 {
+				log.Printf("Switch sync status to SlaveReady")
+			}
 		case store.KeySyncLogMissing:
 			srv.mc.SetStatus(ctrl.SlaveNeedClear)
 			lastSeq, _ := srv.bin.GetMasterSeq()
@@ -744,7 +755,7 @@ func (srv *Server) slaveOf(req *Request) {
 		}
 		if sameAddress(p.MasterAddr, p.SlaveAddr, req) {
 			log.Printf("Master and slave addresses are the same!\n")
-			srv.replyMigrate(req, "master and slave address are the same")
+			srv.replyMigrate(req, "master and slave addresses are the same")
 			return
 		}
 
@@ -819,7 +830,7 @@ func (srv *Server) migrate(req *Request) {
 		}
 		if sameAddress(p.MasterAddr, p.SlaveAddr, req) {
 			log.Printf("Master and slave addresses are the same!\n")
-			srv.replyMigrate(req, "master and slave address are the same")
+			srv.replyMigrate(req, "master and slave addresses are the same")
 			return
 		}
 

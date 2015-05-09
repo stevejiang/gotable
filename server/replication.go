@@ -15,6 +15,7 @@
 package server
 
 import (
+	"errors"
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/binlog"
 	"github.com/stevejiang/gotable/config"
@@ -288,21 +289,7 @@ func (ms *master) doClose() {
 	log.Printf("Master sync to slave %s is closed\n", ms.slaveAddr)
 }
 
-func (ms *master) doDelayClose() {
-	// Any better solution?
-	log.Printf("Delay close master sync to slave %s\n", ms.slaveAddr)
-	time.Sleep(time.Second * 2)
-	ms.doClose()
-}
-
-func (ms *master) Close() {
-	if !ms.IsClosed() {
-		atomic.AddUint32(&ms.closed, 1)
-		ms.NewLogComming()
-	}
-}
-
-func (ms *master) IsClosed() bool {
+func (ms *master) isClosed() bool {
 	return atomic.LoadUint32(&ms.closed) > 0
 }
 
@@ -323,17 +310,31 @@ func (ms *master) syncStatus(key string, lastSeq uint64) {
 	ms.cli.AddResp(pkg)
 }
 
-func (ms *master) fullSync(tbl *store.Table) uint64 {
+func (ms *master) openReader(lastSeq uint64) error {
+	ms.reader = binlog.NewReader(ms.bin)
+	var err = ms.reader.Init(lastSeq)
+	if err == binlog.ErrLogMissing {
+		ms.syncStatus(store.KeySyncLogMissing, 0)
+
+		// Any better solution?
+		log.Printf("Wait for sync status log missing to slave %s\n", ms.slaveAddr)
+		time.Sleep(time.Second * 2)
+	}
+
+	return err
+}
+
+func (ms *master) fullSync(tbl *store.Table) (uint64, error) {
 	var lastSeq uint64
 	if ms.lastSeq > 0 {
 		lastSeq = ms.lastSeq
 		if ms.migration {
 			log.Printf("Migration lastSeq is not 0, close now!\n")
-			ms.Close()
+			return lastSeq, errors.New("migration lastSeq is not 0")
 		} else {
 			log.Printf("Already full synced to %s\n", ms.slaveAddr)
+			return lastSeq, nil
 		}
-		return lastSeq
 	}
 
 	// Stop write globally
@@ -350,6 +351,12 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 
 	defer it.Destroy()
 
+	// Open BinLog reader to keep log files from deleting
+	var err = ms.openReader(lastSeq)
+	if err != nil {
+		return lastSeq, err
+	}
+
 	// Full sync
 	var p proto.PkgMultiOp
 	p.Cmd = proto.CmdSync
@@ -357,7 +364,7 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 		ok := store.SeekAndCopySyncPkg(it, &p, ms.migration, ms.unitId)
 
 		if ms.cli.IsClosed() {
-			return lastSeq
+			return lastSeq, nil
 		}
 
 		if len(p.Kvs) > 0 {
@@ -382,13 +389,14 @@ func (ms *master) fullSync(tbl *store.Table) uint64 {
 		log.Printf("Full sync to %s finished\n", ms.slaveAddr)
 	}
 
-	return lastSeq
+	return lastSeq, nil
 }
 
 func (ms *master) GoAsync(tbl *store.Table) {
-	var lastSeq = ms.fullSync(tbl)
-	if ms.IsClosed() || ms.cli.IsClosed() {
-		ms.doClose()
+	defer ms.doClose()
+
+	lastSeq, err := ms.fullSync(tbl)
+	if err != nil || ms.isClosed() || ms.cli.IsClosed() {
 		return
 	}
 
@@ -400,15 +408,8 @@ func (ms *master) GoAsync(tbl *store.Table) {
 			ms.slaveAddr, lastSeq)
 	}
 
-	ms.reader = binlog.NewReader(ms.bin)
-	var err = ms.reader.Init(lastSeq)
-	if err != nil {
-		if err == binlog.ErrLogMissing {
-			ms.syncStatus(store.KeySyncLogMissing, 0)
-			ms.doDelayClose()
-		} else {
-			ms.doClose()
-		}
+	if ms.reader == nil && ms.openReader(lastSeq) != nil {
+		log.Printf("Invalid BinLog reader, lastSeq=%d, stop sync!\n", lastSeq)
 		return
 	}
 
@@ -420,15 +421,14 @@ func (ms *master) GoAsync(tbl *store.Table) {
 	for {
 		select {
 		case _, ok := <-ms.syncChan:
-			if !ok || ms.IsClosed() || ms.cli.IsClosed() {
-				ms.doClose()
+			if !ok || ms.isClosed() || ms.cli.IsClosed() {
 				return
 			}
 
-			for !ms.IsClosed() && !ms.cli.IsClosed() {
+			for !ms.isClosed() && !ms.cli.IsClosed() {
 				var pkg = ms.reader.Next()
 				if pkg == nil {
-					if readyCount%60 == 0 {
+					if readyCount%61 == 0 {
 						ms.syncStatus(store.KeyIncrSyncEnd, 0)
 						readyCount++
 					}
@@ -447,8 +447,7 @@ func (ms *master) GoAsync(tbl *store.Table) {
 			}
 
 		case <-tick:
-			if ms.IsClosed() || ms.cli.IsClosed() {
-				ms.doClose()
+			if ms.isClosed() || ms.cli.IsClosed() {
 				return
 			}
 
