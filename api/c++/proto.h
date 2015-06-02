@@ -54,15 +54,16 @@ enum {
 
 enum {
 	AdminDbId    = 255,
-	HeadSize     = 14,
+	HeadSize     = 15,
 	MaxUint8     = 255,
 	MaxUint16    = 65535,
 	MaxValueLen  = 1024 * 1024,     // 1MB
 	MaxPkgLen    = 1024 * 1024 * 2, // 2MB
 };
 
-// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
+// cCrc+cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 struct PkgHead {
+	int8_t   crc;     //Head CRC
 	uint8_t  cmd;
 	uint8_t  dbId;
 	uint64_t seq;     //normal: request seq; replication: master binlog seq

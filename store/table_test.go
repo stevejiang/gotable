@@ -905,9 +905,9 @@ func TestTableDump(t *testing.T) {
 	in.DbId = 2
 	in.Seq = 20
 	in.TableId = 2
-	in.PkgFlag |= proto.FlagDumpUnitStart
-	in.StartUnitId = 0
-	in.EndUnitId = 65535
+	in.PkgFlag |= proto.FlagDumpSlotStart
+	in.StartSlotId = 0
+	in.EndSlotId = 65535
 
 	out := myDump(in, testAuth, t)
 	if len(out.Kvs) != 10 {

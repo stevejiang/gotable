@@ -73,7 +73,7 @@ void testMGet(Client* cli) {
 	sa.push_back(SetArgs(1, "row1", "col1", "v01", 9, 0));
 	sa.push_back(SetArgs(1, "row1", "col2", "v02", 8, 0));
 	sa.push_back(SetArgs(1, "row1", "col3", "v03", 7, 0));
-	sa.push_back(SetArgs(1, "row1", "col4", "v04", 6, 0));
+	sa.push_back(SetArgs(1, "row8", "col4", "v04", 6, 0));
 	int err = cli->mSet(sa, NULL);
 	if(err < 0) {
 		printf("mSet failed: %d\n", err);
@@ -82,11 +82,11 @@ void testMGet(Client* cli) {
 
 	vector<GetArgs> ga;
 	vector<GetReply> reply;
-	ga.push_back(GetArgs(1, "row1", "col4", 0));
+	ga.push_back(GetArgs(1, "row8", "col4", 0));
 	ga.push_back(GetArgs(1, "row1", "col2", 0));
 	ga.push_back(GetArgs(1, "row1", "col1", 0));
 	ga.push_back(GetArgs(1, "row1", "col3", 0));
-	ga.push_back(GetArgs(1, "row1", "not", 0));
+	ga.push_back(GetArgs(1, "row8", "not", 0));
 	err = cli->mGet(ga, &reply);
 	if(err < 0) {
 		printf("get failed with error %d\n", err);

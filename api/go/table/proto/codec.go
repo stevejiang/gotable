@@ -105,7 +105,7 @@ const (
 
 	// Dump flags
 	FlagDumpTable     = 0x4  // if set, Dump only one table, else Dump current DB(dbId)
-	FlagDumpUnitStart = 0x8  // if set, Dump start from new UnitId, else from pivot record
+	FlagDumpSlotStart = 0x8  // if set, Dump start from new SlotId, else from pivot record
 	FlagDumpEnd       = 0x10 // if set, Dump finished, stop now
 )
 
@@ -139,19 +139,19 @@ type PkgScanResp struct {
 }
 
 // Dump
-// PKG=PkgOneOp+wStartUnitId+wEndUnitId
+// PKG=PkgOneOp+wStartSlotId+wEndSlotId
 type PkgDumpReq struct {
-	StartUnitId uint16 // Dump start unit ID (included)
-	EndUnitId   uint16 // Dump finish unit ID (included)
+	StartSlotId uint16 // Dump start slot ID (included)
+	EndSlotId   uint16 // Dump finish slot ID (included)
 	PkgOneOp
 }
 
 // Dump
-// PKG=PkgMultiOp+wStartUnitId+wEndUnitId+wLastUnitId
+// PKG=PkgMultiOp+wStartSlotId+wEndSlotId+wLastSlotId
 type PkgDumpResp struct {
-	StartUnitId uint16
-	EndUnitId   uint16
-	LastUnitId  uint16 // Last Unit ID tried to dump
+	StartSlotId uint16
+	EndSlotId   uint16
+	LastSlotId  uint16 // Last Slot ID tried to dump
 	PkgMultiOp
 }
 
@@ -478,7 +478,7 @@ func (p *PkgScanReq) Decode(pkg []byte) (int, error) {
 }
 
 func (p *PkgDumpReq) Length() int {
-	// PKG=PkgOneOp+wStartUnitId+wEndUnitId
+	// PKG=PkgOneOp+wStartSlotId+wEndSlotId
 	return p.PkgOneOp.Length() + 4
 }
 
@@ -491,9 +491,9 @@ func (p *PkgDumpReq) Encode(pkg []byte) (int, error) {
 	if n+4 > len(pkg) {
 		return n, ErrPkgLen
 	}
-	binary.BigEndian.PutUint16(pkg[n:], p.StartUnitId)
+	binary.BigEndian.PutUint16(pkg[n:], p.StartSlotId)
 	n += 2
-	binary.BigEndian.PutUint16(pkg[n:], p.EndUnitId)
+	binary.BigEndian.PutUint16(pkg[n:], p.EndSlotId)
 	n += 2
 
 	OverWriteLen(pkg, n)
@@ -509,16 +509,16 @@ func (p *PkgDumpReq) Decode(pkg []byte) (int, error) {
 	if n+4 > len(pkg) {
 		return n, ErrPkgLen
 	}
-	p.StartUnitId = binary.BigEndian.Uint16(pkg[n:])
+	p.StartSlotId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
-	p.EndUnitId = binary.BigEndian.Uint16(pkg[n:])
+	p.EndSlotId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
 
 	return n, nil
 }
 
 func (p *PkgDumpResp) Length() int {
-	// PKG=PkgMultiOp+wStartUnitId+wEndUnitId+wLastUnitId
+	// PKG=PkgMultiOp+wStartSlotId+wEndSlotId+wLastSlotId
 	return p.PkgMultiOp.Length() + 6
 }
 
@@ -531,11 +531,11 @@ func (p *PkgDumpResp) Encode(pkg []byte) (int, error) {
 	if n+6 > len(pkg) {
 		return n, ErrPkgLen
 	}
-	binary.BigEndian.PutUint16(pkg[n:], p.StartUnitId)
+	binary.BigEndian.PutUint16(pkg[n:], p.StartSlotId)
 	n += 2
-	binary.BigEndian.PutUint16(pkg[n:], p.EndUnitId)
+	binary.BigEndian.PutUint16(pkg[n:], p.EndSlotId)
 	n += 2
-	binary.BigEndian.PutUint16(pkg[n:], p.LastUnitId)
+	binary.BigEndian.PutUint16(pkg[n:], p.LastSlotId)
 	n += 2
 
 	OverWriteLen(pkg, n)
@@ -551,11 +551,11 @@ func (p *PkgDumpResp) Decode(pkg []byte) (int, error) {
 	if n+6 > len(pkg) {
 		return n, ErrPkgLen
 	}
-	p.StartUnitId = binary.BigEndian.Uint16(pkg[n:])
+	p.StartSlotId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
-	p.EndUnitId = binary.BigEndian.Uint16(pkg[n:])
+	p.EndSlotId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
-	p.LastUnitId = binary.BigEndian.Uint16(pkg[n:])
+	p.LastSlotId = binary.BigEndian.Uint16(pkg[n:])
 	n += 2
 
 	return n, nil

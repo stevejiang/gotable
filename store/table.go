@@ -909,11 +909,11 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		return errorHandle(&out, table.EcDecodeFail)
 	}
 
-	out.StartUnitId = in.StartUnitId
-	out.EndUnitId = in.EndUnitId
-	out.LastUnitId = in.StartUnitId
+	out.StartSlotId = in.StartSlotId
+	out.EndSlotId = in.EndSlotId
+	out.LastSlotId = in.StartSlotId
 	out.PkgFlag = in.PkgFlag
-	out.PkgFlag &^= (proto.FlagDumpUnitStart | proto.FlagDumpEnd)
+	out.PkgFlag &^= (proto.FlagDumpSlotStart | proto.FlagDumpEnd)
 
 	if in.DbId == proto.AdminDbId {
 		return errorHandle(&out, table.EcInvDbId)
@@ -931,7 +931,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	defer it.Destroy()
 
 	if len(in.RowKey) == 0 {
-		it.Seek(getRawUnitKey(in.StartUnitId, in.DbId, in.TableId))
+		it.Seek(getRawSlotKey(in.StartSlotId, in.DbId, in.TableId))
 	} else {
 		var rawColKey = in.ColKey
 		if in.ColSpace == proto.ColSpaceScore1 {
@@ -951,23 +951,23 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	}
 
 	const maxScanNum = 1000
-	const maxTryUnitNum = 10
-	var triedUnitNum = 0
+	const maxTrySlotNum = 10
+	var triedSlotNum = 0
 	var pkgLen = proto.HeadSize + 1000
 	for it.Valid() && len(out.Kvs) < maxScanNum {
-		unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
-		if unitId < in.StartUnitId || unitId > in.EndUnitId {
+		slotId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
+		if slotId < in.StartSlotId || slotId > in.EndSlotId {
 			out.PkgFlag |= proto.FlagDumpEnd
 			break
 		}
 
 		var misMatch bool
-		var nextUnitTableId uint8
+		var nextSlotTableId uint8
 		// Dump only the selected TableId?
 		if onlyOneTable {
 			if dbId != in.DbId || tableId != in.TableId {
 				misMatch = true
-				nextUnitTableId = in.TableId
+				nextSlotTableId = in.TableId
 			}
 		} else {
 			if dbId != in.DbId {
@@ -975,18 +975,18 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 			}
 		}
 		if misMatch {
-			if triedUnitNum >= maxTryUnitNum {
+			if triedSlotNum >= maxTrySlotNum {
 				break
 			}
-			var nextUnitId = out.LastUnitId + 1
-			if nextUnitId < unitId && unitId <= in.EndUnitId {
-				nextUnitId = unitId
+			var nextSlotId = out.LastSlotId + 1
+			if nextSlotId < slotId && slotId <= in.EndSlotId {
+				nextSlotId = slotId
 			}
-			if nextUnitId <= in.EndUnitId {
-				triedUnitNum++
-				out.LastUnitId = nextUnitId
-				out.PkgFlag |= proto.FlagDumpUnitStart
-				seekToUnit(it, nextUnitId, in.DbId, nextUnitTableId)
+			if nextSlotId <= in.EndSlotId {
+				triedSlotNum++
+				out.LastSlotId = nextSlotId
+				out.PkgFlag |= proto.FlagDumpSlotStart
+				seekToSlot(it, nextSlotId, in.DbId, nextSlotTableId)
 				continue
 			} else {
 				out.PkgFlag |= proto.FlagDumpEnd
@@ -1024,8 +1024,8 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 		}
 
 		out.Kvs = append(out.Kvs, kv)
-		out.LastUnitId = unitId
-		out.PkgFlag &^= proto.FlagDumpUnitStart
+		out.LastSlotId = slotId
+		out.PkgFlag &^= proto.FlagDumpSlotStart
 
 		pkgLen += kv.Length()
 		if pkgLen > proto.MaxPkgLen/2 {
@@ -1048,7 +1048,7 @@ func (tbl *Table) Dump(req *PkgArgs, au Authorize) []byte {
 	return pkg
 }
 
-func (tbl *Table) DeleteUnit(unitId uint16) error {
+func (tbl *Table) DeleteSlot(slotId uint16) error {
 	var rOpt = tbl.db.NewReadOptions(false)
 	rOpt.SetFillCache(false)
 	defer rOpt.Destroy()
@@ -1057,10 +1057,10 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 	var count, endTimes int
 	for {
 		var it = tbl.db.NewIterator(rOpt)
-		it.Seek(getRawUnitKey(unitId, 0, 0))
+		it.Seek(getRawSlotKey(slotId, 0, 0))
 		for count = 0; it.Valid() && count < maxDelNum; it.Next() {
-			curUnitId, dbId, tableId := parseRawKeyUnitId(it.Key())
-			if curUnitId != unitId {
+			curSlotId, dbId, tableId := parseRawKeySlotId(it.Key())
+			if curSlotId != slotId {
 				break
 			}
 			if dbId == proto.AdminDbId && tableId == 0 {
@@ -1080,7 +1080,7 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 		}
 		if endTimes > 1 {
 			if count > 0 {
-				return errors.New("the unit deleting still has new data written")
+				return errors.New("the slot deleting still has new data written")
 			}
 			return nil
 		}
@@ -1089,16 +1089,16 @@ func (tbl *Table) DeleteUnit(unitId uint16) error {
 	return nil
 }
 
-func (tbl *Table) HasUnitData(unitId uint16) bool {
+func (tbl *Table) HasSlotData(slotId uint16) bool {
 	var rOpt = tbl.db.NewReadOptions(false)
 	rOpt.SetFillCache(false)
 	defer rOpt.Destroy()
 	var it = tbl.db.NewIterator(rOpt)
 	defer it.Destroy()
 
-	for it.Seek(getRawUnitKey(unitId, 0, 0)); it.Valid(); it.Next() {
-		curUnitId, dbId, tableId := parseRawKeyUnitId(it.Key())
-		if curUnitId != unitId {
+	for it.Seek(getRawSlotKey(slotId, 0, 0)); it.Valid(); it.Next() {
+		curSlotId, dbId, tableId := parseRawKeySlotId(it.Key())
+		if curSlotId != slotId {
 			break
 		}
 		if dbId == proto.AdminDbId && tableId == 0 {
@@ -1121,7 +1121,7 @@ func (tbl *Table) NewIterator(fillCache bool) *Iterator {
 }
 
 func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgMultiOp,
-	migration bool, migUnitId uint16) bool {
+	migration bool, migSlotId uint16) bool {
 	p.PkgFlag &^= 0xFF
 	p.ErrCode = 0
 	p.Kvs = nil
@@ -1129,20 +1129,20 @@ func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgMultiOp,
 	var size = 0
 	for i := 0; i < 10 && size < 400 && it.Valid(); i++ {
 		var kv proto.KeyValue
-		dbId, unitId, ok := seekAndCopySyncKV(it, &kv)
+		dbId, slotId, ok := seekAndCopySyncKV(it, &kv)
 		if !ok {
 			return false
 		}
-		if migration && migUnitId != unitId {
-			if migUnitId < unitId {
+		if migration && migSlotId != slotId {
+			if migSlotId < slotId {
 				return false
-			} else if migUnitId > unitId {
-				seekToUnit(it, migUnitId, 0, 0)
+			} else if migSlotId > slotId {
+				seekToSlot(it, migSlotId, 0, 0)
 				if !it.Valid() {
 					return false
 				}
-				dbId, unitId, ok = seekAndCopySyncKV(it, &kv)
-				if !ok || migUnitId != unitId {
+				dbId, slotId, ok = seekAndCopySyncKV(it, &kv)
+				if !ok || migSlotId != slotId {
 					return false
 				}
 			}
@@ -1165,7 +1165,7 @@ func SeekAndCopySyncPkg(it *Iterator, p *proto.PkgMultiOp,
 func seekAndCopySyncKV(it *Iterator, p *proto.KeyValue) (uint8, uint16, bool) {
 	p.CtrlFlag &^= 0xFF
 
-	unitId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
+	slotId, dbId, tableId, colSpace, rowKey, colKey := parseRawKey(it.Key())
 
 	switch colSpace {
 	case proto.ColSpaceDefault:
@@ -1175,7 +1175,7 @@ func seekAndCopySyncKV(it *Iterator, p *proto.KeyValue) (uint8, uint16, bool) {
 	case proto.ColSpaceScore1:
 		it.Seek(getRawKey(dbId, tableId, colSpace+1, rowKey, nil))
 		if !it.Valid() {
-			return dbId, unitId, false
+			return dbId, slotId, false
 		}
 		return seekAndCopySyncKV(it, p)
 	case proto.ColSpaceScore2:
@@ -1189,17 +1189,17 @@ func seekAndCopySyncKV(it *Iterator, p *proto.KeyValue) (uint8, uint16, bool) {
 	p.RowKey = rowKey
 	p.ColKey = colKey
 
-	return dbId, unitId, true
+	return dbId, slotId, true
 }
 
-func seekToUnit(it *Iterator, unitId uint16, dbId, tableId uint8) {
-	it.Seek(getRawUnitKey(unitId, dbId, tableId))
+func seekToSlot(it *Iterator, slotId uint16, dbId, tableId uint8) {
+	it.Seek(getRawSlotKey(slotId, dbId, tableId))
 }
 
-func getRawUnitKey(unitId uint16, dbId, tableId uint8) []byte {
-	// wUnitId+cDbId+cTableId
+func getRawSlotKey(slotId uint16, dbId, tableId uint8) []byte {
+	// wSlotId+cDbId+cTableId
 	var rawKey = make([]byte, 4)
-	binary.BigEndian.PutUint16(rawKey, unitId)
+	binary.BigEndian.PutUint16(rawKey, slotId)
 	rawKey[2] = dbId
 	rawKey[3] = tableId
 
@@ -1207,13 +1207,13 @@ func getRawUnitKey(unitId uint16, dbId, tableId uint8) []byte {
 }
 
 func getRawKey(dbId, tableId, colSpace uint8, rowKey, colKey []byte) []byte {
-	var unitId = ctrl.GetUnitId(dbId, tableId, rowKey)
+	var slotId = ctrl.GetSlotId(dbId, tableId, rowKey)
 
-	// wUnitId+cDbId+cTableId+cKeyLen+sRowKey+colSpace+sColKey
+	// wSlotId+cDbId+cTableId+cKeyLen+sRowKey+colSpace+sColKey
 	var rowKeyLen = len(rowKey)
 	var rawLen = 6 + rowKeyLen + len(colKey)
 	var rawKey = make([]byte, rawLen)
-	binary.BigEndian.PutUint16(rawKey, unitId)
+	binary.BigEndian.PutUint16(rawKey, slotId)
 	rawKey[2] = dbId
 	rawKey[3] = tableId
 	rawKey[4] = uint8(rowKeyLen)
@@ -1224,9 +1224,9 @@ func getRawKey(dbId, tableId, colSpace uint8, rowKey, colKey []byte) []byte {
 	return rawKey
 }
 
-func parseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
+func parseRawKey(rawKey []byte) (slotId uint16, dbId, tableId, colSpace uint8,
 	rowKey, colKey []byte) {
-	unitId = binary.BigEndian.Uint16(rawKey)
+	slotId = binary.BigEndian.Uint16(rawKey)
 	dbId = rawKey[2]
 	tableId = rawKey[3]
 	var keyLen = rawKey[4]
@@ -1237,7 +1237,7 @@ func parseRawKey(rawKey []byte) (unitId uint16, dbId, tableId, colSpace uint8,
 	return
 }
 
-func parseRawKeyUnitId(rawKey []byte) (unitId uint16, dbId, tableId uint8) {
+func parseRawKeySlotId(rawKey []byte) (slotId uint16, dbId, tableId uint8) {
 	return binary.BigEndian.Uint16(rawKey), rawKey[2], rawKey[3]
 }
 

@@ -18,6 +18,14 @@
 
 namespace gotable {
 
+static int8_t calHeadCrc(const char* pkg) {
+	int8_t crc = 10;
+	for (int i = 1; i < HeadSize; i++) {
+		crc += pkg[i];
+	}
+	return crc;
+}
+
 int PkgHead::length() {
 	return HeadSize;
 }
@@ -27,10 +35,15 @@ int PkgHead::decode(const char* pkg, int len) {
 		return -1;
 	}
 
-	cmd = pkg[0];
-	dbId = pkg[1];
-	seq = getUint64(pkg+2);
-	pkgLen = getUint32(pkg+10);
+	crc = calHeadCrc(pkg);
+	if (crc != pkg[0]) {
+		return -2;
+	}
+	
+	cmd = pkg[1];
+	dbId = pkg[2];
+	seq = getUint64(pkg+3);
+	pkgLen = getUint32(pkg+11);
 
 	return HeadSize;
 }
@@ -40,20 +53,23 @@ int PkgHead::encode(char* pkg, int len) {
 		return -1;
 	}
 
-	pkg[0] = cmd;
-	pkg[1] = dbId;
-	putUint64(pkg+2, seq);
-	putUint32(pkg+10, pkgLen);
+	pkg[1] = cmd;
+	pkg[2] = dbId;
+	putUint64(pkg+3, seq);
+	putUint32(pkg+11, pkgLen);
+	pkg[0] = calHeadCrc(pkg);
 
 	return HeadSize;
 }
 
 void overWriteLen(char* pkg, int pkgLen) {
-	putUint32(pkg+10, uint32_t(pkgLen));
+	putUint32(pkg+11, uint32_t(pkgLen));
+	pkg[0] = calHeadCrc(pkg);
 }
 
 void overWriteSeq(char* pkg, uint64_t seq) {
-	putUint64(pkg+2, seq);
+	putUint64(pkg+3, seq);
+	pkg[0] = calHeadCrc(pkg);
 }
 
 int readPkg(int fd, char* buf, int bufLen, PkgHead* head, string& pkg) {

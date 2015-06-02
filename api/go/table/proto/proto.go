@@ -22,6 +22,7 @@ import (
 
 var (
 	ErrPkgLen     = errors.New("pkg length out of range")
+	ErrHeadCrc    = errors.New("pkg head crc mismatch")
 	ErrRowKeyLen  = errors.New("row key length out of range")
 	ErrColKeyLen  = errors.New("col key length out of range")
 	ErrKvArrayLen = errors.New("key/value array length out of range")
@@ -54,12 +55,12 @@ const (
 	CmdSlaveOf = 0xD0
 	CmdMigrate = 0xD1 // Start/Stop migration
 	CmdSlaveSt = 0xD2 // Get migration/slave status
-	CmdDelUnit = 0xD3 // Delete unit data
+	CmdDelSlot = 0xD3 // Delete slot data
 )
 
 const (
 	AdminDbId   = 255
-	HeadSize    = 14
+	HeadSize    = 15
 	MaxUint8    = 255
 	MaxUint16   = 65535
 	MaxValueLen = 1024 * 1024     // 1MB
@@ -77,11 +78,12 @@ type PkgResponse interface {
 	SetErrCode(errCode int8)
 }
 
-// cCmd+cDbId+ddwSeq+dwPkgLen+sBody
+// cCrc+cCmd+cDbId+ddwSeq+dwPkgLen+sBody
 type PkgHead struct {
+	Crc    uint8 // Head CRC
 	Cmd    uint8
 	DbId   uint8
-	Seq    uint64 //normal: request seq; replication: master binlog seq
+	Seq    uint64 // normal: request seq; replication: master binlog seq
 	PkgLen uint32
 }
 
@@ -90,10 +92,15 @@ func (head *PkgHead) Decode(pkg []byte) (int, error) {
 		return 0, ErrPkgLen
 	}
 
-	head.Cmd = pkg[0]
-	head.DbId = pkg[1]
-	head.Seq = binary.BigEndian.Uint64(pkg[2:])
-	head.PkgLen = binary.BigEndian.Uint32(pkg[10:])
+	head.Crc = CalHeadCrc(pkg)
+	if head.Crc != pkg[0] {
+		return 0, ErrHeadCrc
+	}
+
+	head.Cmd = pkg[1]
+	head.DbId = pkg[2]
+	head.Seq = binary.BigEndian.Uint64(pkg[3:])
+	head.PkgLen = binary.BigEndian.Uint32(pkg[11:])
 
 	return HeadSize, nil
 }
@@ -103,20 +110,31 @@ func (head *PkgHead) Encode(pkg []byte) (int, error) {
 		return 0, ErrPkgLen
 	}
 
-	pkg[0] = head.Cmd
-	pkg[1] = head.DbId
-	binary.BigEndian.PutUint64(pkg[2:], head.Seq)
-	binary.BigEndian.PutUint32(pkg[10:], head.PkgLen)
+	pkg[1] = head.Cmd
+	pkg[2] = head.DbId
+	binary.BigEndian.PutUint64(pkg[3:], head.Seq)
+	binary.BigEndian.PutUint32(pkg[11:], head.PkgLen)
+	pkg[0] = CalHeadCrc(pkg)
 
 	return HeadSize, nil
 }
 
+func CalHeadCrc(pkg []byte) uint8 {
+	var crc int8 = 10
+	for i := 1; i < HeadSize; i++ {
+		crc += int8(pkg[i])
+	}
+	return uint8(crc)
+}
+
 func OverWriteLen(pkg []byte, pkgLen int) {
-	binary.BigEndian.PutUint32(pkg[10:], uint32(pkgLen))
+	binary.BigEndian.PutUint32(pkg[11:], uint32(pkgLen))
+	pkg[0] = CalHeadCrc(pkg)
 }
 
 func OverWriteSeq(pkg []byte, seq uint64) {
-	binary.BigEndian.PutUint64(pkg[2:], seq)
+	binary.BigEndian.PutUint64(pkg[3:], seq)
+	pkg[0] = CalHeadCrc(pkg)
 }
 
 func ReadPkg(r *bufio.Reader, headBuf []byte, head *PkgHead,

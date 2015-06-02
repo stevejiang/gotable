@@ -309,9 +309,9 @@ func (c *Context) ScanMore(last ScanReply) (ScanReply, error) {
 // The pivot record is excluded from the reply.
 func (c *Context) DumpPivot(oneTable bool, tableId, colSpace uint8,
 	rowKey, colKey []byte, score int64,
-	startUnitId, endUnitId uint16) (DumpReply, error) {
+	startSlotId, endSlotId uint16) (DumpReply, error) {
 	call, err := c.goDump(oneTable, tableId, colSpace, rowKey, colKey,
-		score, startUnitId, endUnitId, nil)
+		score, startSlotId, endSlotId, nil)
 	if err != nil {
 		return DumpReply{}, err
 	}
@@ -348,9 +348,9 @@ func (c *Context) DumpMore(last DumpReply) (DumpReply, error) {
 	var t = last
 	for {
 		var rec DumpKV
-		var lastUnitId = t.ctx.lastUnitId
-		if t.ctx.unitStart {
-			lastUnitId += 1
+		var lastSlotId = t.ctx.lastSlotId
+		if t.ctx.slotStart {
+			lastSlotId += 1
 			if t.ctx.oneTable {
 				rec.TableId = t.ctx.tableId
 			}
@@ -359,7 +359,7 @@ func (c *Context) DumpMore(last DumpReply) (DumpReply, error) {
 		}
 
 		call, err := c.goDump(t.ctx.oneTable, rec.TableId, rec.ColSpace,
-			rec.RowKey, rec.ColKey, rec.Score, lastUnitId, t.ctx.endUnitId, nil)
+			rec.RowKey, rec.ColKey, rec.Score, lastSlotId, t.ctx.endSlotId, nil)
 		if err != nil {
 			return DumpReply{}, err
 		}
@@ -642,7 +642,7 @@ func (c *Context) GoZScanPivot(tableId uint8, rowKey, colKey []byte, score int64
 }
 
 func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
-	rowKey, colKey []byte, score int64, startUnitId, endUnitId uint16,
+	rowKey, colKey []byte, score int64, startSlotId, endSlotId uint16,
 	done chan *Call) (*Call, error) {
 	call := c.cli.newCall(proto.CmdDump, done)
 	if call.err != nil {
@@ -656,8 +656,8 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	if oneTable {
 		p.PkgFlag |= proto.FlagDumpTable
 	}
-	p.StartUnitId = startUnitId
-	p.EndUnitId = endUnitId
+	p.StartSlotId = startSlotId
+	p.EndSlotId = endSlotId
 	p.TableId = tableId
 	p.RowKey = rowKey
 	p.ColKey = colKey
@@ -678,7 +678,7 @@ func (c *Context) goDump(oneTable bool, tableId, colSpace uint8,
 	}
 
 	call.ctx = dumpContext{oneTable, tableId,
-		startUnitId, endUnitId, startUnitId, false}
+		startSlotId, endSlotId, startSlotId, false}
 
 	c.cli.sending <- call
 
@@ -722,8 +722,8 @@ func (c *CtrlContext) SlaveOf(host string) error {
 }
 
 // Internal control command.
-// Migrate moves one unit data to another server on the fly.
-func (c *CtrlContext) Migrate(host string, unitId uint16) error {
+// Migrate moves one slot data to another server on the fly.
+func (c *CtrlContext) Migrate(host string, slotId uint16) error {
 	call := c.cli.newCall(proto.CmdMigrate, nil)
 	if call.err != nil {
 		return call.err
@@ -732,7 +732,7 @@ func (c *CtrlContext) Migrate(host string, unitId uint16) error {
 	var p ctrl.PkgMigrate
 	p.ClientReq = true
 	p.MasterAddr = host
-	p.UnitId = unitId
+	p.SlotId = slotId
 
 	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
@@ -757,7 +757,7 @@ func (c *CtrlContext) Migrate(host string, unitId uint16) error {
 
 // Internal control command.
 // SlaveStatus reads migration/slave status.
-func (c *CtrlContext) SlaveStatus(migration bool, unitId uint16) (int, error) {
+func (c *CtrlContext) SlaveStatus(migration bool, slotId uint16) (int, error) {
 	call := c.cli.newCall(proto.CmdSlaveSt, nil)
 	if call.err != nil {
 		return ctrl.NotSlave, call.err
@@ -765,7 +765,7 @@ func (c *CtrlContext) SlaveStatus(migration bool, unitId uint16) (int, error) {
 
 	var p ctrl.PkgSlaveStatus
 	p.Migration = migration
-	p.UnitId = unitId
+	p.SlotId = slotId
 
 	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
@@ -789,15 +789,15 @@ func (c *CtrlContext) SlaveStatus(migration bool, unitId uint16) (int, error) {
 }
 
 // Internal control command.
-// DelUnit deletes one unit data.
-func (c *CtrlContext) DelUnit(unitId uint16) error {
-	call := c.cli.newCall(proto.CmdDelUnit, nil)
+// DelSlot deletes one slot data.
+func (c *CtrlContext) DelSlot(slotId uint16) error {
+	call := c.cli.newCall(proto.CmdDelSlot, nil)
 	if call.err != nil {
 		return call.err
 	}
 
-	var p ctrl.PkgDelUnit
-	p.UnitId = unitId
+	var p ctrl.PkgDelSlot
+	p.SlotId = slotId
 
 	pkg, err := ctrl.Encode(call.cmd, c.dbId, call.seq, &p)
 	if err != nil {
@@ -813,7 +813,7 @@ func (c *CtrlContext) DelUnit(unitId uint16) error {
 		return call.err
 	}
 
-	t := r.(*ctrl.PkgDelUnit)
+	t := r.(*ctrl.PkgDelSlot)
 	if t.ErrMsg != "" {
 		return errors.New(t.ErrMsg)
 	}
@@ -960,8 +960,8 @@ func (call *Call) Reply() (interface{}, error) {
 
 		var r DumpReply
 		r.ctx = call.ctx.(dumpContext)
-		r.ctx.lastUnitId = p.LastUnitId
-		r.ctx.unitStart = (p.PkgFlag&proto.FlagDumpUnitStart != 0)
+		r.ctx.lastSlotId = p.LastSlotId
+		r.ctx.slotStart = (p.PkgFlag&proto.FlagDumpSlotStart != 0)
 		r.End = (p.PkgFlag&proto.FlagDumpEnd != 0)
 		r.Kvs = make([]DumpKV, len(p.Kvs))
 		for i := 0; i < len(p.Kvs); i++ {
@@ -979,8 +979,8 @@ func (call *Call) Reply() (interface{}, error) {
 		return call.replyInnerCtrl(&ctrl.PkgMigrate{})
 	case proto.CmdSlaveSt:
 		return call.replyInnerCtrl(&ctrl.PkgSlaveStatus{})
-	case proto.CmdDelUnit:
-		return call.replyInnerCtrl(&ctrl.PkgDelUnit{})
+	case proto.CmdDelSlot:
+		return call.replyInnerCtrl(&ctrl.PkgDelSlot{})
 	}
 
 	return nil, ErrUnknownCmd

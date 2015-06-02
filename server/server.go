@@ -123,7 +123,7 @@ func (srv *Server) Start() {
 	}
 
 	// Normal slave, reconnect to master
-	hasMaster, migration, _ := srv.mc.GetMasterUnit()
+	hasMaster, migration, _ := srv.mc.GetMasterSlot()
 	if hasMaster && !migration {
 		lastSeq, valid := srv.bin.GetMasterSeq()
 		if !valid {
@@ -678,7 +678,7 @@ func (srv *Server) newMigMaster(req *Request, p *ctrl.PkgMigrate) {
 		log.Printf("Receive a migration slave connection from %s(%s)\n",
 			req.Cli.c.RemoteAddr(), p.SlaveAddr)
 
-		ms := NewMaster(p.SlaveAddr, 0, true, p.UnitId, req.Cli, srv.bin)
+		ms := NewMaster(p.SlaveAddr, 0, true, p.SlotId, req.Cli, srv.bin)
 		go ms.GoAsync(srv.tbl)
 	case ClientTypeSlave:
 		// Get response from master
@@ -834,7 +834,7 @@ func (srv *Server) migrate(req *Request) {
 			return
 		}
 
-		err = srv.mc.SetMigration(p.MasterAddr, p.SlaveAddr, p.UnitId)
+		err = srv.mc.SetMigration(p.MasterAddr, p.SlaveAddr, p.SlotId)
 		if err != nil {
 			log.Printf("Failed to update migration config: %s\n", err)
 			srv.replyMigrate(req,
@@ -851,7 +851,7 @@ func (srv *Server) migrate(req *Request) {
 			if slv != nil {
 				slv.Close()
 			}
-			if srv.tbl.HasUnitData(p.UnitId) {
+			if srv.tbl.HasSlotData(p.SlotId) {
 				err = srv.mc.SetStatus(ctrl.SlaveNeedClear)
 				if err != nil {
 					log.Printf("Failed to set migration status: %s\n", err)
@@ -912,9 +912,9 @@ func (srv *Server) slaveStatus(req *Request) {
 				if p.Migration {
 					if !m.Migration {
 						p.ErrMsg = fmt.Sprintf("check migration status on normal slave")
-					} else if m.UnitId != p.UnitId {
-						p.ErrMsg = fmt.Sprintf("unit id mismatch (%d, %d)",
-							m.UnitId, p.UnitId)
+					} else if m.SlotId != p.SlotId {
+						p.ErrMsg = fmt.Sprintf("slot id mismatch (%d, %d)",
+							m.SlotId, p.SlotId)
 					}
 				} else {
 					if m.Migration {
@@ -940,9 +940,9 @@ func (srv *Server) slaveStatus(req *Request) {
 	}
 }
 
-func (srv *Server) deleteMigrationUnit(unitId uint16, m config.MasterInfo) error {
+func (srv *Server) deleteMigrationSlot(slotId uint16, m config.MasterInfo) error {
 	var match bool
-	if len(m.MasterAddr) > 0 && m.Migration && m.UnitId == unitId {
+	if len(m.MasterAddr) > 0 && m.Migration && m.SlotId == slotId {
 		match = true
 	}
 
@@ -954,7 +954,7 @@ func (srv *Server) deleteMigrationUnit(unitId uint16, m config.MasterInfo) error
 		}
 	}
 
-	err = srv.tbl.DeleteUnit(unitId)
+	err = srv.tbl.DeleteSlot(slotId)
 	if err != nil {
 		return err
 	}
@@ -970,7 +970,7 @@ func (srv *Server) deleteMigrationUnit(unitId uint16, m config.MasterInfo) error
 	return nil
 }
 
-func (srv *Server) deleteUnit(req *Request) {
+func (srv *Server) deleteSlot(req *Request) {
 	var cliType uint32 = ClientTypeNormal
 	if req.Cli != nil {
 		cliType = req.Cli.ClientType()
@@ -978,15 +978,15 @@ func (srv *Server) deleteUnit(req *Request) {
 
 	switch cliType {
 	case ClientTypeNormal:
-		var p ctrl.PkgDelUnit
+		var p ctrl.PkgDelSlot
 		var err = ctrl.Decode(req.Pkg, nil, &p)
 		p.ErrMsg = ""
 		if err != nil {
 			p.ErrMsg = fmt.Sprintf("decode failed %s", err)
 		} else {
-			err = srv.deleteMigrationUnit(p.UnitId, srv.mc.GetMaster())
+			err = srv.deleteMigrationSlot(p.SlotId, srv.mc.GetMaster())
 			if err != nil {
-				p.ErrMsg = fmt.Sprintf("delete unit failed %s", err)
+				p.ErrMsg = fmt.Sprintf("delete slot failed %s", err)
 			}
 		}
 
@@ -997,7 +997,7 @@ func (srv *Server) deleteUnit(req *Request) {
 	case ClientTypeSlave:
 		fallthrough
 	case ClientTypeMaster:
-		log.Println("Invalid client type %d for DelUnit command, close now!",
+		log.Println("Invalid client type %d for DelSlot command, close now!",
 			cliType)
 		req.Cli.Close()
 	}
@@ -1118,8 +1118,8 @@ func (srv *Server) processCtrl() {
 					srv.migrate(req)
 				case proto.CmdSlaveSt:
 					srv.slaveStatus(req)
-				case proto.CmdDelUnit:
-					srv.deleteUnit(req)
+				case proto.CmdDelSlot:
+					srv.deleteSlot(req)
 				}
 			}
 		}

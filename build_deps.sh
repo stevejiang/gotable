@@ -9,25 +9,33 @@ ROCKSDB_VER=rocksdb-3.8
 ROCKSDB_URL=$DEPS_ULR/$ROCKSDB_VER.tar.gz
 ROCKSDB=$DEPS_DIR/$ROCKSDB_VER
 
+command_exists() {
+	command -v "$@" > /dev/null 2>&1
+}
+
 download_rocksdb() {
     rm -rf $ROCKSDB
     tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR 2>/dev/null
     if [ "$?" != "0" ]; then
-        curl -L $ROCKSDB_URL -o $ROCKSDB.tar.gz
-        if [ "$?" != "0" ]; then
-            wget --no-check-certificate $ROCKSDB_URL -O $ROCKSDB.tar.gz
-        fi
+		if command_exists curl; then
+			curl -L $ROCKSDB_URL -o $ROCKSDB.tar.gz
+		elif command_exists wget; then
+			wget --no-check-certificate $ROCKSDB_URL -O $ROCKSDB.tar.gz
+		else
+			echo "curl and wget are not installed, download rocksdb failed!"
+       		exit 1
+		fi
         tar zxf $ROCKSDB.tar.gz -C $DEPS_DIR
     fi
     if [ "$?" != "0" ]; then
         echo "download rocksdb failed!"
-        exit 1
+        exit 2
     fi
 
     make -C $ROCKSDB static_lib
     if [ "$?" != "0" ]; then
         echo "build rocksdb failed!"
-        exit 2
+        exit 3
     fi
 }
 

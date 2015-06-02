@@ -23,12 +23,12 @@ type WriteAccess struct {
 	replication bool // Replication slave
 	hasMaster   bool
 	migration   bool
-	unitId      uint16
+	slotId      uint16
 }
 
 func NewWriteAccess(replication bool, mc *config.MasterConfig) *WriteAccess {
-	hasMaster, migration, unitId := mc.GetMasterUnit()
-	return &WriteAccess{replication, hasMaster, migration, unitId}
+	hasMaster, migration, slotId := mc.GetMasterSlot()
+	return &WriteAccess{replication, hasMaster, migration, slotId}
 }
 
 // Do we have right to write this key?
@@ -42,14 +42,14 @@ func (m *WriteAccess) CheckKey(dbId, tableId uint8, rowKey []byte) bool {
 	}
 
 	if m.migration {
-		return m.unitId != ctrl.GetUnitId(dbId, tableId, rowKey)
+		return m.slotId != ctrl.GetSlotId(dbId, tableId, rowKey)
 	} else {
 		return false
 	}
 }
 
-// Do we have right to write this unit?
-func (m *WriteAccess) CheckUnit(unitId uint16) bool {
+// Do we have right to write this slot?
+func (m *WriteAccess) CheckSlot(slotId uint16) bool {
 	if m.replication {
 		return true // Accept all replication data
 	}
@@ -59,14 +59,14 @@ func (m *WriteAccess) CheckUnit(unitId uint16) bool {
 	}
 
 	if m.migration {
-		return m.unitId != unitId
+		return m.slotId != slotId
 	} else {
 		return false
 	}
 }
 
 // return false: no right to write!
-// return true: may have right to write, need to check key or unit again
+// return true: may have right to write, need to CheckKey or CheckSlot again
 func (m *WriteAccess) Check() bool {
 	if m.replication {
 		return true // Accept all replication data

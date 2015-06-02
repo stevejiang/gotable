@@ -193,10 +193,10 @@ type ScanReply struct {
 type dumpContext struct {
 	oneTable    bool   // Never change during dump
 	tableId     uint8  // Never change during dump
-	startUnitId uint16 // Never change during dump
-	endUnitId   uint16 // Never change during dump
-	lastUnitId  uint16 // The last unit ID tried to dump
-	unitStart   bool   // Next dump start from new UnitId
+	startSlotId uint16 // Never change during dump
+	endSlotId   uint16 // Never change during dump
+	lastSlotId  uint16 // The last slot ID tried to dump
+	slotStart   bool   // Next dump start from new SlotId
 }
 
 type DumpKV struct {

@@ -99,7 +99,7 @@ func testMGet(tc *table.Context) {
 	ma.Add(1, []byte("row1"), []byte("col1"), []byte("v01"), 9, 0)
 	ma.Add(1, []byte("row1"), []byte("col2"), []byte("v02"), 8, 0)
 	ma.Add(1, []byte("row1"), []byte("col3"), []byte("v03"), 7, 0)
-	ma.Add(1, []byte("row1"), []byte("col4"), []byte("v04"), 6, 0)
+	ma.Add(1, []byte("row8"), []byte("col4"), []byte("v04"), 6, 0)
 	_, err := tc.MSet(ma)
 	if err != nil {
 		fmt.Printf("Mset failed: %s\n", err)
@@ -108,11 +108,11 @@ func testMGet(tc *table.Context) {
 
 	// MGET
 	var mb table.MGetArgs
-	mb.Add(1, []byte("row1"), []byte("col4"), 0)
+	mb.Add(1, []byte("row8"), []byte("col4"), 0)
 	mb.Add(1, []byte("row1"), []byte("col2"), 0)
 	mb.Add(1, []byte("row1"), []byte("col1"), 0)
 	mb.Add(1, []byte("row1"), []byte("col3"), 0)
-	mb.Add(1, []byte("row1"), []byte("not"), 0)
+	mb.Add(1, []byte("row8"), []byte("not"), 0)
 	r, err := tc.MGet(mb)
 	if err != nil {
 		fmt.Printf("Mget failed: %s\n", err)

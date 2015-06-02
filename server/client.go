@@ -214,7 +214,7 @@ func (c *Client) GoRecvRequest(ch *RequestChan, slv *slave) {
 			}
 		case proto.CmdDump:
 			ch.DumpReqChan <- &req
-		case proto.CmdDelUnit:
+		case proto.CmdDelSlot:
 			fallthrough
 		case proto.CmdSlaveSt:
 			fallthrough

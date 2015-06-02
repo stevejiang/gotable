@@ -37,30 +37,30 @@ type PkgSlaveOf struct {
 // Migrate command pkg.
 // When stop migration:
 // If all data migrated, switch client requests to new servers.
-// If migration failed, wait for delete unit command.
+// If migration failed, wait for delete slot command.
 // Steps in cluster mode when migration succeeds:
 // 1. new servers switch to normal status (but still hold the master/slave connection)
 // 2. switch proxy and client requests routed to new servers
 // 3. wait for 10 seconds, and close the master/slave connection
-// 4. delete the unit data from old servers
+// 4. delete the slot data from old servers
 type PkgMigrate struct {
 	ClientReq  bool   // true: from client api; false: from slave to master
 	MasterAddr string // ip:host, stop migration if empty
 	SlaveAddr  string // ip:host
-	UnitId     uint16 // The unit to be migrated
+	SlotId     uint16 // The slot to be migrated
 	ErrMsg     string // error msg, nil means no error
 }
 
 // Get migration/slave status
 type PkgSlaveStatus struct {
 	Migration bool   // true: Migration status; false: Normal slave status
-	UnitId    uint16 // The unit under migration
+	SlotId    uint16 // The slot under migration
 	Status    int
 	ErrMsg    string // error msg, nil means no error
 }
 
-// Delete unit data
-type PkgDelUnit struct {
-	UnitId uint16 // The unit to delete
+// Delete slot data
+type PkgDelSlot struct {
+	SlotId uint16 // The slot to delete
 	ErrMsg string // error msg, nil means no error
 }

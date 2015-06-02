@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	dbLockUnitNum = 1024
+	dbLockSlotNum = 1024
 	rollInterval  = time.Second * 5 // 5 seconds
 	minCasValue   = uint32(6600)
 	maxCasValue   = uint32(0x80000000)
@@ -29,7 +29,7 @@ const (
 
 var castagnoliTab = crc32.MakeTable(crc32.Castagnoli)
 
-type UnitLock struct {
+type SlotLock struct {
 	sync.Mutex
 	curCas uint32
 	curIdx int
@@ -37,19 +37,19 @@ type UnitLock struct {
 }
 
 type TableLock struct {
-	ul []UnitLock
+	ul []SlotLock
 }
 
 func NewTableLock() *TableLock {
 	var tl = new(TableLock)
-	tl.ul = make([]UnitLock, dbLockUnitNum)
+	tl.ul = make([]SlotLock, dbLockSlotNum)
 
 	go tl.goRollDeamon()
 	return tl
 }
 
-func (tl *TableLock) GetLock(key []byte) *UnitLock {
-	var idx = crc32.Checksum(key, castagnoliTab) % dbLockUnitNum
+func (tl *TableLock) GetLock(key []byte) *SlotLock {
+	var idx = crc32.Checksum(key, castagnoliTab) % dbLockSlotNum
 	return &tl.ul[idx]
 }
 
@@ -65,7 +65,7 @@ func (tl *TableLock) goRollDeamon() {
 	}
 }
 
-func (u *UnitLock) NewCas(key []byte) uint32 {
+func (u *SlotLock) NewCas(key []byte) uint32 {
 	var strKey = string(key)
 	if u.cas == nil {
 		u.curCas = minCasValue
@@ -96,7 +96,7 @@ func (u *UnitLock) NewCas(key []byte) uint32 {
 	return u.curCas
 }
 
-func (u *UnitLock) GetCas(key []byte) uint32 {
+func (u *SlotLock) GetCas(key []byte) uint32 {
 	var strKey = string(key)
 	if u.cas == nil {
 		return 0
@@ -119,7 +119,7 @@ func (u *UnitLock) GetCas(key []byte) uint32 {
 	return 0
 }
 
-func (u *UnitLock) ClearCas(key []byte) {
+func (u *SlotLock) ClearCas(key []byte) {
 	if u.cas != nil {
 		var strKey = string(key)
 		delete(u.cas[u.curIdx], strKey)
@@ -128,7 +128,7 @@ func (u *UnitLock) ClearCas(key []byte) {
 	}
 }
 
-func (u *UnitLock) roll() {
+func (u *SlotLock) roll() {
 	u.Lock()
 	defer u.Unlock()
 

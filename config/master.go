@@ -32,7 +32,7 @@ type MasterInfo struct {
 	MasterAddr string // Master address ip:host
 	SlaveAddr  string // This server address ip:host
 	Migration  bool   // true: Migration; false: Normal master/slave
-	UnitId     uint16 // Only meaningful for migration
+	SlotId     uint16 // Only meaningful for migration
 	Status     int    // Status of Slave/Migration
 }
 
@@ -170,7 +170,7 @@ func (mc *MasterConfig) SetMaster(masterAddr, slaveAddr string) error {
 		m.MasterAddr = masterAddr
 		m.SlaveAddr = slaveAddr
 		m.Migration = false
-		m.UnitId = ctrl.TotalUnitNum // Exceed
+		m.SlotId = ctrl.TotalSlotNum // Exceed
 		m.Status = ctrl.SlaveInit
 	} else {
 		m.HasMaster = false
@@ -181,7 +181,7 @@ func (mc *MasterConfig) SetMaster(masterAddr, slaveAddr string) error {
 	return mc.save(&m)
 }
 
-func (mc *MasterConfig) SetMigration(masterAddr, slaveAddr string, unitId uint16) error {
+func (mc *MasterConfig) SetMigration(masterAddr, slaveAddr string, slotId uint16) error {
 	mc.mtx.RLock()
 	var m = mc.m
 	mc.mtx.RUnlock()
@@ -195,11 +195,11 @@ func (mc *MasterConfig) SetMigration(masterAddr, slaveAddr string, unitId uint16
 	}
 
 	if len(masterAddr) > 0 {
-		if m.HasMaster && m.Migration && m.UnitId != unitId {
+		if m.HasMaster && m.Migration && m.SlotId != slotId {
 			return fmt.Errorf("cannot start more than 1 migration")
 		}
-		if unitId >= ctrl.TotalUnitNum {
-			return fmt.Errorf("migrate unit id out of range")
+		if slotId >= ctrl.TotalSlotNum {
+			return fmt.Errorf("migrate slot id out of range")
 		}
 
 		m.HasMaster = true
@@ -207,7 +207,7 @@ func (mc *MasterConfig) SetMigration(masterAddr, slaveAddr string, unitId uint16
 		m.MasterAddr = masterAddr
 		m.SlaveAddr = slaveAddr
 		m.Migration = true
-		m.UnitId = unitId
+		m.SlotId = slotId
 		m.Status = ctrl.SlaveInit
 	} else {
 		m.HasMaster = false
@@ -267,16 +267,16 @@ func (mc *MasterConfig) GetMaster() MasterInfo {
 	return m
 }
 
-func (mc *MasterConfig) GetMasterUnit() (bool, bool, uint16) {
+func (mc *MasterConfig) GetMasterSlot() (bool, bool, uint16) {
 	var hasMaster, migration bool
-	var unitId uint16
+	var slotId uint16
 	mc.mtx.RLock()
 	if mc.m.HasMaster {
 		hasMaster = true
 		migration = mc.m.Migration
-		unitId = mc.m.UnitId
+		slotId = mc.m.SlotId
 	}
 	mc.mtx.RUnlock()
 
-	return hasMaster, migration, unitId
+	return hasMaster, migration, slotId
 }

@@ -171,7 +171,7 @@ func (slv *slave) SendSlaveOfToMaster() error {
 		p.ClientReq = false
 		p.MasterAddr = mi.MasterAddr
 		p.SlaveAddr = mi.SlaveAddr
-		p.UnitId = mi.UnitId
+		p.SlotId = mi.SlotId
 
 		pkg, err = ctrl.Encode(proto.CmdMigrate, 0, 0, &p)
 		if err != nil {
@@ -238,13 +238,13 @@ type master struct {
 	slaveAddr string
 	lastSeq   uint64
 	migration bool   // true: Migration; false: Normal master/slave
-	unitId    uint16 // Only meaningful for migration
+	slotId    uint16 // Only meaningful for migration
 
 	// atomic
 	closed uint32
 }
 
-func NewMaster(slaveAddr string, lastSeq uint64, migration bool, unitId uint16,
+func NewMaster(slaveAddr string, lastSeq uint64, migration bool, slotId uint16,
 	cli *Client, bin *binlog.BinLog) *master {
 	var ms = new(master)
 	ms.syncChan = make(chan struct{}, 20)
@@ -255,9 +255,9 @@ func NewMaster(slaveAddr string, lastSeq uint64, migration bool, unitId uint16,
 	ms.lastSeq = lastSeq
 	ms.migration = migration
 	if migration {
-		ms.unitId = unitId
+		ms.slotId = slotId
 	} else {
-		ms.unitId = ctrl.TotalUnitNum
+		ms.slotId = ctrl.TotalSlotNum
 	}
 	ms.bin.RegisterMonitor(ms)
 
@@ -361,7 +361,7 @@ func (ms *master) fullSync(tbl *store.Table) (uint64, error) {
 	var p proto.PkgMultiOp
 	p.Cmd = proto.CmdSync
 	for it.SeekToFirst(); it.Valid(); {
-		ok := store.SeekAndCopySyncPkg(it, &p, ms.migration, ms.unitId)
+		ok := store.SeekAndCopySyncPkg(it, &p, ms.migration, ms.slotId)
 
 		if ms.cli.IsClosed() {
 			return lastSeq, nil
@@ -382,8 +382,8 @@ func (ms *master) fullSync(tbl *store.Table) (uint64, error) {
 	// Tell slave full sync finished
 	if ms.migration {
 		ms.syncStatus(store.KeyFullSyncEnd, 0)
-		log.Printf("Full migration to %s unitId %d finished\n",
-			ms.slaveAddr, ms.unitId)
+		log.Printf("Full migration to %s slotId %d finished\n",
+			ms.slaveAddr, ms.slotId)
 	} else {
 		ms.syncStatus(store.KeyFullSyncEnd, lastSeq)
 		log.Printf("Full sync to %s finished\n", ms.slaveAddr)
@@ -401,8 +401,8 @@ func (ms *master) GoAsync(tbl *store.Table) {
 	}
 
 	if ms.migration {
-		log.Printf("Start incremental migration to %s unitId %d, lastSeq=%d\n",
-			ms.slaveAddr, ms.unitId, lastSeq)
+		log.Printf("Start incremental migration to %s slotId %d, lastSeq=%d\n",
+			ms.slaveAddr, ms.slotId, lastSeq)
 	} else {
 		log.Printf("Start incremental sync to %s, lastSeq=%d",
 			ms.slaveAddr, lastSeq)
@@ -481,7 +481,7 @@ func (ms *master) convertMigPkg(pkg []byte, head *proto.PkgHead) ([]byte, error)
 		if err != nil {
 			return nil, err
 		}
-		if ms.unitId == ctrl.GetUnitId(p.DbId, p.TableId, p.RowKey) {
+		if ms.slotId == ctrl.GetSlotId(p.DbId, p.TableId, p.RowKey) {
 			return pkg, nil
 		} else {
 			return nil, nil
@@ -500,7 +500,7 @@ func (ms *master) convertMigPkg(pkg []byte, head *proto.PkgHead) ([]byte, error)
 		}
 		var kvs []proto.KeyValue
 		for i := 0; i < len(p.Kvs); i++ {
-			if ms.unitId == ctrl.GetUnitId(p.DbId, p.Kvs[i].TableId, p.Kvs[i].RowKey) {
+			if ms.slotId == ctrl.GetSlotId(p.DbId, p.Kvs[i].TableId, p.Kvs[i].RowKey) {
 				kvs = append(kvs, p.Kvs[i])
 			}
 		}

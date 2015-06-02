@@ -120,7 +120,7 @@ GoTable is constructed with up to 255 DBs, each DB is constructed with up to 256
 	  ...   |              ...                    |              ...                    |
 
 A table can hold unlimited number of rows(rowKey). Each row can have up to millions columns(colKey).
-Data sharding is based on rowKey, records with the same rowKey are stored in the same unit. So you should carefully construct rowKey to avoid hot spot issue.
+Data sharding is based on rowKey, records with the same rowKey are stored in the same slot. So you should carefully construct rowKey to avoid hot spot issue.
 
 ### Default column space
 
