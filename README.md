@@ -99,8 +99,8 @@ If a server is already a slave of some master, SLAVEOF host will stop the replic
 
 ## API Example
 
-+ [Official Go Example](https://github.com/stevejiang/gotable/blob/master/cmd/gotable-example/example.go)
-+ [Official C++ Example](https://github.com/stevejiang/gotable/blob/master/api/c++/example.cc)
++ [Go Example](https://github.com/stevejiang/gotable/blob/master/cmd/gotable-example/example.go)
++ [C++ Example](https://github.com/stevejiang/gotable/blob/master/api/c++/example.cc)
 
 ## Data Model
 
