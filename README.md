@@ -16,25 +16,23 @@ GoTable is a high performance NoSQL database powered by [Go](http://golang.org/)
 To build GoTable, you need to setup [Go](http://golang.org/) environment and gcc with c++11 support, please see the requirement part for details.
 
 	#download GoTable source code
-	go get github.com/stevejiang/gotable
+	git clone https://github.com/stevejiang/gotable.git
 	
-	cd $GOPATH/src/github.com/stevejiang/gotable
+	cd gotable
+
+	#build rocksdb, it will download rocksdb automatically if missing
+	sh build_rocksdb.sh
 	
-	#build GoTable, it will download rocksdb automatically if not found
+	#build GoTable
 	make
 
-The build tool uses curl or wget to download rocksdb. If your computer has trouble to connect internet, please manually download and build rocksdb, and then use the following command to build GoTable:
-
-	#use prebuilt rocksdb
-	make CGO_CFLAGS="-I/path/to/rocksdb/include" CGO_LDFLAGS="-L/path/to/rocksdb"
-
-The GoTable binary files are in $GOPATH/bin directory.
+The GoTable binary files are in $HOME/go/bin directory.
 
 ## Requirement
 
 + Linux or MacOS, 64 bit operating system is the best.
-+ Go version >= 1.3
-+ gcc version >= 4.8.1
++ Go version >= 1.15
++ g++ version, supports c++11
 
 ## Running GoTable
 
