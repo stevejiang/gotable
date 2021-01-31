@@ -132,7 +132,7 @@ In "Z" sorted score column space, there are two lists for every rowKey. The firs
 
 Benchmark command:
 
-	./gotable-bench -t set,zset,get,zget,scan,zscan,incr,zincr -range 10 -n 1000000 -c 100
+	gotable-bench -t set,zset,get,zget,scan,zscan,incr,zincr -range 10 -n 1000000 -c 100
 
 Benchmark result:
 
@@ -147,7 +147,7 @@ Benchmark result:
 
 If you want to see latency distribution, add "-histogram 1" to the command line:
 
-	./gotable-bench -t get -n 1000000 -c 100 -histogram 1
+	gotable-bench -t get -n 1000000 -c 100 -histogram 1
 
 Benchmark latency distribution:
 
