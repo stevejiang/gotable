@@ -16,14 +16,15 @@ package server
 
 import (
 	"bufio"
-	"github.com/stevejiang/gotable/api/go/table/proto"
-	"github.com/stevejiang/gotable/store"
-	"github.com/stevejiang/gotable/util"
 	"io"
 	"log"
 	"net"
 	"sync"
 	"sync/atomic"
+
+	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/store"
+	"github.com/stevejiang/gotable/util"
 )
 
 const (
@@ -177,7 +178,7 @@ func (c *Client) GoRecvRequest(ch *RequestChan, slv *slave) {
 		//log.Printf("recv(%s): [0x%X\t%d\t%d]\n",
 		//	c.c.RemoteAddr(), head.Cmd, head.DbId, head.Seq)
 
-		var req = Request{c, slv, store.PkgArgs{head.Cmd, head.DbId, head.Seq, pkg}}
+		var req = Request{c, slv, store.PkgArgs{Cmd: head.Cmd, DbId: head.DbId, Seq: head.Seq, Pkg: pkg}}
 
 		switch head.Cmd {
 		case proto.CmdAuth:

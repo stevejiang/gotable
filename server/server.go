@@ -16,13 +16,6 @@ package server
 
 import (
 	"fmt"
-	"github.com/stevejiang/gotable/api/go/table"
-	"github.com/stevejiang/gotable/api/go/table/proto"
-	"github.com/stevejiang/gotable/binlog"
-	"github.com/stevejiang/gotable/config"
-	"github.com/stevejiang/gotable/ctrl"
-	"github.com/stevejiang/gotable/store"
-	"github.com/stevejiang/gotable/util"
 	"log"
 	"net"
 	"os"
@@ -31,6 +24,14 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/stevejiang/gotable/api/go/table"
+	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/binlog"
+	"github.com/stevejiang/gotable/config"
+	"github.com/stevejiang/gotable/ctrl"
+	"github.com/stevejiang/gotable/store"
+	"github.com/stevejiang/gotable/util"
 )
 
 type Server struct {
@@ -273,11 +274,11 @@ func (srv *Server) sendResp(write bool, req *Request, pkg []byte) {
 	switch cliType {
 	case ClientTypeNormal:
 		if write {
-			srv.bin.AddRequest(&binlog.Request{0, req.Pkg})
+			srv.bin.AddRequest(&binlog.Request{MasterSeq: 0, Pkg: req.Pkg})
 		}
 	case ClientTypeSlave:
 		if write {
-			srv.bin.AddRequest(&binlog.Request{req.Seq, req.Pkg})
+			srv.bin.AddRequest(&binlog.Request{MasterSeq: req.Seq, Pkg: req.Pkg})
 		}
 	}
 }
@@ -791,8 +792,7 @@ func (srv *Server) slaveOf(req *Request) {
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
 		} else {
-			log.Println("Invalid client type %d for SlaveOf command, close now!",
-				cliType)
+			log.Printf("Invalid client type %d for SlaveOf command, close now!\n", cliType)
 		}
 		req.Cli.Close()
 	}
@@ -876,8 +876,7 @@ func (srv *Server) migrate(req *Request) {
 		if err != nil {
 			log.Printf("Failed to Decode pkg: %s\n", err)
 		} else {
-			log.Println("Invalid client type %d for Migrate command, close now!",
-				cliType)
+			log.Printf("Invalid client type %d for Migrate command, close now!\n", cliType)
 		}
 		req.Cli.Close()
 	}
@@ -934,8 +933,7 @@ func (srv *Server) slaveStatus(req *Request) {
 	case ClientTypeSlave:
 		fallthrough
 	case ClientTypeMaster:
-		log.Println("Invalid client type %d for MigStatus command, close now!",
-			cliType)
+		log.Printf("Invalid client type %d for MigStatus command, close now!\n", cliType)
 		req.Cli.Close()
 	}
 }
@@ -997,8 +995,7 @@ func (srv *Server) deleteSlot(req *Request) {
 	case ClientTypeSlave:
 		fallthrough
 	case ClientTypeMaster:
-		log.Println("Invalid client type %d for DelSlot command, close now!",
-			cliType)
+		log.Printf("Invalid client type %d for DelSlot command, close now!\n", cliType)
 		req.Cli.Close()
 	}
 }

@@ -18,13 +18,14 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"github.com/stevejiang/gotable/api/go/table/proto"
-	"github.com/stevejiang/gotable/util"
 	"log"
 	"os"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/util"
 )
 
 // Monitor is a BinLog monitor.
@@ -224,7 +225,8 @@ func (bin *BinLog) GetSeqFileName(fileIdx uint64) string {
 func (bin *BinLog) goWriteBinLog() {
 	var ms []Monitor
 	var last1, last2 *Request
-	var tick = time.Tick(time.Second)
+	var tick = time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case req, ok := <-bin.reqChan:
@@ -255,7 +257,7 @@ func (bin *BinLog) goWriteBinLog() {
 
 			last1 = req
 
-		case <-tick:
+		case <-tick.C:
 			bin.Flush()
 
 			if last1 == nil {

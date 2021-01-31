@@ -54,10 +54,11 @@ func (tl *TableLock) GetLock(key []byte) *SlotLock {
 }
 
 func (tl *TableLock) goRollDeamon() {
-	var tick = time.Tick(rollInterval)
+	var tick = time.NewTicker(rollInterval)
+	defer tick.Stop()
 	for {
 		select {
-		case <-tick:
+		case <-tick.C:
 			for i := 0; i < len(tl.ul); i++ {
 				tl.ul[i].roll()
 			}

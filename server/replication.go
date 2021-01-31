@@ -16,17 +16,18 @@ package server
 
 import (
 	"errors"
+	"log"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/stevejiang/gotable/api/go/table/proto"
 	"github.com/stevejiang/gotable/binlog"
 	"github.com/stevejiang/gotable/config"
 	"github.com/stevejiang/gotable/ctrl"
 	"github.com/stevejiang/gotable/store"
 	"github.com/stevejiang/gotable/util"
-	"log"
-	"net"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
 type slave struct {
@@ -417,7 +418,8 @@ func (ms *master) GoAsync(tbl *store.Table) {
 
 	var readyCount int64
 	var head proto.PkgHead
-	var tick = time.Tick(time.Second)
+	var tick = time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case _, ok := <-ms.syncChan:
@@ -446,7 +448,7 @@ func (ms *master) GoAsync(tbl *store.Table) {
 				ms.cli.AddResp(pkg)
 			}
 
-		case <-tick:
+		case <-tick.C:
 			if ms.isClosed() || ms.cli.IsClosed() {
 				return
 			}

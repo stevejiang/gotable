@@ -17,9 +17,10 @@ package binlog
 import (
 	"bufio"
 	"errors"
-	"github.com/stevejiang/gotable/api/go/table/proto"
 	"log"
 	"os"
+
+	"github.com/stevejiang/gotable/api/go/table/proto"
 )
 
 var (
@@ -299,8 +300,6 @@ func (r *Reader) next() []byte {
 	} else {
 		return r.nextFile()
 	}
-
-	return nil
 }
 
 func (r *Reader) Next() []byte {
