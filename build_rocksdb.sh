@@ -1,6 +1,6 @@
 #!/bin/sh
 
-ROCKSDB_ROOT_DIR=`pwd`/../rocksdb
+ROCKSDB_ROOT_DIR=$(dirname `pwd`)/rocksdb
 ROCKSDB_VER=6.15.4
 ROCKSDB_URL=https://github.com/facebook/rocksdb/archive/v$ROCKSDB_VER.tar.gz
 ROCKSDB_DIR=$ROCKSDB_ROOT_DIR/rocksdb-$ROCKSDB_VER

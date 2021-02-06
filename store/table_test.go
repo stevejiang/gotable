@@ -17,12 +17,13 @@ package store
 import (
 	"bytes"
 	"fmt"
-	"github.com/stevejiang/gotable/api/go/table"
-	"github.com/stevejiang/gotable/api/go/table/proto"
-	"github.com/stevejiang/gotable/config"
 	"os"
 	"sync"
 	"testing"
+
+	"github.com/stevejiang/gotable/api/go/table"
+	"github.com/stevejiang/gotable/api/go/table/proto"
+	"github.com/stevejiang/gotable/config"
 )
 
 var testTbl *Table
@@ -44,7 +45,7 @@ func getTestTable() *Table {
 	f := func() {
 		tblDir := "/tmp/test_gotable/table"
 		os.RemoveAll(tblDir)
-		testTbl = NewTable(tblDir, 1024, 1024*1024, 1024*1024, "snappy")
+		testTbl = NewTable(tblDir, 1024, 1024*1024, 1024*1024, "no")
 	}
 
 	testTblOnce.Do(f)
@@ -60,7 +61,7 @@ func myGet(in proto.PkgOneOp, au Authorize, wa *WriteAccess,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg = testTbl.Get(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -68,7 +69,7 @@ func myGet(in proto.PkgOneOp, au Authorize, wa *WriteAccess,
 	var out proto.PkgOneOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if out.ErrCode < 0 {
@@ -93,7 +94,7 @@ func mySet(in proto.PkgOneOp, au Authorize, wa *WriteAccess, expected bool,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg, ok := testTbl.Set(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -108,7 +109,7 @@ func mySet(in proto.PkgOneOp, au Authorize, wa *WriteAccess, expected bool,
 	var out proto.PkgOneOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if expected {
@@ -135,7 +136,7 @@ func myDel(in proto.PkgOneOp, au Authorize, wa *WriteAccess, expected bool,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg, ok := testTbl.Del(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -150,7 +151,7 @@ func myDel(in proto.PkgOneOp, au Authorize, wa *WriteAccess, expected bool,
 	var out proto.PkgOneOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if expected {
@@ -177,7 +178,7 @@ func myIncr(in proto.PkgOneOp, au Authorize, wa *WriteAccess, expected bool,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg, ok := testTbl.Incr(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -192,7 +193,7 @@ func myIncr(in proto.PkgOneOp, au Authorize, wa *WriteAccess, expected bool,
 	var out proto.PkgOneOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if expected {
@@ -219,7 +220,7 @@ func myMGet(in proto.PkgMultiOp, au Authorize, wa *WriteAccess,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg = testTbl.MGet(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -227,7 +228,7 @@ func myMGet(in proto.PkgMultiOp, au Authorize, wa *WriteAccess,
 	var out proto.PkgMultiOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if out.ErrCode != 0 {
@@ -245,7 +246,7 @@ func myMSet(in proto.PkgMultiOp, au Authorize, wa *WriteAccess, expected bool,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg, ok := testTbl.MSet(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -260,7 +261,7 @@ func myMSet(in proto.PkgMultiOp, au Authorize, wa *WriteAccess, expected bool,
 	var out proto.PkgMultiOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if expected {
@@ -280,7 +281,7 @@ func myMDel(in proto.PkgMultiOp, au Authorize, wa *WriteAccess, expected bool,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg, ok := testTbl.MDel(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -295,7 +296,7 @@ func myMDel(in proto.PkgMultiOp, au Authorize, wa *WriteAccess, expected bool,
 	var out proto.PkgMultiOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if expected {
@@ -315,7 +316,7 @@ func myMIncr(in proto.PkgMultiOp, au Authorize, wa *WriteAccess, expected bool,
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg, ok := testTbl.MIncr(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au, wa)
@@ -330,7 +331,7 @@ func myMIncr(in proto.PkgMultiOp, au Authorize, wa *WriteAccess, expected bool,
 	var out proto.PkgMultiOp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if expected {
@@ -349,7 +350,7 @@ func myScan(in proto.PkgScanReq, au Authorize, t *testing.T) proto.PkgScanResp {
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg = testTbl.Scan(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au)
@@ -357,7 +358,7 @@ func myScan(in proto.PkgScanReq, au Authorize, t *testing.T) proto.PkgScanResp {
 	var out proto.PkgScanResp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if out.ErrCode != 0 {
@@ -374,7 +375,7 @@ func myDump(in proto.PkgDumpReq, au Authorize, t *testing.T) proto.PkgDumpResp {
 	var pkg = make([]byte, in.Length())
 	_, err := in.Encode(pkg)
 	if err != nil {
-		t.Fatalf("Encode failed: ", err)
+		t.Fatalf("Encode failed: %s", err)
 	}
 
 	pkg = testTbl.Dump(&PkgArgs{in.Cmd, in.DbId, in.Seq, pkg}, au)
@@ -382,7 +383,7 @@ func myDump(in proto.PkgDumpReq, au Authorize, t *testing.T) proto.PkgDumpResp {
 	var out proto.PkgDumpResp
 	_, err = out.Decode(pkg)
 	if err != nil {
-		t.Fatalf("Decode failed: ", err)
+		t.Fatalf("Decode failed: %s", err)
 	}
 
 	if out.ErrCode != 0 {

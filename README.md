@@ -36,7 +36,7 @@ The GoTable binary files are in $HOME/go/bin directory.
 
 ## Running GoTable
 
-Please add $GOPATH/bin to PATH environment first.
+Please add $HOME/go/bin to PATH environment first.
 To run GoTable in default configuration just type:
 
 	gotable-server
