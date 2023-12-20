@@ -74,7 +74,7 @@ address = "0.0.0.0:6688"
 data = "data"
 write_buffer_size = 67108864
 cache_size = 67108864
-compression = "snappy"
+compression = "no"
 
 [binlog]
 memory_size = 8
