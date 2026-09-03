@@ -13,7 +13,7 @@ GoTable is a high performance NoSQL database powered by [Go](http://golang.org/)
 
 ## Build and Install
 
-To build GoTable, you need to setup [Go](http://golang.org/) environment and gcc with c++11 support, please see the requirement part for details.
+To build GoTable, you need to setup [Go](http://golang.org/) environment and g++ with c++20 support, please see the requirement part for details.
 
 	#download GoTable source code
 	git clone https://github.com/stevejiang/gotable.git
