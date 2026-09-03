@@ -26,17 +26,17 @@ To build GoTable, you need to setup [Go](http://golang.org/) environment and gcc
 	#build GoTable
 	make
 
-The GoTable binary files are in $HOME/go/bin directory.
+The GoTable binary files are in `$HOME/go/bin` directory.
 
 ## Requirement
 
 + Linux or MacOS, 64 bit operating system is the best.
 + Go version >= 1.15
-+ g++ version, supports c++11
++ g++ version, supports c++20
 
 ## Running GoTable
 
-Please add $HOME/go/bin to PATH environment first.
+Please add `$HOME/go/bin` to PATH environment first.
 To run GoTable in default configuration just type:
 
 	gotable-server

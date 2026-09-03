@@ -1,0 +1,6 @@
+{
+  "go.toolsEnvVars": {
+    "CGO_CFLAGS": "-g -O2 -DNDEBUG -I${workspaceFolder}/rocksdb/rocksdb-11.1.2/include",
+    "CGO_LDFLAGS": "-L${workspaceFolder}/rocksdb/rocksdb-11.1.2 -lrocksdb -lz -lbz2"
+  }
+}

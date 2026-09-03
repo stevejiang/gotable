@@ -1,7 +1,7 @@
 #!/bin/sh
 
-ROCKSDB_ROOT_DIR=$(dirname `pwd`)/rocksdb
-ROCKSDB_VER=8.9.1
+ROCKSDB_ROOT_DIR=`pwd`/rocksdb
+ROCKSDB_VER=11.1.2
 ROCKSDB_URL=https://github.com/facebook/rocksdb/archive/v$ROCKSDB_VER.tar.gz
 ROCKSDB_DIR=$ROCKSDB_ROOT_DIR/rocksdb-$ROCKSDB_VER
 
@@ -12,6 +12,9 @@ command_exists() {
 download_rocksdb() {
     tar zxf $ROCKSDB_DIR.tar.gz -C $ROCKSDB_ROOT_DIR 2>/dev/null
     if [ "$?" != "0" ]; then
+        echo "download rocksdb ↓"
+        echo "\tfrom: $ROCKSDB_URL"
+        echo "\t  to: $ROCKSDB_DIR.tar.gz"
 		if command_exists curl; then
 			curl -L $ROCKSDB_URL -o $ROCKSDB_DIR.tar.gz
 		elif command_exists wget; then
@@ -32,12 +35,12 @@ if [ ! -d "$ROCKSDB_ROOT_DIR" ]; then
     mkdir -p $ROCKSDB_ROOT_DIR
 fi
 
-make -C $ROCKSDB_DIR static_lib
+DISABLE_WARNING_AS_ERROR=1 make -C $ROCKSDB_DIR static_lib
 if [ "$?" != "0" ]; then
     rm -rf $ROCKSDB_DIR
     download_rocksdb
 
-    make -C $ROCKSDB_DIR static_lib
+    DISABLE_WARNING_AS_ERROR=1 make -C $ROCKSDB_DIR static_lib
     if [ "$?" != "0" ]; then
         echo "build rocksdb failed!"
         exit 3
