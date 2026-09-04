@@ -1,5 +1,7 @@
 bin/
 rocksdb/
+.agents
+skills-lock.json
 
 *.a
 *.arc
